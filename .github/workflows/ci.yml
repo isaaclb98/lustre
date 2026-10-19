@@ -1,6 +1,6 @@
 # .github/workflows/ci.yml
 #
-# Single CI workflow for image-search. Replaces the older
+# Single CI workflow for lustre. Replaces the older
 # dev-build.yml (4 jobs, parallel backend/frontend, path filters)
 # with one job that runs the full test + lint suite.
 #
@@ -94,10 +94,10 @@ jobs:
         run: uv run ruff check .
 
       - name: Type check (mypy, kernel package only)
-        # image_search_kernel is the shared package imported by
+        # lustre_kernel is the shared package imported by
         # both search/ and indexer/. Strict-mode mypy there catches
         # API contract drift before the runtime does.
-        run: uv run mypy image_search_kernel/
+        run: uv run mypy lustre_kernel/
 
       - name: Run pytest
         # In-memory Qdrant fixture handles the side store so we
