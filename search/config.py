@@ -34,6 +34,26 @@ SIGLIP_VARIANTS = {
     "so400m/16-384": ("ViT-so400m-patch16-384", 1152),
 }
 
+# Reverse mapping: dim -> variant name. The reconciler uses this to
+# suggest a likely SIGLIP_VARIANT in the mismatch error message so
+# the operator doesn't have to dig through git history to figure
+# out which model produced the stored vectors.
+SIGLIP_VARIANTS_BY_DIM: dict[int, str] = {
+    dim: name for name, (_model, dim) in SIGLIP_VARIANTS.items()
+}
+
+
+class QdrantVariantMismatch(RuntimeError):
+    """Raised by reconcile_variant_from_qdrant when stored Qdrant
+    vectors don't match the env-configured SigLIP2 variant.
+
+    Distinct from a generic exception so callers (and tests) can
+    catch this specific condition. The message includes the three
+    recovery paths the operator can take, with the exact curl
+    commands for the destructive ones.
+    """
+
+
 DEFAULT_VARIANT = "B/16-256"  # smallest + fastest; end-user ghcr default.
 # Override via SIGLIP_VARIANT (or MODEL_NAME) for higher-quality
 # embeddings. Prod keeps so400m via .env — this default only
@@ -83,28 +103,53 @@ def reconcile_variant_from_qdrant(
 ) -> None:
     """Reconcile env variant against Qdrant on startup.
 
-    Never raises; on any failure logs a warning and returns. The
-    user is responsible for reindexing.
+    Refuse-to-start reconciler. On dim or payload mismatch, raises
+    `QdrantVariantMismatch` instead of dropping the collection. The
+    search app fails to boot, the gunicorn worker dies, the docker
+    container crash-loops, the operator sees the error in `docker logs`
+    and fixes the env. The collection is preserved.
+
+    The previous implementation called `client.delete_collection()`
+    on mismatch. That was a destructive default reachable from any
+    code path that imported `search.config` (most of the test
+    suite), so a routine test run against a prod-shaped Qdrant URL
+    could wipe a multi-GB production index in milliseconds. The
+    destruction is now opt-in by the operator, not by the test fixture.
 
     Behavior by case:
 
       - Collection absent: no-op. Fresh install; the user will
         reindex via Settings → Index.
 
-      - Collection empty: no-op. The drop-on-mismatch path has
-        already cleared a previous variant; user needs to reindex.
+      - Collection empty: no-op. Fresh install via a different path.
 
       - Collection's vector dim ≠ env variant's expected dim:
-        vectors are in the wrong embedding space. Drop the
-        collection, log a warning that reindex is required.
+        vectors are in the wrong embedding space. Raise
+        `QdrantVariantMismatch` with a recovery message that tells
+        the operator how to manually drop, rename, or fix the env.
+        **No automatic delete.**
 
       - Sample point has `model_variant` payload that differs
-        from env_variant: drop the collection, log a warning.
+        from env_variant: same. Raise, do not delete.
         Tolerates missing payload (legacy data) — dim check is
         the binding constraint for the four registered variants
         because their dims (768/1024/1152/1536) are unique.
 
       - Otherwise: app boots normally.
+
+    To recover from a mismatch without losing data, the operator
+    has three options (all surfaced in the raised error message):
+
+      1. Fix the env: set SIGLIP_VARIANT to the variant that
+         actually produced the stored vectors. App boots.
+
+      2. Rename the bad collection, set QDRANT_COLLECTION to a
+         fresh name, and reindex from scratch. The bad data is
+         preserved on disk for postmortem.
+
+      3. Manually drop the collection (curl -X DELETE), then
+         reindex. This is a deliberate, audited action — not
+         something the app does on its own.
     """
     env_dim_expected = get_vector_dim_for_variant(env_variant)
 
@@ -141,21 +186,28 @@ def reconcile_variant_from_qdrant(
         return
 
     if stored_dim != env_dim_expected:
-        logger.warning(
-            "Model variant mismatch: Qdrant dim=%d does not match "
-            "env variant %s (expected dim=%d). Dropping collection %r; "
-            "reindex via Settings → Index.",
-            stored_dim, env_variant, env_dim_expected, qdrant_collection,
+        raise QdrantVariantMismatch(
+            f"Qdrant collection {qdrant_collection!r} has stored dim={stored_dim} "
+            f"but env SIGLIP_VARIANT={env_variant!r} expects dim={env_dim_expected}. "
+            f"The vectors are in the wrong embedding space — similarity search "
+            f"would return wrong results. Refusing to start.\n"
+            f"\n"
+            f"Pick one of these recovery paths:\n"
+            f"  (1) Set SIGLIP_VARIANT to the variant that produced the stored "
+            f"vectors (likely {SIGLIP_VARIANTS_BY_DIM.get(stored_dim, '?')!r}) and restart.\n"
+            f"  (2) Reindex from scratch with the new variant. To preserve the "
+            f"old data for postmortem, rename the bad collection first:\n"
+            f"      curl -X PATCH http://{qdrant_url}/collections/{qdrant_collection} "
+            f"-H 'Content-Type: application/json' "
+            f"-d '{{\"name\": \"{qdrant_collection}_bad_<timestamp>\"}}'\n"
+            f"      then set QDRANT_COLLECTION={qdrant_collection}_v2 and reindex.\n"
+            f"  (3) Manually drop the collection (deletes ~hours of indexing):\n"
+            f"      curl -X DELETE http://{qdrant_url}/collections/{qdrant_collection}\n"
+            f"      then reindex via Settings → Index.\n"
+            f"\n"
+            f"This reconciler no longer drops collections automatically. That "
+            f"behavior was too dangerous to be a startup default."
         )
-        try:
-            client.delete_collection(collection_name=qdrant_collection)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Failed to drop Qdrant collection during reconcile: %s. "
-                "Search may return errors until reindex.",
-                e,
-            )
-        return
 
     # Dim matches. Optional soft check: per-point payload.
     try:
@@ -184,20 +236,29 @@ def reconcile_variant_from_qdrant(
         return
 
     if stored_variant != env_variant:
-        logger.warning(
-            "Model variant mismatch: stored payload model_variant=%s "
-            "≠ env variant %s. Dropping collection %r; "
-            "reindex via Settings → Index.",
-            stored_variant, env_variant, qdrant_collection,
+        raise QdrantVariantMismatch(
+            f"Qdrant collection {qdrant_collection!r} has dim={stored_dim} (matches "
+            f"env) but per-point payload reports model_variant={stored_variant!r} "
+            f"≠ env SIGLIP_VARIANT={env_variant!r}. The vectors may be a re-embed "
+            f"of the wrong variant, or the payload was written by an older indexer. "
+            f"Refusing to start to prevent returning wrong search results.\n"
+            f"\n"
+            f"Pick one of these recovery paths:\n"
+            f"  (1) Set SIGLIP_VARIANT={stored_variant!r} and restart (if the "
+            f"stored variant is the one you actually want).\n"
+            f"  (2) Reindex from scratch with the new variant. To preserve the "
+            f"old data for postmortem, rename the bad collection first:\n"
+            f"      curl -X PATCH http://{qdrant_url}/collections/{qdrant_collection} "
+            f"-H 'Content-Type: application/json' "
+            f"-d '{{\"name\": \"{qdrant_collection}_bad_<timestamp>\"}}'\n"
+            f"      then set QDRANT_COLLECTION={qdrant_collection}_v2 and reindex.\n"
+            f"  (3) Manually drop the collection (deletes ~hours of indexing):\n"
+            f"      curl -X DELETE http://{qdrant_url}/collections/{qdrant_collection}\n"
+            f"      then reindex via Settings → Index.\n"
+            f"\n"
+            f"This reconciler no longer drops collections automatically. That "
+            f"behavior was too dangerous to be a startup default."
         )
-        try:
-            client.delete_collection(collection_name=qdrant_collection)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "Failed to drop Qdrant collection during reconcile: %s.",
-                e,
-            )
-        return
 
     logger.info("Variant reconciled against Qdrant: %s (dim=%d)",
                 env_variant, stored_dim)
@@ -574,8 +635,12 @@ def load() -> Config:
     # Reconcile env variant against Qdrant on startup. Qdrant is the
     # single source of truth — its dim + per-point payload together
     # tell us whether the indexed vectors match the env variant. On
-    # mismatch, the collection is dropped and the user must reindex.
-    # Never raises.
+    # mismatch, raises QdrantVariantMismatch (which propagates up
+    # through gunicorn startup and crashes the container — that's
+    # the design). The operator gets the error in `docker logs` and
+    # picks one of the three recovery paths the error message lists.
+    # The collection is preserved; destruction is opt-in by the
+    # operator, never automatic.
     reconcile_variant_from_qdrant(
         variant,
         qdrant_url=_str("QDRANT_URL", "http://localhost:6333"),
