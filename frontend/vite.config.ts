@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 
 // Dev-server proxy target. In Isaac's local dev setup this points at
 // the FastAPI backend on localhost:8765; in the k8s cluster the
-// Deployment sets API_PROXY_TARGET=http://image-search:8000 (the
+// Deployment sets API_PROXY_TARGET=http://lustre:8000 (the
 // in-cluster Service), so vite proxies API + photo-raw + zip routes
 // directly to the backend pod instead of relying on Caddy's path-
 // matching routing. Removing the Caddy-side path split makes Caddy a
