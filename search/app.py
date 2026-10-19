@@ -936,7 +936,7 @@ def create_app(
             await asyncio.to_thread(index_db.close)
 
     app = FastAPI(
-        title="image-search",
+        title="lustre",
         version="0.1.0",
         lifespan=lifespan,
         # Don't redirect /photo/{id} to /photo/{id}/ (trailing slash).
