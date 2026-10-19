@@ -3,6 +3,11 @@
 // is in node_modules):
 //
 //   ~/projects/image-search/scripts/dev.sh up
+//   # NOTE: the local clone path stays ~/projects/image-search/
+//   until Phase C rotates the host state. The repo was renamed
+//   to github.com/isaaclb98/lustre (Sep 2026) but the directory
+//   on this machine is still image-search/ until the deploy
+//   rotation lands.
 //   # index + create test albums (one-time):
 //   curl -X POST -H 'Content-Type: application/json' \
 //     -d '{"mode":"rebuild"}' http://127.0.0.1:18000/api/admin/index

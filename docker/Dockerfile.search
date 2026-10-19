@@ -1,4 +1,4 @@
-# Single-container image for image-search.
+# Single-container image for lustre.
 #
 # Builds the SvelteKit frontend as a static SPA and packages it with
 # the FastAPI backend into one image. The FastAPI app serves both the
@@ -85,7 +85,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
  && pip install -r /tmp/requirements.txt
 
 # 2. source layer — copy packages, then install ours (no deps)
-COPY image_search_kernel/ ./image_search_kernel/
+COPY lustre_kernel/ ./lustre_kernel/
 COPY search/ ./search/
 COPY indexer/ ./indexer/
 COPY scripts/ ./scripts/
@@ -97,8 +97,9 @@ COPY scripts/ ./scripts/
 # NOTE: no `COPY data/` — that path is local state (the SQLite
 # index cache) and is .gitignore'd. The cluster mounts a PVC at
 # /app/data at runtime, and INDEX_DB_PATH pins the file to
-# /app/data/images.db. See clusters/home/apps/image-search/
-# statefulset.yaml + data-pvc.yaml.
+# /app/data/images.db. See the GitHub repo's deploy recipes
+# (docker-compose.yml + oracle-compose.yml) for the bind-mount
+# shape; no k8s StatefulSet for lustre.
 
 # Bundle the prebuilt SPA at /app/static. The backend's create_app()
 # mounts /_app/ for hashed assets and falls back to index.html for
@@ -106,7 +107,7 @@ COPY scripts/ ./scripts/
 COPY --from=frontend-build /web/build /app/static
 
 # The SigLIP2 weights are NOT baked into the image. They live in
-# /app/data/hf-cache (the image-search_search_data named volume)
+# /app/data/hf-cache (the lustre_search_data named volume)
 # and are downloaded on first use. The HF cache persists across
 # container restarts, so the one-time ~370MB-1.8GB download happens
 # once per deployment, not once per restart. Bumping the Dockerfile
