@@ -66,30 +66,22 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
-          cache-local-path: .venv
           python-version: "3.12"
-          # The GHA cache for this repo's .venv/ was populated back
-          # when the repo was still image-search/. The cached venv
-          # contains a Python executable whose internal path still
-          # points at the old checkout location, so when uv tries
-          # to reuse it under the new lustre/ path, it fails with
-          # "no Python executable was found" on the very first sync.
-          #
-          # We work around this by skipping the cache restore once;
-          # uv sync will build a fresh venv under the new path, and
-          # the cache will re-warm on the next CI run with the right
-          # key. This is a one-shot fix — once the new cache key is
-          # in place, restore-cache can go back to true.
-          restore-cache: false
+          # cache-local-path: removed. The previous setting pointed
+          # the action at .venv/ as both the venv AND the cache dir,
+          # which broke on a fresh checkout: the action would create
+          # .venv/ as an empty cache dir, then `uv sync` would find
+          # the empty .venv/ and refuse to use it ("no Python
+          # executable was found"). The action's default wheel cache
+          # (auto-keyed on pyproject.toml + uv.lock) is what we
+          # actually need for fast syncs; we don't need the venv
+          # itself cached.
 
       - name: Sync Python deps
         # uv sync --extra dev creates .venv and installs the [dev]
         # extra (pytest, ruff, mypy, pytest-xdist, pytest-cov) in
         # one resolver pass. Cached on pyproject.toml + uv.lock.
-        run: |
-          echo "=== before sync ===" && ls -la .venv 2>&1 | head -5
-          uv sync --extra dev --refresh
-          echo "=== after sync ===" && ls -la .venv/bin/ 2>&1 | head -10
+        run: uv sync --extra dev
 
       - name: Set up Node
         uses: actions/setup-node@v4
