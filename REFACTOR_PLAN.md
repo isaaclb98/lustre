@@ -14,7 +14,7 @@ branch for this sweep.
 
 **Out of scope (will NOT be touched in any work below):**
 - `indexer/` (its own subsystem, not part of the search service surface)
-- `image_search_kernel/` (already strict-typed, CI-gated)
+- `lustre_kernel/` (already strict-typed, CI-gated)
 - `frontend/` (refactor lives in a separate cycle)
 - Any new feature, new route, new field, or behavior change
 
@@ -55,7 +55,7 @@ open a follow-up — this plan doesn't touch them.
 - Each commit is coherent; commits are not "atomic per file."
 - Run `ruff check .` and `pytest tests/ --ignore=tests/test_local_sync_perf_helpers.py` after each meaningful chunk. CI runs on `push:dev`.
 - Don't touch `scripts/*` unless the mypy error is in a file the dev/CI workflow imports. CI doesn't gate `scripts/`, so errors there are out of scope for now.
-- Don't touch `indexer/`, `image_search_kernel/`, or `frontend/` in this sweep.
+- Don't touch `indexer/`, `lustre_kernel/`, or `frontend/` in this sweep.
 
 ## Acceptance criteria — final scorecard
 
