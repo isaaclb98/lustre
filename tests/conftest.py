@@ -30,7 +30,17 @@ REAL_PHOTOS_DIR = Path("/home/ubuntu/tmp/pics")
 
 # Set env vars BEFORE any search.* import so config.load() sees them.
 os.environ.setdefault("SEARCH_TEST_MODE", "1")
-os.environ.setdefault("QDRANT_URL", "http://localhost:6333")  # unused; we pass :memory:
+# QDRANT_URL default is a port nothing is listening on, so any test
+# that forgets to use the qdrant_in_memory fixture will fail-fast
+# with a connection error instead of silently hitting the prod
+# Qdrant sidecar. The old default (http://localhost:6333) was the
+# prod port, and reconcile_variant_from_qdrant would have called
+# delete_collection() on the prod collection on a dim mismatch —
+# this is the failure that wiped 2,104,430 points on 2026-10-19.
+# Real tests that need a Qdrant use the in-memory fixture; the
+# qdrant_in_memory client takes a :memory: location and ignores
+# QDRANT_URL entirely.
+os.environ.setdefault("QDRANT_URL", "http://localhost:16333")
 os.environ.setdefault("SIGLIP_VARIANT", "so400m/16-384")
 os.environ.setdefault("MODEL_NAME", "ViT-so400m-patch16-384")
 os.environ.setdefault("TOP_K_DEFAULT", "35")
