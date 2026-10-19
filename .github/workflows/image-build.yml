@@ -73,7 +73,7 @@ on:
       - indexer/**
       - scripts/**
       - frontend/**
-      - image_search_kernel/**
+      - lustre_kernel/**
       - .dockerignore
       - .github/workflows/image-build.yml
 
@@ -161,12 +161,12 @@ jobs:
           provenance: false
           sbom: false
           labels: |
-            org.opencontainers.image.title=image-search
-            org.opencontainers.image.description=Self-hosted semantic image search (SigLIP2 → Qdrant)
+            org.opencontainers.image.title=lustre
+            org.opencontainers.image.description=Lustre — self-hosted semantic image search powered by SigLIP2 and Qdrant
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.licenses=MIT
-          cache-from: type=gha,mode=max,scope=image-search-build-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=image-search-build-${{ matrix.arch }}
+          cache-from: type=gha,mode=max,scope=lustre-build-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=lustre-build-${{ matrix.arch }}
 
   # ---------------------------------------------------------------------
   # Combine the two per-arch images into a multi-arch :latest index

@@ -140,7 +140,7 @@ jobs:
           mkdir -p .dev-test-logs
 
           # --demo-data synthesises 20 JPEGs into
-          # $TMPDIR/image-search-demo/ and indexes them into an
+          # $TMPDIR/lustre-demo/ and indexes them into an
           # in-memory Qdrant. The server listens on :8000.
           uv run python -m search.dev_server \
             --no-model --demo-data \

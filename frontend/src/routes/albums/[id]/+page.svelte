@@ -166,7 +166,7 @@
 </script>
 
 <svelte:head>
-  <title>{detail?.name ?? 'Album'} · Image Search</title>
+  <title>{detail?.name ?? 'Album'} · Lustre</title>
 </svelte:head>
 
 {#if loading}

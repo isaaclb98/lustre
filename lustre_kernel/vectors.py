@@ -1,5 +1,5 @@
 """
-image_search_kernel.vectors
+lustre_kernel.vectors
 
 Vector arithmetic primitives used by both the search side (centroid
 math) and the indexer side (payload validation). No I/O, no model

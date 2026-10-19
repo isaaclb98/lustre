@@ -30,9 +30,9 @@ from pathlib import Path
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from image_search_kernel.registry import get_active_model_spec
 from indexer.blurhash import compute_blurhash
 from indexer.fingerprints import compute_fingerprints
+from lustre_kernel.registry import get_active_model_spec
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ def __getattr__(name: str) -> int:
     global _VECTOR_DIM_RESOLVED
     if name == "VECTOR_DIM":
         import importlib
-        registry_mod = importlib.import_module("image_search_kernel.registry")
+        registry_mod = importlib.import_module("lustre_kernel.registry")
         config_mod = importlib.import_module("search.config")
         resolved: int = registry_mod.get(config_mod.DEFAULT_MODEL).dim
         _VECTOR_DIM_RESOLVED = resolved
@@ -183,7 +183,7 @@ def build_payload(
     if fingerprints is None:
         fingerprints = compute_fingerprints(path)
     if model_dim is None:
-        from image_search_kernel.registry import get as _registry_get
+        from lustre_kernel.registry import get as _registry_get
 
         model_dim = _registry_get(model_name).dim
     # Round‑31: skip the disk round-trip when the caller already

@@ -1,7 +1,7 @@
 /**
  * Playwright smoke tests — one happy-path per page.
  *
- * Per docs/image-search-v2-testing.md Layer 4:
+ * Per docs/lustre-v2-testing.md Layer 4:
  *   - One happy-path per page. The OpenAPI + zod layers above
  *     are the real guardrails; this just verifies pages
  *     actually render and the core interaction works.

@@ -1,4 +1,4 @@
-# End-user deployment recipe. Pulls image-search from ghcr and runs
+# End-user deployment recipe. Pulls lustre from ghcr and runs
 # it alongside Qdrant as a sidecar. Bind-mount your photo library
 # at /nas, then visit http://localhost:8000.
 #
@@ -11,20 +11,20 @@
 #
 # State:
 #   qdrant_data              — vector index + payloads
-#   image-search_search_data — SQLite side store (favorites, dislikes,
+#   lustre_search_data — SQLite side store (favorites, dislikes,
 #                              albums, saved searches), SigLIP2 model
 #                              cache, runtime thumbnail cache. KEEP
 #                              this volume — without it, every image
 #                              update wipes your library state.
 #
 # First start downloads the SigLIP2 model (~30 s, then cached in
-# image-search_search_data). After that, indexing happens via the
+# lustre_search_data). After that, indexing happens via the
 # in-app Settings → Index button — no host tooling required.
 
 services:
   qdrant:
     image: qdrant/qdrant:v1.19.0
-    container_name: image-search-qdrant
+    container_name: lustre-qdrant
     restart: unless-stopped
     ports:
       - "127.0.0.1:6333:6333"
@@ -38,9 +38,9 @@ services:
       start_period: 30s
 
   search:
-    image: ghcr.io/isaaclb98/image-search:latest
+    image: ghcr.io/isaaclb98/lustre:latest
     pull_policy: always
-    container_name: image-search
+    container_name: lustre
     restart: unless-stopped
     depends_on:
       qdrant:
@@ -69,8 +69,8 @@ services:
       # Persist SQLite side store + HF model cache + thumbnails across
       # image updates. Critical — without this volume, every container
       # restart after a `:latest` pull wipes user state.
-      - image-search_search_data:/app/data
+      - lustre_search_data:/app/data
 
 volumes:
   qdrant_data:
-  image-search_search_data:
+  lustre_search_data:

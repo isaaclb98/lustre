@@ -40,10 +40,10 @@ async function main() {
   // reload is the cleanest way to see the new size take effect.
   async function setGridSize(size: 'large' | 'medium' | 'small') {
     await page.evaluate((s) => {
-      const raw = localStorage.getItem('image-search:preferences');
+      const raw = localStorage.getItem('lustre:preferences');
       const obj = raw ? JSON.parse(raw) : {};
       obj.gridSize = s;
-      localStorage.setItem('image-search:preferences', JSON.stringify(obj));
+      localStorage.setItem('lustre:preferences', JSON.stringify(obj));
     }, size);
   }
 

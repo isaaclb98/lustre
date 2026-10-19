@@ -23,7 +23,7 @@ from indexer.upsert import VECTOR_DIM
 from search import app as app_mod
 from search.config import Config
 
-from image_search_kernel.registry import MockEmbedder
+from lustre_kernel.registry import MockEmbedder
 
 
 # ---------------- fixtures ----------------

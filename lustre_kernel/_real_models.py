@@ -1,7 +1,7 @@
 """
-image_search_kernel._real_models
+lustre_kernel._real_models
 
-Real-model registry entries. Imported lazily by `image_search_kernel.registry`
+Real-model registry entries. Imported lazily by `lustre_kernel.registry`
 so that the kernel package itself is importable on hosts without
 `torch` / `open_clip` / `transformers` installed.
 
@@ -16,7 +16,7 @@ import open_clip
 import torch
 import transformers  # noqa: F401
 
-from image_search_kernel.registry import ModelSpec, Registry
+from lustre_kernel.registry import ModelSpec, Registry
 
 __all__ = ["register_into"]
 

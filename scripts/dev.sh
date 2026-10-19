@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# scripts/dev.sh — wrapper for the dev stack at ~/docker/image-search-dev/.
+# scripts/dev.sh — wrapper for the dev stack at ~/docker/lustre-dev/.
 #
 # Why this exists (rather than calling docker compose directly):
 #   - The dev stack uses different container names, volumes, and
 #     ports from prod. The point of that is isolation. But a stray
 #     `docker compose down` in the wrong directory, or a copy-paste
 #     error in a script, could still target prod. This wrapper
-#     refuses to run from anywhere except ~/docker/image-search-dev/
+#     refuses to run from anywhere except ~/docker/lustre-dev/
 #     and refuses to invoke docker compose against any project that
-#     isn't `image-search-dev`.
+#     isn't `lustre-dev`.
 #   - The agent (me) has been told "don't touch prod" many times and
 #     has gotten it wrong before. Mechanical guards > discipline.
 #
@@ -27,10 +27,10 @@ set -euo pipefail
 
 # ----- Config ---------------------------------------------------------------
 
-DEV_DIR="$HOME/docker/image-search-dev"
-DEV_PROJECT="image-search-dev"
-PROD_DIR="$HOME/docker/image-search"
-PROD_CONTAINERS=("image-search" "image-search-qdrant")
+DEV_DIR="$HOME/docker/lustre-dev"
+DEV_PROJECT="lustre-dev"
+PROD_DIR="$HOME/docker/lustre"
+PROD_CONTAINERS=("lustre" "lustre-qdrant")
 
 # On this host, the user's effective groups don't include `docker`
 # even though /etc/group lists them — so plain `docker` fails with
@@ -70,7 +70,7 @@ preflight() {
 
   if [[ ! -d "$DEV_DIR" ]]; then
     err "dev stack not found at $DEV_DIR"
-    err "create ~/docker/image-search-dev/ with docker-compose.yml + .env"
+    err "create ~/docker/lustre-dev/ with docker-compose.yml + .env"
     exit 1
   fi
 
@@ -85,7 +85,7 @@ preflight() {
 }
 
 # After invoking docker compose, sanity-check that the project name
-# actually resolved to image-search-dev. Belt-and-braces in case
+# actually resolved to lustre-dev. Belt-and-braces in case
 # the user has weird env overrides or a stale compose project.
 verify_dev_project() {
   local projects

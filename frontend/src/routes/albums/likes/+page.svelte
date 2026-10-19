@@ -59,7 +59,7 @@
 </script>
 
 <svelte:head>
-  <title>Likes · Image Search</title>
+  <title>Likes · Lustre</title>
 </svelte:head>
 
 <PageHeader

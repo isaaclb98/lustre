@@ -17,8 +17,8 @@ from typing import Any
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 
-from image_search_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
 from indexer.scan import is_image_suffix, should_skip_name
+from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
 
 load_dotenv()
 

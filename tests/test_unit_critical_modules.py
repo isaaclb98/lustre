@@ -57,7 +57,7 @@ class TestUpsertPayloadAssembly:
         Image.new("RGB", (16, 16), color=(10, 20, 30)).save(path, "PNG")
 
     def test_build_payload_populates_every_field(self, tmp_path: Path):
-        from image_search_kernel.payload_schema import payload_field_names
+        from lustre_kernel.payload_schema import payload_field_names
         from indexer.upsert import build_payload
 
         p = tmp_path / "img.png"
@@ -74,7 +74,7 @@ class TestUpsertPayloadAssembly:
     def test_build_payload_sets_required_fields(self, tmp_path: Path):
         """Every REQUIRED_FIELDS entry lands on the payload."""
         from indexer.upsert import build_payload
-        from image_search_kernel.payload_schema import REQUIRED_FIELDS
+        from lustre_kernel.payload_schema import REQUIRED_FIELDS
 
         p = tmp_path / "img.png"
         self._png(p)
@@ -86,7 +86,7 @@ class TestUpsertPayloadAssembly:
         assert not missing, f"build_payload missing required fields: {missing}"
 
     def test_build_payload_folder_is_parent_path(self, tmp_path: Path):
-        from image_search_kernel.payload_schema import FIELD_FOLDER
+        from lustre_kernel.payload_schema import FIELD_FOLDER
         from indexer.upsert import build_payload
 
         sub = tmp_path / "vacation"
@@ -100,8 +100,8 @@ class TestUpsertPayloadAssembly:
         assert payload[FIELD_FOLDER] == str(sub.resolve())
 
     def test_build_payload_model_dim_from_registry(self, tmp_path: Path):
-        from image_search_kernel.payload_schema import FIELD_MODEL_DIM
-        from image_search_kernel.registry import get as registry_get
+        from lustre_kernel.payload_schema import FIELD_MODEL_DIM
+        from lustre_kernel.registry import get as registry_get
         from indexer.upsert import build_payload
 
         p = tmp_path / "img.png"
@@ -260,7 +260,7 @@ class TestVisionEncoderMockPath:
         enc = VisionEncoder(test_mode=True)
         # Mock dim tracks the active prod variant — so400m today
         # (1152-dim). Pre-migration this was 1536 (gopt's dim).
-        from image_search_kernel.registry import get as _registry_get
+        from lustre_kernel.registry import get as _registry_get
         from search.config import DEFAULT_MODEL
         expected_dim = _registry_get(DEFAULT_MODEL).dim
         assert enc.dim == expected_dim

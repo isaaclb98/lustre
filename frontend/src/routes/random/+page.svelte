@@ -150,7 +150,7 @@
 </script>
 
 <svelte:head>
-  <title>Random · Image Search</title>
+  <title>Random · Lustre</title>
 </svelte:head>
 
 <PageHeader title="Random" subtitle="Random photos from your library. Scroll for more." />

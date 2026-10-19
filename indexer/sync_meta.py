@@ -57,7 +57,7 @@ def _utc_now() -> str:
     """Unused after Option B; kept for import compatibility."""
     raise NotImplementedError(
         "sync_meta._utc_now is removed in Option B — call datetime.now() "
-        "directly, or import from image_search_kernel.payload_schema."
+        "directly, or import from lustre_kernel.payload_schema."
     )
 
 

@@ -1,6 +1,6 @@
 # .github/workflows/ci.yml
 #
-# Single CI workflow for image-search. Replaces the older
+# Single CI workflow for lustre. Replaces the older
 # dev-build.yml (4 jobs, parallel backend/frontend, path filters)
 # with one job that runs the full test + lint suite.
 #
@@ -66,8 +66,28 @@ jobs:
         with:
           version: "latest"
           enable-cache: true
-          cache-local-prefix: .venv
           python-version: "3.12"
+          # cache-local-path: removed. The previous setting pointed
+          # the action at .venv/ as both the venv AND the cache dir,
+          # which broke on a fresh checkout: the action would create
+          # .venv/ as an empty cache dir, then `uv sync` would find
+          # the empty .venv/ and refuse to use it ("no Python
+          # executable was found"). The action's default wheel cache
+          # (auto-keyed on pyproject.toml + uv.lock) is what we
+          # actually need for fast syncs; we don't need the venv
+          # itself cached.
+
+      - name: Install system deps (libvips)
+        # pyvips is a Python binding to the C libvips library; the
+        # library itself has to be installed at the OS level. The
+        # GHA ubuntu-latest image *used to* ship libvips, but the
+        # Oct 19, 2026 runner-image refresh (note the deprecation
+        # warnings) removed it. Without this, tests/test_thumbnails*
+        # crash with "cannot load library 'libvips.so.42'".
+        #
+        # Same apt line as docker/Dockerfile.search so what passes
+        # CI matches what ships in the production image.
+        run: sudo apt-get update && sudo apt-get install -y libvips42 libvips-tools
 
       - name: Sync Python deps
         # uv sync --extra dev creates .venv and installs the [dev]
@@ -111,10 +131,10 @@ jobs:
         run: uv run ruff check .
 
       - name: Type check (mypy, kernel package only)
-        # image_search_kernel is the shared package imported by
+        # lustre_kernel is the shared package imported by
         # both search/ and indexer/. Strict-mode mypy there catches
         # API contract drift before the runtime does.
-        run: uv run mypy image_search_kernel/
+        run: uv run mypy lustre_kernel/
 
       - name: Run pytest
         # In-memory Qdrant fixture handles the side store so we

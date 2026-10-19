@@ -81,7 +81,7 @@ test.describe('Grid size preference', () => {
     // not a contract this test should care about — only that
     // some preference was saved with gridSize='small'.
     const stored = await page.evaluate(() =>
-      window.localStorage.getItem('image-search:preferences')
+      window.localStorage.getItem('lustre:preferences')
     );
     expect(stored).not.toBeNull();
     const parsed = JSON.parse(stored ?? '{}');
@@ -137,10 +137,10 @@ test.describe('Grid size preference', () => {
       // fetch.
       await page.goto('/');
       await page.evaluate((s) => {
-        const raw = localStorage.getItem('image-search:preferences');
+        const raw = localStorage.getItem('lustre:preferences');
         const obj = raw ? JSON.parse(raw) : {};
         obj.gridSize = s;
-        localStorage.setItem('image-search:preferences', JSON.stringify(obj));
+        localStorage.setItem('lustre:preferences', JSON.stringify(obj));
       }, size);
       // Capture the first /api/random?limit= call. Wait for
       // the request to fire after navigation.

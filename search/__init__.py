@@ -12,12 +12,12 @@ moment `get_active_mock_dim()` is called — not at import time —
 so test environments that override `SIGLIP_VARIANT` BEFORE
 calling `get_default_registry()` see the correct dim.
 """
-from image_search_kernel.registry import register_mock_dim_provider
+from lustre_kernel.registry import register_mock_dim_provider
 
 
 def get_active_mock_dim() -> int:
     """Return the dim of the currently-configured prod variant."""
-    from image_search_kernel.registry import get as _registry_get
+    from lustre_kernel.registry import get as _registry_get
     from search.config import DEFAULT_MODEL
     return _registry_get(DEFAULT_MODEL).dim
 

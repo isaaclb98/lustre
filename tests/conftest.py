@@ -40,11 +40,11 @@ os.environ.setdefault("TOP_K_MAX", "200")
 # Register a deterministic "test" model entry so existing tests that
 # call `build_payload(..., model_name="test", ...)` continue to work
 # after the registry refactor (§A3). Real-model entries are registered
-# lazily by `image_search_kernel.registry._try_register_real_models` on
+# lazily by `lustre_kernel.registry._try_register_real_models` on
 # first call to `get_default_registry()`.
 @pytest.fixture(scope="session", autouse=True)
 def _register_test_model():
-    from image_search_kernel.registry import (
+    from lustre_kernel.registry import (
         MockEmbedder,
         ModelSpec,
         get_default_registry,

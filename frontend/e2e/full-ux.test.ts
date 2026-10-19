@@ -39,7 +39,7 @@ test.describe('Full User Experience E2E Tests', () => {
   test('Homepage loads and shows composer + top-bar tabs', async ({ page }) => {
     await page.goto('/');
     await appReady(page);
-    await expect(page).toHaveTitle(/image-search/);
+    await expect(page).toHaveTitle(/lustre/);
     await expect(page.locator('.composer-input').first()).toBeVisible();
     // Current topbar tabs: Home, Random, For You, Albums, Settings.
     // (The earlier 'Search' tab was removed when /search became the

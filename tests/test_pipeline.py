@@ -73,7 +73,7 @@ def test_load_phase_protocol_shape():
 def test_embed_phase_protocol_shape():
     """`EmbedPhase.__call__` takes a (Path, Tensor) iterator + embedder,
     returns Iterator[(Path, Tensor, Vector)]."""
-    from image_search_kernel.registry import MockEmbedder
+    from lustre_kernel.registry import MockEmbedder
     from indexer.pipeline import EmbedPhase
 
     embedder = MockEmbedder(dim=4, resolution=16)  # noqa: F841

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Populate the running demo server with realistic state.
 
-Re-creates the seeded state used for visual QA against the image-search demo:
+Re-creates the seeded state used for visual QA against the lustre demo:
   - 5 favorites
   - 2 dislikes
   - 2 albums ("Studio portraits" with 2 members, "Sun + sky" with 1 member)

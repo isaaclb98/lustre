@@ -16,7 +16,7 @@ Caller contract:
     embed (see `indexer.scan:IMAGE_EXTENSIONS`).
   - `qdrant_client` must be an open connection. The caller owns its
     lifecycle.
-  - `model_name` must be registered in `image_search_kernel.registry`.
+  - `model_name` must be registered in `lustre_kernel.registry`.
     Defaults to the web backend's current model.
   - `dry_run=True` runs the full pipeline without writing to Qdrant.
     Returns the report's counts unchanged.
@@ -39,9 +39,6 @@ from typing import Any
 
 from qdrant_client.http import models as qmodels
 
-from image_search_kernel.payload_schema import FIELD_PATH
-from image_search_kernel.registry import Embedder
-from image_search_kernel.registry import get as _registry_get
 from indexer.pipeline import (
     IndexerPipeline,
     PipelineConfig,
@@ -49,6 +46,9 @@ from indexer.pipeline import (
     WriteResult,
 )
 from indexer.upsert import build_payload, id_for
+from lustre_kernel.payload_schema import FIELD_PATH
+from lustre_kernel.registry import Embedder
+from lustre_kernel.registry import get as _registry_get
 
 logger = logging.getLogger(__name__)
 

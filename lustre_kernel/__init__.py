@@ -1,5 +1,5 @@
 """
-image_search_kernel — the shared package both `search/` and `indexer/`
+lustre_kernel — the shared package both `search/` and `indexer/`
 import from.
 
 Hard rule: this package has no dependency on `search/` or `indexer/`.
@@ -21,7 +21,7 @@ No I/O. No HTTP. No FastAPI. No QdrantClient construction. No
 filesystem reads. The kernel is pure utilities, registries, and types.
 """
 
-from image_search_kernel import payload_schema, qdrant_url, registry, vectors
+from lustre_kernel import payload_schema, qdrant_url, registry, vectors
 
 __all__ = [
     "payload_schema",

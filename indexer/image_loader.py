@@ -172,7 +172,7 @@ def _default_resolution() -> int:
     module is imported by a tool that runs before any registry call.
     """
     try:
-        from image_search_kernel.registry import get as _registry_get
+        from lustre_kernel.registry import get as _registry_get
         return _registry_get("ViT-so400m-patch16-384").resolution
     except Exception:  # noqa: BLE001
         return 384
@@ -242,7 +242,7 @@ def load(
     # load_image_pil below).
     source_w, source_h = peek_source_dims(path)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        from image_search_kernel.registry import get as _registry_get
+        from lustre_kernel.registry import get as _registry_get
         size = _registry_get(model_name).resolution
         # 2× the model's resolution is enough room for the letterbox
         # to keep the full image visible while capping the decoder at

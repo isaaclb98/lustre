@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from qdrant_client import QdrantClient
 
-from image_search_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
+from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
 from search import config, text_encoder
 from search._result_helpers import internal_error, qdrant_unreachable
 from search.centroids import (
@@ -936,7 +936,7 @@ def create_app(
             await asyncio.to_thread(index_db.close)
 
     app = FastAPI(
-        title="image-search",
+        title="lustre",
         version="0.1.0",
         lifespan=lifespan,
         # Don't redirect /photo/{id} to /photo/{id}/ (trailing slash).
@@ -2032,7 +2032,7 @@ def create_app(
     # ------------------------------------------------------------------
     # Static SPA fallback
     # ------------------------------------------------------------------
-    # When the image-search image is built as a single container (see
+    # When the lustre image is built as a single container (see
     # docker/Dockerfile.search), the SvelteKit build output lands at
     # /app/static. Mount its hashed assets at /_app and fall back to
     # index.html for every other path so the SPA can hydrate and route

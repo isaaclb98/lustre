@@ -19,7 +19,7 @@
 services:
   qdrant:
     image: qdrant/qdrant:v1.19.0
-    container_name: image-search-qdrant
+    container_name: lustre-qdrant
     restart: unless-stopped
     ports:
       # Expose Qdrant for debugging / direct access.
@@ -45,7 +45,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.search
-    container_name: image-search
+    container_name: lustre
     restart: unless-stopped
     # Round 31: GPU passthrough so the in-app indexer can actually
     # use the RTX 3080. NVIDIA Container Runtime must be installed

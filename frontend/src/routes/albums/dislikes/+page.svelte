@@ -53,7 +53,7 @@
 </script>
 
 <svelte:head>
-  <title>Dislikes · Image Search</title>
+  <title>Dislikes · Lustre</title>
 </svelte:head>
 
 <PageHeader

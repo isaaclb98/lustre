@@ -1,7 +1,7 @@
 """
 test_openapi_stability.py — fast contracts that catch API drift.
 
-Per docs/image-search-v2-testing.md (Layer 1 + Layer 2):
+Per docs/lustre-v2-testing.md (Layer 1 + Layer 2):
   - The frontend treats `openapi.json` as its compile-time and
     runtime source of truth (openapi-typescript + zod).
   - This module guarantees the backend surface the frontend

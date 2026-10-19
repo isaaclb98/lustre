@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from image_search_kernel.registry import ModelNotFoundError
+from lustre_kernel.registry import ModelNotFoundError
 from indexer.image_loader import (
     LoaderError,
     SIGLIP_MEAN,
@@ -191,7 +191,7 @@ class TestLoad:
         img_path = tmp_path / "test.jpg"
         Image.new("RGB", (300, 200), color="red").save(img_path, "JPEG")
 
-        from image_search_kernel.registry import get as registry_get
+        from lustre_kernel.registry import get as registry_get
         # Use a model that has a different resolution
         for model_name in ["ViT-L-16-SigLIP2-256", "ViT-B-16-SigLIP2-256"]:
             _logger = logging.getLogger(__name__)

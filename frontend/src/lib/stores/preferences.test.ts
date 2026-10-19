@@ -56,7 +56,7 @@ describe('preferences store', () => {
   it('persists updates to localStorage on every set', async () => {
     const { preferences: store, setSlideshowInterval } = await loadStore();
     setSlideshowInterval(10_000);
-    const raw = localStorage.getItem('image-search:preferences');
+    const raw = localStorage.getItem('lustre:preferences');
     expect(raw).not.toBeNull();
     const parsed = JSON.parse(raw ?? '{}');
     expect(parsed.slideshowIntervalMs).toBe(10_000);
@@ -115,7 +115,7 @@ describe('grid size', () => {
   it('persists grid size changes to localStorage', async () => {
     const { preferences: store, setGridSize } = await loadStore();
     setGridSize('small');
-    const raw = localStorage.getItem('image-search:preferences');
+    const raw = localStorage.getItem('lustre:preferences');
     expect(raw).not.toBeNull();
     const parsed = JSON.parse(raw ?? '{}');
     expect(parsed.gridSize).toBe('small');
@@ -141,7 +141,7 @@ describe('grid size', () => {
 
   it('falls back to default when localStorage has a tampered grid size', async () => {
     localStorage.setItem(
-      'image-search:preferences',
+      'lustre:preferences',
       JSON.stringify({ gridSize: 'huge' })
     );
     const { preferences: store, DEFAULT_GRID_SIZE } = await loadStore();
@@ -150,7 +150,7 @@ describe('grid size', () => {
 
   it('loads a previously-saved grid size', async () => {
     localStorage.setItem(
-      'image-search:preferences',
+      'lustre:preferences',
       JSON.stringify({ gridSize: 'medium' })
     );
     const { preferences: store } = await loadStore();

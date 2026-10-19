@@ -296,7 +296,7 @@ def centroid_compat_for(model_name: str) -> tuple[str, int]:
             f"Add one in search/config.py _CENTROID_MODEL_COMPAT. "
             f"Known models: {sorted(_CENTROID_MODEL_COMPAT)}"
         )
-    from image_search_kernel.registry import get as _registry_get
+    from lustre_kernel.registry import get as _registry_get
     return _CENTROID_MODEL_COMPAT[bare], _registry_get(bare).dim
 
 
@@ -414,7 +414,7 @@ class Config:
     # never disagrees with the production override.
     centroid_expected_feature_dim: int = field(
         default_factory=lambda: __import__(
-            "image_search_kernel.registry", fromlist=["get"],
+            "lustre_kernel.registry", fromlist=["get"],
         ).get(DEFAULT_MODEL).dim,
     )
     index_db_path: str = "./data/images.db"

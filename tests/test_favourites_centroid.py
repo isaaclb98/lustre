@@ -17,7 +17,7 @@ from search.centroids import (
     DynamicCentroidRegistry,
     DynamicCentroidSpec,
 )
-from image_search_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
+from lustre_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
 
 
 def _vec(seed: str) -> list[float]:

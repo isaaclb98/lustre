@@ -63,7 +63,7 @@ def _seed_point(client, collection, point_id: str, path: str,
     """
     import pathlib
 
-    from image_search_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
+    from lustre_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
     if base_dir is not None:
         full_path = pathlib.Path(base_dir) / path
         full_path.parent.mkdir(parents=True, exist_ok=True)

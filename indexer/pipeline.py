@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from image_search_kernel.registry import Embedder
+from lustre_kernel.registry import Embedder
 
 __all__ = [
     "CancelledError",
@@ -269,12 +269,12 @@ class IndexerPipeline:
         pipeline completes (the caller decides whether to retry or
         rollback based on the report's failure list).
         """
-        from image_search_kernel.registry import get as _registry_get
         from indexer.run_pipeline import (
             _resolve_active_model_name,
             _resolve_active_model_revision,
             _resolve_active_model_variant,
         )
+        from lustre_kernel.registry import get as _registry_get
 
         t0 = time.perf_counter()
         embedder = _registry_get(config.model_name).vision

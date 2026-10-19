@@ -1,5 +1,5 @@
 [project]
-name = "image-search"
+name = "lustre"
 version = "0.1.0"
 description = "Self-hosted semantic image search. SigLIP2 embeddings → Qdrant → text/image queries."
 requires-python = ">=3.10"
@@ -63,8 +63,8 @@ dev = [
     # fan-out. Pinned >=3.6 for the modern `-n auto` semantics;
     # see .github/workflows/dev-build.yml.
     "pytest-xdist>=3.6",
-    # Strict static type-check on image_search_kernel/. CI runs
-    # `mypy image_search_kernel/` against mypy.ini; installed here
+    # Strict static type-check on lustre_kernel/. CI runs
+    # `mypy lustre_kernel/` against mypy.ini; installed here
     # so `uv sync --extra dev` is the only install command needed.
     "mypy>=1.10",
 ]
@@ -74,7 +74,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["search", "indexer", "image_search_kernel"]
+packages = ["search", "indexer", "lustre_kernel"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -88,7 +88,7 @@ filterwarnings = [
 # intentionally low to start; the goal is to make coverage drift
 # visible, not to force a refactor to hit 90% in one PR.
 [tool.coverage.run]
-source = ["search", "indexer", "image_search_kernel"]
+source = ["search", "indexer", "lustre_kernel"]
 omit = [
     # Test fixtures and dev-only scripts
     "*/tests/*",

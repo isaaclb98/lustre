@@ -1,5 +1,5 @@
 """
-image_search_kernel.payload_schema
+lustre_kernel.payload_schema
 
 Canonical Qdrant point payload schema. Single source of truth for
 every field name and type stored on a Qdrant point.

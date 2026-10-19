@@ -23,7 +23,9 @@
 set -euo pipefail
 
 # Argument parsing. Flags first, then positional. Default package is
-# image-search (the only container in this repo); default keep is 5.
+# image-search (the old package, kept published during the migration
+# to ghcr.io/isaaclb98/lustre; prune it with this script, then point
+# the default at lustre once Phase C7 lands); default keep is 5.
 PACKAGE="image-search"
 PACKAGE_OWNER="isaaclb98"
 KEEP="5"

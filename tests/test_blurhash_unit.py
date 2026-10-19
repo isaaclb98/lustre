@@ -201,7 +201,7 @@ def test_build_payload_includes_blurhash(sample_png, monkeypatch):
     assert payload["blurhash"] is not None
     # Use the active model's dim — collection was just created with it.
     # Hardcoding 1536 here would break when L/16-256 (1024) is active.
-    from image_search_kernel.registry import get_active_model_spec
+    from lustre_kernel.registry import get_active_model_spec
     active_dim = get_active_model_spec().dim
     upsert.upsert_batch(client, "test_blurhash", [(payload["id"], [0.0] * active_dim, payload)])
     # Round-trip via Qdrant: the stored payload must include blurhash.

@@ -134,7 +134,7 @@
 </script>
 
 <svelte:head>
-  <title>Settings · Image Search</title>
+  <title>Settings · Lustre</title>
 </svelte:head>
 
 <div class="settings-page">

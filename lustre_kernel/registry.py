@@ -1,5 +1,5 @@
 """
-image_search_kernel.registry
+lustre_kernel.registry
 
 The model registry. The only place in the codebase that knows a
 model's name, dim, resolution, revision, or how to embed with it.
@@ -424,15 +424,15 @@ def _try_register_real_models(registry: Registry) -> None:
     is not called from per-request paths.
     """
     # The web backend's gopt-16 model. Real implementation lives in
-    # `image_search_kernel._real_models` and is imported lazily so
+    # `lustre_kernel._real_models` and is imported lazily so
     # that importing the kernel does not import torch.
     try:
-        from image_search_kernel import _real_models
+        from lustre_kernel import _real_models
 
         _real_models.register_into(registry)
     except ImportError:
         # Real-model backend not installed. The mock entry remains
         # available; production deployments that need real models
         # install the corresponding extra (`pip install
-        # image-search-kernel[open_clip]`).
+        # lustre-kernel[open_clip]`).
         pass
