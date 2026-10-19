@@ -1,0 +1,149 @@
+# Oracle VM docker-compose for lustre (Round 35, Open Images v7
+# validation split demo).
+#
+# Layout: /data/lustre/ on the Oracle VM (aarch64).
+# Reuses the ghcr.io/isaaclb98/lustre:latest multi-arch image —
+# on this VM, `:latest` resolves to the linux/arm64 manifest. No GPU;
+# SigLIP2 B/16-256 runs on CPU. Qdrant uses ports 6335/6336 to avoid
+# colliding with the pre-existing qdrant container on 6333/6334 (left
+# alone per Isaac's instruction).
+#
+# Topology: search + qdrant sidecar. The in-app Settings → Index
+# button spawns `python -m indexer.local_sync` inside the search
+# container — no separate indexer service. Image source bind-mounts
+# /data/openimages/validation (12 GB, 41,620 JPEGs).
+#
+# Network: tailnet-only. Search container binds to 0.0.0.0:8000 so
+# `curl http://oracle-a1:8000/...` from any tailnet device works
+# directly (no tailscale serve proxy needed for an internal demo).
+# Will need Caddy + tailscale serve for public exposure later.
+#
+# Run:
+#   docker compose up -d            # start qdrant + search
+#   docker compose logs -f search   # watch logs
+#   docker compose down             # stop (volumes preserved)
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    container_name: lustre-oracle-qdrant
+    restart: unless-stopped
+    # Use 6335/6336 instead of the default 6333/6334 because the VM
+    # already has a long-running qdrant container on those ports
+    # (legacy, no active collections — left alone per Isaac's
+    # instruction). Both lustre's Qdrant and the legacy one
+    # bind to 127.0.0.1 so they coexist fine.
+    ports:
+      - "127.0.0.1:6335:6333"
+      - "127.0.0.1:6336:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  search:
+    image: ghcr.io/isaaclb98/lustre:latest
+    pull_policy: always
+    container_name: lustre-oracle
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-images-oracle}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      # NAS_IMAGES_BASE is required by search/config.py at boot
+      # (round-29: it was previously optional for tests but is now
+      # mandatory outside SEARCH_TEST_MODE). The frontend uses it to
+      # build absolute image URLs in API responses — for the VM
+      # demo, point at the bind-mounted validation dir. Search hits
+      # return paths like /data/openimages/validation/<id>.jpg,
+      # which the frontend prefixes with WEB_UI_URL.
+      #
+      # Round-35: renamed to nested directories. NAS_IMAGES_BASE is a
+      # deprecated alias (search/config.py). Setting the value to
+      # the parent dir is a no-op for path resolution (the indexer
+      # stores absolute paths in Qdrant payloads and the search app
+      # serves them directly via resolve_local), but satisfies the
+      # existence check.
+      PHOTOS_DIR: /data/openimages
+      # WEB_UI_URL is what the API uses to build absolute image URLs in
+      # responses. With tailscale serve on the VM, the user-facing
+      # URL is https://oracle-a1.burmese-mermaid.ts.net. The frontend
+      # prefixes returned paths with this.
+      WEB_UI_URL: ${WEB_UI_URL:-https://oracle-a1.burmese-mermaid.ts.net}
+
+      # B/16-256 is the ghcr default (round-29). 768-dim, 256 input,
+      # ~370 MB weights — fits comfortably on CPU and matches what
+      # the reconciler in search/config.py expects when SIGLIP_VARIANT
+      # is unset. Setting it explicitly so the demo is reproducible
+      # independent of any future default change.
+      MODEL_NAME: ${MODEL_NAME:-ViT-B-16-SigLIP2-256}
+      SIGLIP_VARIANT: ${SIGLIP_VARIANT:-B/16-256}
+
+      # The lustre app's Settings → Index button spawns an
+      # indexer subprocess inside this container, so INDEXER_SOURCES
+      # is read by that subprocess. /data/openimages/* is
+      # bind-mounted from the host (see volumes below). Multiple
+      # sources work because the indexer derives a per-source name
+      # from the dir basename and writes it to the Qdrant payload's
+      # `collection` field, so train_a, train_b, and validation
+      # stay distinct for filtering and reporting.
+      INDEXER_SOURCES: /data/openimages/validation,/data/openimages/train_a,/data/openimages/train_b
+      INDEXER_DEVICE: cpu
+      INDEXER_BATCH_SIZE: ${INDEXER_BATCH_SIZE:-4}
+      EMBED_BATCH_SIZE: ${EMBED_BATCH_SIZE:-4}
+
+      # HF model cache → named volume. The ~370 MB B/16-256 download
+      # survives container restarts. Without this, every recreate
+      # re-downloads the model.
+      HF_HOME: /app/data/hf-cache
+      HF_HUB_CACHE: /app/data/hf-cache/hub
+      TRANSFORMERS_CACHE: /app/data/hf-cache/hub
+
+      # Round-35: keep the SQLite index cache in sync with Qdrant
+      # during the long first-time index run. Default 21600 (6h)
+      # means fresh points the indexer writes are invisible to
+      # Likes / Dislikes / Random until the next periodic tick —
+      # since the indexer runs 41k images at ~1 imgs/sec and takes
+      # ~12h, that's a real UX gap. 5 min keeps the cache fresh
+      # at the cost of one full Qdrant scroll every 300s (~5-10s
+      # at 41k points; ~5s at 2M).
+      INDEX_DB_REFRESH_INTERVAL_SECONDS: ${INDEX_DB_REFRESH_INTERVAL_SECONDS:-300}
+
+      # The indexer subprocess (spawned by the in-app Index button)
+      # inherits this env so it can open the same SQLite the search
+      # app is reading from. Without it, write-through silently
+      # no-ops because open_search_images_db() sees INDEX_DB_PATH as
+      # unset. The search container's own Config falls back to
+      # ./data/images.db if unset, so we set the explicit path here
+      # for the subprocess to match.
+      INDEX_DB_PATH: /app/data/images.db
+    ports:
+      # Loopback only, matching the prod compose. tailscale serve
+      # proxies the VM's HTTPS endpoint
+      # (https://oracle-a1.burmese-mermaid.ts.net) onto 127.0.0.1:8000.
+      # Tailnet-only by default (no --funnel). Survives tailnet IP
+      # churn — the bind is by loopback, not by tailnet IP.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Read-only bind mount of the Open Images splits. 13 GB
+      # validation (41,620 JPEGs) + ~50 GB train_a/train_b
+      # (~200k JPEGs, downloading). Mounting the parent directory
+      # so a single bind gives the search container read access to
+      # all three splits without enumerating each.
+      - /data/openimages:/data/openimages:ro
+      # Persists /app/data across restarts:
+      #   - /app/data/images.db         (SQLite IndexDB)
+      #   - /app/data/hf-cache/         (SigLIP2 model cache)
+      #   - /app/data/photo_cache/      (runtime thumbnail cache)
+      - search_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  qdrant_data:
+  search_data:
