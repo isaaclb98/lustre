@@ -69,7 +69,7 @@
   <div class="bar">
     <a class="brand" href="/" aria-label="Home">
       <Icon name="sparkle" size={22} />
-      <span class="brand-text">Image Search</span>
+      <span class="brand-text">Lustre</span>
     </a>
     <nav class="tabs" aria-label="Main">
       {#each tabs as t (t.href)}
