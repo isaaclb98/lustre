@@ -86,14 +86,10 @@ jobs:
         # uv sync --extra dev creates .venv and installs the [dev]
         # extra (pytest, ruff, mypy, pytest-xdist, pytest-cov) in
         # one resolver pass. Cached on pyproject.toml + uv.lock.
-        #
-        # --refresh busts the package-install cache, which avoids
-        # the cached-wheels-from-old-path failure we hit on the
-        # rename. (The GHA uv cache was populated back when the
-        # repo was still image-search/; a clean install is cheaper
-        # than fighting the cache.) The cache will re-warm on the
-        # next run.
-        run: uv sync --extra dev --refresh
+        run: |
+          echo "=== before sync ===" && ls -la .venv 2>&1 | head -5
+          uv sync --extra dev --refresh
+          echo "=== after sync ===" && ls -la .venv/bin/ 2>&1 | head -10
 
       - name: Set up Node
         uses: actions/setup-node@v4
