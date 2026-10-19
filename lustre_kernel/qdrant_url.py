@@ -1,5 +1,5 @@
 """
-image_search_kernel.qdrant_url
+lustre_kernel.qdrant_url
 
 URL → QdrantClient kwargs helper. Moved verbatim from
 `search/qdrant_url.py` so that both `search/` and `indexer/` can build
