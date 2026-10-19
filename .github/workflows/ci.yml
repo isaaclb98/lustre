@@ -77,6 +77,18 @@ jobs:
           # actually need for fast syncs; we don't need the venv
           # itself cached.
 
+      - name: Install system deps (libvips)
+        # pyvips is a Python binding to the C libvips library; the
+        # library itself has to be installed at the OS level. The
+        # GHA ubuntu-latest image *used to* ship libvips, but the
+        # Oct 19, 2026 runner-image refresh (note the deprecation
+        # warnings) removed it. Without this, tests/test_thumbnails*
+        # crash with "cannot load library 'libvips.so.42'".
+        #
+        # Same apt line as docker/Dockerfile.search so what passes
+        # CI matches what ships in the production image.
+        run: sudo apt-get update && sudo apt-get install -y libvips42 libvips-tools
+
       - name: Sync Python deps
         # uv sync --extra dev creates .venv and installs the [dev]
         # extra (pytest, ruff, mypy, pytest-xdist, pytest-cov) in
