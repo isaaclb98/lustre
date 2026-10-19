@@ -4,7 +4,7 @@ search/text_encoder.py
 Thin wrapper around the model registry's text embedder (§A3).
 
 The actual SigLIP2 loading lives in
-`image_search_kernel._real_models.OpenClipEmbedder`. This module
+`lustre_kernel._real_models.OpenClipEmbedder`. This module
 exists to preserve the historical `TextEncoder(...)` API and to
 implement prompt-composition (positive / negative prompt mean +
 difference) on top of the registered text embedder.
@@ -26,7 +26,7 @@ import functools
 import logging
 from enum import Enum
 
-from image_search_kernel.vectors import l2_normalize, mean_vector
+from lustre_kernel.vectors import l2_normalize, mean_vector
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +49,15 @@ _model_error: str | None = None
 # it was hardcoded to "ViT-gopt-16-SigLIP2-384". Kept as a string
 # rather than a direct registry call to avoid import-time cycles
 # (registry → config → ... → encoder).
-# Mock entry registered by `image_search_kernel.registry.get_default_registry`.
+# Mock entry registered by `lustre_kernel.registry.get_default_registry`.
 # Sourced from the registry too: pre-R1 this was "mock-1536" (a
 # constant matching the gopt dim); post-R1 it's whatever the
 # registry's mock entry is named. Look it up via the same
 # `_MOCK_REGISTRY_NAME` constant the registry exports.
-from image_search_kernel.registry import (
+from lustre_kernel.registry import (
     _MOCK_REGISTRY_NAME as MOCK_MODEL_NAME,
 )
-from image_search_kernel.registry import (
+from lustre_kernel.registry import (
     register_mock_dim_provider,
 )
 from search.config import DEFAULT_MODEL as DEFAULT_MODEL_NAME
@@ -72,7 +72,7 @@ def _provide_active_mock_dim() -> int:
     the mock stays at the pre-migration 1536 literal and tests
     against the new variant would fail with shape mismatches.
     """
-    from image_search_kernel.registry import get as _registry_get
+    from lustre_kernel.registry import get as _registry_get
     return _registry_get(DEFAULT_MODEL_NAME).dim
 
 
@@ -112,7 +112,7 @@ class TextEncoder:
         self.device = device
         self.test_mode = test_mode
 
-        from image_search_kernel.registry import get as _registry_get
+        from lustre_kernel.registry import get as _registry_get
 
         if test_mode:
             try:
@@ -130,7 +130,7 @@ class TextEncoder:
     def resolution(self) -> int:
         # Text encoder has no image resolution; return the model's
         # paired vision resolution for symmetry with vision_encoder.
-        from image_search_kernel.registry import get as _registry_get
+        from lustre_kernel.registry import get as _registry_get
 
         try:
             return _registry_get(self._requested_arch).resolution

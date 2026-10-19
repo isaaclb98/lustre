@@ -26,7 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from qdrant_client import QdrantClient
 
-from image_search_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
+from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
 from search import config, text_encoder
 from search._result_helpers import internal_error, qdrant_unreachable
 from search.centroids import (

@@ -35,8 +35,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 
-from image_search_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
-from image_search_kernel.registry import get as _registry_get
 from indexer import scan as scan_mod
 from indexer import upsert
 from indexer.image_loader import letterbox_resize, load_image_pil, peek_source_dims
@@ -44,6 +42,8 @@ from indexer.retry import RetryExhausted, retry_with_backoff
 from indexer.scan import ScanCancelled
 from indexer.thumbnails import generate_thumbnail_for_path, thumbnail_path
 from indexer.vision_encoder import VisionEncoder
+from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
+from lustre_kernel.registry import get as _registry_get
 
 load_dotenv()
 logger = logging.getLogger(__name__)

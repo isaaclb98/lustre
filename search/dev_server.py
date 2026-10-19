@@ -94,7 +94,7 @@ def _build_demo_app(count: int) -> FastAPI:
     paths = _make_demo_images(demo_root, count)
     client = QdrantClient(location=":memory:")
     collection = "images_demo"
-    from image_search_kernel.registry import get_default_registry
+    from lustre_kernel.registry import get_default_registry
     _dim = get_default_registry().get(
         config.get_model_name_for_variant(config.get_siglip_variant())
     ).dim

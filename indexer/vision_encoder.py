@@ -2,7 +2,7 @@
 indexer/vision_encoder.py
 
 Thin wrapper around the model registry (§A3). The actual SigLIP2
-loading lives in `image_search_kernel._real_models.OpenClipEmbedder`;
+loading lives in `lustre_kernel._real_models.OpenClipEmbedder`;
 this module exists only to preserve the historical
 `VisionEncoder(...)` API for callers (`local_sync.py`, the benchmark
 suite) and to centralize test-mode dispatch to the registry's
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Default model name registered with the kernel. Callers may override
 # via the constructor.
 DEFAULT_MODEL_NAME: str = "ViT-so400m-patch16-384"
-# Mock entry registered by `image_search_kernel.registry.get_default_registry`.
+# Mock entry registered by `lustre_kernel.registry.get_default_registry`.
 MOCK_MODEL_NAME: str = "mock-1536"
 
 
@@ -56,7 +56,7 @@ class VisionEncoder:
         self.device = device
         self.test_mode = test_mode
 
-        from image_search_kernel.registry import get as _registry_get
+        from lustre_kernel.registry import get as _registry_get
 
         if test_mode:
             try:
