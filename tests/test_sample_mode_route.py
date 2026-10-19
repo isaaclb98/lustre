@@ -30,7 +30,7 @@ from _centroid_fixture import (
     WUXIA_CENTROID,
     save_centroid,
 )
-from image_search_kernel.registry import MockEmbedder
+from lustre_kernel.registry import MockEmbedder
 from indexer import upsert
 from indexer.upsert import VECTOR_DIM
 from search import app as app_mod

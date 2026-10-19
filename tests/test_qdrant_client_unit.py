@@ -404,14 +404,14 @@ class TestSearchHitPayloadAccess:
         assert hit.payload.get("nonexistent_field") is None
 
 
-# ----- image_search_kernel.qdrant_url.client_kwargs -----
+# ----- lustre_kernel.qdrant_url.client_kwargs -----
 
 class TestClientKwargsGrpc:
     """Pin the gRPC plumbing contract for the qdrant-client kwargs helper."""
 
     def test_default_is_rest(self):
         """No prefer_grpc flag means no gRPC kwargs."""
-        from image_search_kernel.qdrant_url import client_kwargs
+        from lustre_kernel.qdrant_url import client_kwargs
 
         kwargs = client_kwargs("http://localhost:6333")
         assert "prefer_grpc" not in kwargs
@@ -420,7 +420,7 @@ class TestClientKwargsGrpc:
 
     def test_prefer_grpc_adds_both_kwargs(self):
         """prefer_grpc=True emits both prefer_grpc and grpc_port."""
-        from image_search_kernel.qdrant_url import client_kwargs
+        from lustre_kernel.qdrant_url import client_kwargs
 
         kwargs = client_kwargs(
             "http://localhost:6333", prefer_grpc=True,
@@ -431,7 +431,7 @@ class TestClientKwargsGrpc:
 
     def test_prefer_grpc_with_explicit_port(self):
         """Explicit grpc_port wins over the +1 default."""
-        from image_search_kernel.qdrant_url import client_kwargs
+        from lustre_kernel.qdrant_url import client_kwargs
 
         kwargs = client_kwargs(
             "http://localhost:6333", prefer_grpc=True, grpc_port=17333,
@@ -440,7 +440,7 @@ class TestClientKwargsGrpc:
 
     def test_explicit_grpc_port_ignored_when_rest(self):
         """grpc_port without prefer_grpc does NOT leak into kwargs."""
-        from image_search_kernel.qdrant_url import client_kwargs
+        from lustre_kernel.qdrant_url import client_kwargs
 
         kwargs = client_kwargs(
             "http://localhost:6333", grpc_port=17333,
@@ -450,7 +450,7 @@ class TestClientKwargsGrpc:
 
     def test_https_default_grpc_port_is_443_plus_1(self):
         """HTTPS without explicit port still gets port + 1 as gRPC default."""
-        from image_search_kernel.qdrant_url import client_kwargs
+        from lustre_kernel.qdrant_url import client_kwargs
 
         kwargs = client_kwargs(
             "https://qdrant.example.com", prefer_grpc=True,

@@ -44,7 +44,7 @@ def synth_corpus(tmp_path):
 
 def test_run_pipeline_source_end_to_end(synth_corpus, qdrant_in_memory):
     """10 synthetic JPEGs index via the wrapper with v1 schema fields."""
-    from image_search_kernel.payload_schema import (
+    from lustre_kernel.payload_schema import (
         FIELD_FOLDER,
         FIELD_MODEL_DIM,
         FIELD_MODEL_NAME,
@@ -188,7 +188,7 @@ def test_run_pipeline_source_empty_source(qdrant_in_memory):
 
 def test_set_active_model_persists_across_calls(synth_corpus, qdrant_in_memory):
     """`set_active_model` once is enough; subsequent runs use the pinned values."""
-    from image_search_kernel.payload_schema import FIELD_MODEL_NAME, FIELD_MODEL_REVISION
+    from lustre_kernel.payload_schema import FIELD_MODEL_NAME, FIELD_MODEL_REVISION
     from indexer.upsert import VECTOR_DIM, ensure_collection
 
     ensure_collection(qdrant_in_memory, "images_pinned", dim=VECTOR_DIM)

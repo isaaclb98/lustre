@@ -24,7 +24,7 @@ BIRD_ID = "33333333-3333-3333-3333-333333333333"
 def app_with_qdrant(qdrant_in_memory, nas_base):
     from PIL import Image
 
-    from image_search_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
+    from lustre_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
 
     cfg = Config(
         qdrant_url="memory://",

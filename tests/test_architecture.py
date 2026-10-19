@@ -4,13 +4,13 @@ tests/test_architecture.py — architectural invariants.
 Pins rules from `docs/backend-refactor-plan.md` that would be easy to
 regress:
 
-- The shared kernel (`image_search_kernel/`) imports nothing from
+- The shared kernel (`lustre_kernel/`) imports nothing from
   `search/` or `indexer/`. Both of those packages may import from the
   kernel.
 - `indexer/` imports nothing from `search/`. The dependency direction
   enforced in §3 of the plan.
 - `search/` does not import from `indexer/` outside the kernel's
-  payload contract (i.e. only via `image_search_kernel`).
+  payload contract (i.e. only via `lustre_kernel`).
 
 If any of these regress, the failure surfaces here, not as a
 runtime bug or a silent coupling that future refactors will have
@@ -31,7 +31,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-KERNEL_DIR = REPO_ROOT / "image_search_kernel"
+KERNEL_DIR = REPO_ROOT / "lustre_kernel"
 SEARCH_DIR = REPO_ROOT / "search"
 INDEXER_DIR = REPO_ROOT / "indexer"
 TESTS_DIR = REPO_ROOT / "tests"
@@ -66,7 +66,7 @@ def test_kernel_does_not_import_search_or_indexer():
         for match in KERNEL_FORBIDDEN_IMPORTS.finditer(text):
             offenders.append((path, match.group(0).strip()))
     assert not offenders, (
-        "image_search_kernel imports from a consumer package; "
+        "lustre_kernel imports from a consumer package; "
         "the kernel must remain pure.\n"
         + "\n".join(f"  {p.relative_to(REPO_ROOT)}: {line}" for p, line in offenders)
     )
@@ -128,7 +128,7 @@ def test_search_does_not_import_indexer():
 
 # Files where references are explicitly allowed (the registry and the
 # one deprecated constant in upsert.py). `search/config.py` is the
-# app-level config that mirrors `image_search_kernel.registry`'s
+# app-level config that mirrors `lustre_kernel.registry`'s
 # VARIANT_TO_MODEL — it owns the app-facing `SIGLIP_VARIANT` env var
 # contract; the kernel owns the model spec resolution.
 DIM_ALLOWED_FILES: frozenset[Path] = frozenset({
@@ -141,7 +141,7 @@ DIM_ALLOWED_FILES: frozenset[Path] = frozenset({
 })
 
 # Files where ML-runtime imports are explicitly allowed:
-# - `image_search_kernel/_real_models.py`: the kernel's conditional
+# - `lustre_kernel/_real_models.py`: the kernel's conditional
 #   real-model registration entry.
 # - `search/centroids.py`: reads `.pt` files written by the sibling
 #   `isaac-image-scoring` project.
@@ -351,12 +351,12 @@ def test_kernel_is_importable_on_cpu_only_host():
     registration behavior is covered by
     `test_registry_conditional_real_models` in `test_registry.py`.
     """
-    import image_search_kernel
-    import image_search_kernel.payload_schema
-    import image_search_kernel.qdrant_url
-    import image_search_kernel.vectors
+    import lustre_kernel
+    import lustre_kernel.payload_schema
+    import lustre_kernel.qdrant_url
+    import lustre_kernel.vectors
 
-    assert hasattr(image_search_kernel, "payload_schema")
-    assert hasattr(image_search_kernel, "qdrant_url")
-    assert hasattr(image_search_kernel, "vectors")
-    assert hasattr(image_search_kernel, "registry")
+    assert hasattr(lustre_kernel, "payload_schema")
+    assert hasattr(lustre_kernel, "qdrant_url")
+    assert hasattr(lustre_kernel, "vectors")
+    assert hasattr(lustre_kernel, "registry")

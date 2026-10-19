@@ -94,7 +94,7 @@ def test_api_centroids_empty_when_dir_unset():
         # so400m/16-384 = 1152. Hardcoding the literal would couple
         # the test to the variant choice — pull from the registry
         # so this stays correct across future variant changes.
-        from image_search_kernel.registry import get as _registry_get
+        from lustre_kernel.registry import get as _registry_get
         from search.config import DEFAULT_MODEL
         assert body["expected_feature_dim"] == _registry_get(DEFAULT_MODEL).dim
         assert any(d["name"] == "favourites" for d in body["dynamic_centroids"])

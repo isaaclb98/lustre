@@ -38,11 +38,11 @@ def test_default_variant_resolves_to_registered_model(monkeypatch):
     # The resolved model name must be registered with a matching dim
     # in the kernel registry. Catches drift between the variant table
     # and the real-model registration.
-    from image_search_kernel.registry import get as _registry_get
+    from lustre_kernel.registry import get as _registry_get
     spec = _registry_get(model_name)
     assert spec is not None, (
         f"default model {model_name!r} not in kernel registry — "
-        f"check image_search_kernel/_real_models.register_into"
+        f"check lustre_kernel/_real_models.register_into"
     )
     assert spec.dim == dim, (
         f"registry dim ({spec.dim}) != config dim ({dim}) for {model_name}"

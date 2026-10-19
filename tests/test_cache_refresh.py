@@ -78,7 +78,7 @@ def refresh_app(tmp_path, monkeypatch):
         (seed_ids["c"], {"id": seed_ids["c"], "path": "/photos/c.jpg",
                           "collection": "portrait", "indexed_at": "2026-01-01T00:00:00Z"}),
     ]
-    from image_search_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
+    from lustre_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
     upsert.upsert_batch(
         client, cfg.qdrant_collection,
         [(pid, _mock_embed(pid), payload) for pid, payload in seed],
@@ -133,7 +133,7 @@ def test_api_cache_refresh_picks_up_new_qdrant_points(refresh_app, refresh_app_s
 
     # Add a fourth point to Qdrant without going through the cache.
     from indexer import upsert
-    from image_search_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
+    from lustre_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
     # Reach into the app's raw QdrantClient (stored on app.state by
     # the fixture) and upsert a fourth point directly.
     client = refresh_app.app.state.qdrant_client

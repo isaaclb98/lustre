@@ -30,7 +30,7 @@ class TestModuleConstants:
 
     def test_default_is_registered(self):
         """DEFAULT_MODEL_NAME should be in the kernel registry."""
-        from image_search_kernel.registry import get
+        from lustre_kernel.registry import get
         spec = get(DEFAULT_MODEL_NAME)
         assert spec is not None
 
@@ -90,7 +90,7 @@ class TestVisionEncoderProperties:
         contract ("mock dim equals registry dim") rather than a
         specific literal.
         """
-        from image_search_kernel.registry import get as _registry_get
+        from lustre_kernel.registry import get as _registry_get
         from search.config import DEFAULT_MODEL
         expected_dim = _registry_get(DEFAULT_MODEL).dim
         encoder = VisionEncoder(test_mode=True)

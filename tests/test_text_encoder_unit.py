@@ -72,7 +72,7 @@ class TestModuleConstants:
 
     def test_default_model_is_registered(self):
         """The default model name should be in the kernel registry."""
-        from image_search_kernel.registry import get
+        from lustre_kernel.registry import get
         spec = get(DEFAULT_MODEL_NAME)
         assert spec is not None
 

@@ -73,10 +73,10 @@ def _upsert_adapter(items, *, client, collection, dry_run, batch_size, on_failur
     (per-item failure reporting) is honored at the qdrant boundary."""
     from qdrant_client.http import models as qmodels
 
-    from image_search_kernel.payload_schema import (
+    from lustre_kernel.payload_schema import (
         FIELD_PATH,
     )
-    from image_search_kernel.registry import get as _registry_get
+    from lustre_kernel.registry import get as _registry_get
     from indexer.pipeline import WriteResult
     from indexer.upsert import (
         build_payload,
@@ -192,7 +192,7 @@ def test_pipeline_runs_end_to_end_with_real_modules(synth_corpus, qdrant_in_memo
     assert report.dry_run is False
 
     # Verify every point landed in qdrant with the schema fields.
-    from image_search_kernel.payload_schema import (
+    from lustre_kernel.payload_schema import (
         FIELD_FOLDER,
         FIELD_MODEL_DIM,
         FIELD_MODEL_NAME,

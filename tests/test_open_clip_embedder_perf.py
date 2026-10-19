@@ -25,7 +25,7 @@ import pytest
 @pytest.fixture
 def make_embedder():
     """Return a factory that constructs OpenClipEmbedder under current env."""
-    from image_search_kernel._real_models import OpenClipEmbedder
+    from lustre_kernel._real_models import OpenClipEmbedder
 
     def _make(**kwargs):
         return OpenClipEmbedder(

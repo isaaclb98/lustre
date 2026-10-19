@@ -1,7 +1,7 @@
 """tests/test_schema.py — schema invariants.
 
 Pins the payload field set so a drift between
-`image_search_kernel.payload_schema`, `indexer/upsert.py:build_payload`,
+`lustre_kernel.payload_schema`, `indexer/upsert.py:build_payload`,
 and `SCHEMA.md` shows up as a test failure rather than as a silent
 search-side bug.
 """
@@ -16,9 +16,9 @@ import pytest
 def schema_module():
     # The kernel package owns the canonical schema constants. Tests
     # import only via this fixture; the regression test in §A1 enforces
-    # no file outside `image_search_kernel/` references payload field
+    # no file outside `lustre_kernel/` references payload field
     # names directly.
-    from image_search_kernel import payload_schema
+    from lustre_kernel import payload_schema
 
     return payload_schema
 
@@ -47,7 +47,7 @@ def test_build_payload_uses_every_schema_field(tmp_path, schema_module):
     """
     from PIL import Image
 
-    from image_search_kernel.payload_schema import payload_field_names
+    from lustre_kernel.payload_schema import payload_field_names
     from indexer.upsert import build_payload
 
     img = Image.new("RGB", (16, 16), color=(10, 20, 30))
@@ -112,7 +112,7 @@ def test_build_payload_sets_folder_field(tmp_path, schema_module):
     absolute parent directory path."""
     from PIL import Image
 
-    from image_search_kernel.payload_schema import FIELD_FOLDER
+    from lustre_kernel.payload_schema import FIELD_FOLDER
     from indexer.upsert import build_payload
 
     img = Image.new("RGB", (16, 16), color=(10, 20, 30))
@@ -134,8 +134,8 @@ def test_build_payload_sets_model_dim_from_registry(tmp_path, schema_module):
     """
     from PIL import Image
 
-    from image_search_kernel.payload_schema import FIELD_MODEL_DIM
-    from image_search_kernel.registry import get as registry_get
+    from lustre_kernel.payload_schema import FIELD_MODEL_DIM
+    from lustre_kernel.registry import get as registry_get
     from indexer.upsert import build_payload
 
     img = Image.new("RGB", (16, 16), color=(10, 20, 30))
