@@ -26,7 +26,7 @@
 import { writable } from 'svelte/store';
 import { SLIDESHOW_PRESETS_MS, DEFAULT_SLIDESHOW_MS } from '$lib/api/limits';
 
-const STORAGE_KEY = 'image-search:preferences';
+const STORAGE_KEY = 'lustre:preferences';
 
 export type SlideshowPreset = (typeof SLIDESHOW_PRESETS_MS)[number];
 
