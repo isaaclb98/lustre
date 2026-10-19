@@ -1,4 +1,4 @@
-# image-search
+# lustre
 
 Self-hosted semantic image search over a local photo library.
 
@@ -26,7 +26,7 @@ Self-hosted semantic image search over a local photo library.
 
 ## Set up
 
-The image at `ghcr.io/isaaclb98/image-search:latest` is the single
+The image at `ghcr.io/isaaclb98/lustre:latest` is the single
 container you need. It runs FastAPI on `:8000`, serves the bundled
 SvelteKit SPA from the same port, and embeds photos by spawning the
 indexer as an in-container subprocess (so the indexer has no host
@@ -39,21 +39,21 @@ export NAS_IMAGES_PATH=/path/to/your/photos   # bind-mounted read-only at /nas
 docker compose up -d                          # brings up Qdrant + search
 ```
 
-`docker-compose.yml` (in this repo) pulls `image-search:latest` from
+`docker-compose.yml` (in this repo) pulls `lustre:latest` from
 ghcr, runs a Qdrant sidecar, bind-mounts your photo library at
 `/nas:ro`, and exposes `:8000` on the host.
 
 Two named volumes hold state across image updates:
 
 - **`qdrant_data`** — the vector index + payloads.
-- **`image-search_search_data`** — the SQLite side store (favorites,
+- **`lustre_search_data`** — the SQLite side store (favorites,
   dislikes, albums, saved searches), the SigLIP2 model cache (HF_HOME),
   and the runtime thumbnail cache. **Without this volume, every image
   update wipes your library state.** `docker compose down` keeps both;
   `docker compose down -v` wipes both.
 
 First start downloads the SigLIP2 model (~30 s one-off, then cached in
-`image-search_search_data`). Open <http://localhost:8000>.
+`lustre_search_data`). Open <http://localhost:8000>.
 
 ### Local dev (faster iteration)
 
