@@ -163,7 +163,7 @@
 </script>
 
 <svelte:head>
-  <title>Albums · Image Search</title>
+  <title>Albums · Lustre</title>
 </svelte:head>
 
 <PageHeader

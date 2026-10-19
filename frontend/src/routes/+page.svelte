@@ -435,7 +435,7 @@
 </script>
 
 <svelte:head>
-  <title>Image Search</title>
+  <title>Lustre</title>
 </svelte:head>
 
 <section class="hero">

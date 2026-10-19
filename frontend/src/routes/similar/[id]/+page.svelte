@@ -92,7 +92,7 @@
 </script>
 
 <svelte:head>
-  <title>Most similar · Image Search</title>
+  <title>Most similar · Lustre</title>
 </svelte:head>
 
 <PageHeader

@@ -236,7 +236,7 @@
 </script>
 
 <svelte:head>
-  <title>For you · Image Search</title>
+  <title>For you · Lustre</title>
 </svelte:head>
 
 <PageHeader
