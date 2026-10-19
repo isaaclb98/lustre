@@ -2032,7 +2032,7 @@ def create_app(
     # ------------------------------------------------------------------
     # Static SPA fallback
     # ------------------------------------------------------------------
-    # When the image-search image is built as a single container (see
+    # When the lustre image is built as a single container (see
     # docker/Dockerfile.search), the SvelteKit build output lands at
     # /app/static. Mount its hashed assets at /_app and fall back to
     # index.html for every other path so the SPA can hydrate and route

@@ -30,7 +30,7 @@ gRPC support (added for diversity-fetch latency):
   traffic; defaults to REST port + 1 (6334) when not specified,
   which is the qdrant docker image's default gRPC listener.
 
-  Inside the image-search docker network the search container
+  Inside the lustre docker network the search container
   reaches qdrant at `qdrant:6334` once the compose file exposes
   port 6334 from the qdrant service. Both the indexer and the
   search app call this helper, so toggling gRPC here flips the

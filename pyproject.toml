@@ -63,8 +63,8 @@ dev = [
     # fan-out. Pinned >=3.6 for the modern `-n auto` semantics;
     # see .github/workflows/dev-build.yml.
     "pytest-xdist>=3.6",
-    # Strict static type-check on image_search_kernel/. CI runs
-    # `mypy image_search_kernel/` against mypy.ini; installed here
+    # Strict static type-check on lustre_kernel/. CI runs
+    # `mypy lustre_kernel/` against mypy.ini; installed here
     # so `uv sync --extra dev` is the only install command needed.
     "mypy>=1.10",
 ]

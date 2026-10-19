@@ -434,5 +434,5 @@ def _try_register_real_models(registry: Registry) -> None:
         # Real-model backend not installed. The mock entry remains
         # available; production deployments that need real models
         # install the corresponding extra (`pip install
-        # image-search-kernel[open_clip]`).
+        # lustre-kernel[open_clip]`).
         pass

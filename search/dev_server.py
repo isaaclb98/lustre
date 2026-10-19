@@ -12,7 +12,7 @@ from fastapi import FastAPI
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run image-search locally for UI iteration."
+        description="Run lustre locally for UI iteration."
     )
     parser.add_argument(
         "--no-model",
@@ -72,10 +72,10 @@ def _build_demo_app(count: int) -> FastAPI:
     # Per-worker NAS_IMAGES_BASE so concurrent pytest-xdist workers
     # don't race on the same demo directory (one worker's
     # _make_demo_images clobbering another's mid-write produced
-    # PIL.UnidentifiedImageError on /tmp/image-search-demo/*.jpg
+    # PIL.UnidentifiedImageError on /tmp/lustre-demo/*.jpg
     # at ~96% of pytest progress).
     os.environ["NAS_IMAGES_BASE"] = str(
-        Path(tempfile.gettempdir()) / f"image-search-demo-{os.getpid()}-{id(object())}"
+        Path(tempfile.gettempdir()) / f"lustre-demo-{os.getpid()}-{id(object())}"
     )
     # Use a unique IndexDB path per invocation so re-running tests
     # (or _build_demo_app being called twice in one pytest session,
@@ -83,7 +83,7 @@ def _build_demo_app(count: int) -> FastAPI:
     # not collide on the albums/demodata UNIQUE constraints. The
     # demo DB is short-lived by design — it lives in tempfile and
     # is recreated every time someone runs `_build_demo_app`.
-    _demo_db_path = Path(tempfile.gettempdir()) / f"image-search-demo-{os.getpid()}-{id(object())}.db"
+    _demo_db_path = Path(tempfile.gettempdir()) / f"lustre-demo-{os.getpid()}-{id(object())}.db"
     os.environ["INDEX_DB_PATH"] = str(_demo_db_path)
     os.environ["QDRANT_COLLECTION"] = "images_demo"
     # API result URLs must point at this local server, not the production

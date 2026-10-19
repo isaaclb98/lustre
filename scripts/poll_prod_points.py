@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Read-only polling of the prod image-search Qdrant collection.
+Read-only polling of the prod lustre Qdrant collection.
 
 Polls /collections/images on the prod Qdrant (host port 6333) every
 INTERVAL seconds and appends (timestamp_iso, points_count) to a CSV.
