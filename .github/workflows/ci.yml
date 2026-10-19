@@ -68,6 +68,19 @@ jobs:
           enable-cache: true
           cache-local-path: .venv
           python-version: "3.12"
+          # The GHA cache for this repo's .venv/ was populated back
+          # when the repo was still image-search/. The cached venv
+          # contains a Python executable whose internal path still
+          # points at the old checkout location, so when uv tries
+          # to reuse it under the new lustre/ path, it fails with
+          # "no Python executable was found" on the very first sync.
+          #
+          # We work around this by skipping the cache restore once;
+          # uv sync will build a fresh venv under the new path, and
+          # the cache will re-warm on the next CI run with the right
+          # key. This is a one-shot fix — once the new cache key is
+          # in place, restore-cache can go back to true.
+          restore-cache: false
 
       - name: Sync Python deps
         # uv sync --extra dev creates .venv and installs the [dev]
