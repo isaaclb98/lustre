@@ -732,11 +732,15 @@ export interface components {
          *     longer in the cache). For a UI count that hides orphans, use
          *     the detail endpoint.
          *
-         *     `first_member_id` is the chronologically first photo added to
-         *     the album (ORDER BY album_memberships.added_at ASC LIMIT 1).
-         *     Drives the /albums index card thumbnail — prefer it over
+         *     `first_member_id` is the most RECENTLY added photo in the album
+         *     (ORDER BY album_memberships.added_at DESC LIMIT 1). Drives the
+         *     /albums index card thumbnail — prefer it over
          *     `cover_favorite_id` for display. Empty string when the album
          *     has no members yet.
+         *
+         *     The field name is historical — it was originally the
+         *     chronologically-first member. The card cover now shows the
+         *     newest addition.
          */
         AlbumSummary: {
             /** Cover Favorite Id */

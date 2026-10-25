@@ -140,7 +140,7 @@
         "type": "object"
       },
       "AlbumSummary": {
-        "description": "Lightweight album row for list views.\n\n`member_count` is the count from `album_memberships`, which\nincludes orphan memberships (favourites whose photo is no\nlonger in the cache). For a UI count that hides orphans, use\nthe detail endpoint.\n\n`first_member_id` is the chronologically first photo added to\nthe album (ORDER BY album_memberships.added_at ASC LIMIT 1).\nDrives the /albums index card thumbnail \u2014 prefer it over\n`cover_favorite_id` for display. Empty string when the album\nhas no members yet.",
+        "description": "Lightweight album row for list views.\n\n`member_count` is the count from `album_memberships`, which\nincludes orphan memberships (favourites whose photo is no\nlonger in the cache). For a UI count that hides orphans, use\nthe detail endpoint.\n\n`first_member_id` is the most RECENTLY added photo in the album\n(ORDER BY album_memberships.added_at DESC LIMIT 1). Drives the\n/albums index card thumbnail \u2014 prefer it over\n`cover_favorite_id` for display. Empty string when the album\nhas no members yet.\n\nThe field name is historical \u2014 it was originally the\nchronologically-first member. The card cover now shows the\nnewest addition.",
         "properties": {
           "cover_favorite_id": {
             "title": "Cover Favorite Id",

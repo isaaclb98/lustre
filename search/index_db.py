@@ -1299,10 +1299,19 @@ class IndexDB:
         gone from the cache) still count toward the album total
         because they're still part of the user's curation.
 
-        `first_member_id` is the chronologically first photo added
-        to the album (ORDER BY m.added_at ASC LIMIT 1) — drives
-        the /albums index card thumbnail. Empty string when the
-        album has no members yet.
+        `first_member_id` is the most RECENTLY added photo in the
+        album (ORDER BY m.added_at DESC LIMIT 1) — drives the
+        /albums index card thumbnail. Empty string when the album
+        has no members yet.
+
+        The field name is historical: it was originally the
+        chronologically-first member (ORDER BY added_at ASC). The
+        card cover now shows the newest addition instead, so the
+        name reads as "the member whose photo leads the card".
+        `added_at DESC, favorite_id DESC` gives a deterministic
+        tie-break — two members added in the same microsecond
+        would otherwise pick arbitrarily between them, and the
+        cover would flicker between reloads.
         """
         with self._lock:
             rows = self._conn.execute(
@@ -1314,7 +1323,7 @@ class IndexDB:
                        COALESCE(
                          (SELECT m.favorite_id FROM album_memberships m
                           WHERE m.album_id = a.id
-                          ORDER BY m.added_at ASC LIMIT 1),
+                          ORDER BY m.added_at DESC, m.favorite_id DESC LIMIT 1),
                          ''
                        ) AS first_member_id
                 FROM albums a

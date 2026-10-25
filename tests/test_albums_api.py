@@ -128,9 +128,9 @@ def test_list_albums_first_member_id_empty_when_no_members(app_with_qdrant):
     assert listed[0]["member_count"] == 0
 
 
-def test_list_albums_first_member_id_is_chronologically_first(app_with_qdrant):
-    """first_member_id is the first photo *added* to the album
-    (album_memberships.added_at ASC), not the most recent."""
+def test_list_albums_first_member_id_is_most_recently_added(app_with_qdrant):
+    """first_member_id is the most RECENT photo *added* to the album
+    (album_memberships.added_at DESC), not the oldest."""
     album_id = app_with_qdrant.post(
         "/api/albums", json={"name": "ordered"},
     ).json()["id"]
@@ -141,22 +141,55 @@ def test_list_albums_first_member_id_is_chronologically_first(app_with_qdrant):
     app_with_qdrant.post(f"/api/albums/{album_id}/members/{BIRD_ID}")
 
     listed = app_with_qdrant.get("/api/albums").json()["albums"]
-    assert listed[0]["first_member_id"] == CAT_ID
+    assert listed[0]["first_member_id"] == BIRD_ID
     assert listed[0]["member_count"] == 3
 
 
 def test_list_albums_first_member_id_updates_after_removal(app_with_qdrant):
-    """If the chronologically-first member is removed, the next-oldest
+    """If the most-recently-added member is removed, the next-newest
     member becomes the first_member_id."""
     album_id = app_with_qdrant.post(
         "/api/albums", json={"name": "trim"},
     ).json()["id"]
     app_with_qdrant.post(f"/api/albums/{album_id}/members/{CAT_ID}")
     app_with_qdrant.post(f"/api/albums/{album_id}/members/{DOG_ID}")
-    app_with_qdrant.delete(f"/api/albums/{album_id}/members/{CAT_ID}")
+    app_with_qdrant.delete(f"/api/albums/{album_id}/members/{DOG_ID}")
 
     listed = app_with_qdrant.get("/api/albums").json()["albums"]
+    assert listed[0]["first_member_id"] == CAT_ID
+
+
+def test_list_albums_first_member_id_tie_break_is_deterministic(app_with_qdrant):
+    """Two members with the same added_at resolve to a stable photo.
+
+    Two photos added in the same microsecond get identical
+    `added_at` values. Without a tie-break, SQLite picks
+    arbitrarily between them and the album card cover can flicker
+    between reloads. The tie-break is `favorite_id DESC` — the
+    lexicographically largest id wins, deterministically.
+    """
+    album_id = app_with_qdrant.post(
+        "/api/albums", json={"name": "tie"},
+    ).json()["id"]
+    app_with_qdrant.post(f"/api/albums/{album_id}/members/{CAT_ID}")
+    app_with_qdrant.post(f"/api/albums/{album_id}/members/{DOG_ID}")
+
+    # Force the tie: same added_at for both members.
+    with app_with_qdrant.app.state.index_db._lock:
+        app_with_qdrant.app.state.index_db._conn.execute(
+            "UPDATE album_memberships SET added_at = ? WHERE album_id = ?",
+            ("2026-01-01T00:00:00.000000+00:00", album_id),
+        )
+        app_with_qdrant.app.state.index_db._conn.commit()
+
+    listed = app_with_qdrant.get("/api/albums").json()["albums"]
+    # DOG_ID > CAT_ID lexicographically, so DESC picks DOG_ID.
     assert listed[0]["first_member_id"] == DOG_ID
+
+    # Repeated reads must agree — the cover doesn't flicker.
+    for _ in range(3):
+        again = app_with_qdrant.get("/api/albums").json()["albums"]
+        assert again[0]["first_member_id"] == DOG_ID
 
 
 # ---------------- get detail ----------------
