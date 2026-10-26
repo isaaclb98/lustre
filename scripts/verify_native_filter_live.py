@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -25,8 +26,6 @@ import urllib.request
 # The Qdrant endpoint and the SQLite mirror. Both are environment-
 # dependent: on the host the Qdrant port is published on localhost,
 # inside the container the service is reached by its compose name.
-import os
-
 QDRANT = os.environ.get("QDRANT_URL", "http://127.0.0.1:6333")
 DB = os.environ.get("LUSTRE_DB_PATH", "/app/data/images.db")
 

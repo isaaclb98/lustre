@@ -92,7 +92,7 @@ def build(field: str, schema: dict) -> None:
     """Create (or recreate) a text index on `field`."""
     existing = current_schema().get(field)
     params = (existing or {}).get("params", {})
-    wanted = {k: v for k, v in schema.items()}
+    wanted = dict(schema)
     have = {k: v for k, v in params.items() if k in wanted}
     if have == wanted:
         print(f"  {field}: already correct ({params.get('tokenizer')})")
