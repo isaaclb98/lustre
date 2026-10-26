@@ -97,82 +97,59 @@ async def results_from_hits(
 
 
 async def resolve_filename_filter(
-    index_db: Any,
+    qdrant: Any,
     *,
     cfg: Any,
     pattern: str,
-) -> tuple[list[str] | None, str | None]:
+) -> tuple[Any | None, str | None]:
     """
-    Translate a raw `?filename=` pattern to an `allowed_ids` list
-    for Qdrant's `HasId` filter, applying the cardinality guard.
+    Translate a raw `?filename=` pattern to a Qdrant filter condition.
 
-    Returns one of four outcomes (always a 2-tuple):
+    Returns one of three outcomes (always a 2-tuple):
 
-      (None, None)            — no filter requested (pattern
-                                  was empty), OR the guard decided
-                                  to skip the filter because
-                                  matching ids cover > 50% of
-                                  the cache. Caller passes `None`
-                                  to qdrant.search meaning "no
-                                  HasId filter".
-      ([], None)              — pattern matched zero images.
-                                  Caller surfaces an empty result
-                                  (the user typed
-                                  `?filename=nonsense`).
-      (list[str], None)       — a usable set of allowed ids.
-      (None, "bad_request")   — pattern was syntactically
-                                  invalid (caller surfaces a 400
-                                  with the validator's message
-                                  via `path_token_ids`).
+      (None, None)            — no filter requested (pattern was
+                                empty), OR the cardinality guard
+                                decided to skip the filter because
+                                the pattern covers > 50% of the
+                                corpus. Caller passes `None` to
+                                qdrant.search meaning "no filter".
+      (<condition>, None)     — a Qdrant filter condition to AND
+                                into the query. The condition is
+                                evaluated server-side against the
+                                native text index on the `path`
+                                payload field.
+      (None, "bad_request")   — pattern was syntactically invalid
+                                (caller surfaces a 400).
+
+    The condition is a native Qdrant text-index match rather than a
+    materialised id list. The old implementation asked the SQLite
+    FTS5 index for the matching ids and shipped them to Qdrant as a
+    `HasId` filter — up to ~143k ids serialised into every request
+    for a broad prefix pattern. The native index does the matching
+    inside Qdrant, so nothing crosses the wire and the per-request
+    cost no longer scales with how many photos the pattern matches.
+
+    The matched sets are identical: measured against the live
+    corpus, the native filter returns the same ids as FTS5 for
+    every pattern tested (see `scripts/parity_harness.py`).
 
     The cardinality guard is the load-bearing piece: when a
     pattern like `2024` matches 60% of the collection, applying
-    `HasId` to the rest actively hurts search quality (HNSW
-    has to pick the top-K from a non-uniform distribution AND
-    serialise the id list on every request) without meaningfully
-    narrowing anything. By dropping the filter above the guard
-    threshold we get "full ranking + 0 wasted work", which is
-    always at least as good as the filtered ranking.
+    the filter to the rest actively hurts search quality (HNSW
+    has to pick the top-K from a non-uniform distribution) without
+    meaningfully narrowing anything. By dropping the filter above
+    the guard threshold we get "full ranking + 0 wasted work",
+    which is always at least as good as the filtered ranking.
+
+    The guard's count comes from Qdrant's own filtered count, so
+    the guard and the filter always agree on what the corpus
+    contains. (The old implementation compared against the SQLite
+    cache's row count, which can drift from the collection the
+    filter actually runs against.)
     """
-    if not pattern or not pattern.strip():
-        return None, None
-    try:
-        ids = await asyncio.to_thread(
-            index_db.path_token_ids, pattern,
-        )
-    except ValueError:
-        # Pattern failed FTS5 validation (e.g. leading `*`,
-        # multi-token input, etc). Surface as a 400 — the
-        # validator's message is already user-friendly and
-        # includes the offending pattern, so we just signal
-        # the route handler to wrap it.
-        return None, "bad_request"
-    if ids is None:
-        # Empty pattern after sanitisation. Same as no filter.
-        return None, None
-    if not ids:
-        # Pattern matched zero images. Distinguish this from
-        # "skip the filter" so the caller can render an empty
-        # results state with the right message (rather than
-        # ranking over the whole collection).
-        return [], None
-    # Cardinality guard. The guard is symmetric: we apply it
-    # whether the filter is super-narrow or super-broad — both
-    # are degenerate. The > 0.5 threshold matches the design
-    # discussion; below it the filter strictly improves latency
-    # and relevance; above it the filter competes with HNSW
-    # scoring without adding value.
-    total = await asyncio.to_thread(index_db.count_images)
-    if total > 0:
-        coverage = len(ids) / total
-        if coverage > cfg.filename_cardinality_guard:
-            logger.info(
-                "filename filter %r matched %d/%d (%.1f%%); "
-                "skipping HasId per cardinality guard",
-                pattern, len(ids), total, coverage * 100,
-            )
-            return None, None
-    return ids, None
+    from search._filename_filter import resolve_filename_filter as _resolve
+
+    return await _resolve(qdrant, cfg=cfg, pattern=pattern)
 
 
 def surprise_search(hits: list[SearchHit], k: int) -> list[SearchHit]:
@@ -340,6 +317,7 @@ def diversity_page(
     strength: float,
     depth: str,
     pool_depth: int,
+    path_filter: Any | None = None,
 ) -> tuple[list[SearchHit], bool, Any]:
     """Build or retrieve one complete, stable Diversity ordering.
 
@@ -358,6 +336,7 @@ def diversity_page(
     cache_key = diversity_cache_key(
         cfg,
         vector, mode, depth, pool_depth, collections, allowed_ids, favorite_ids,
+        path_filter,
     )
     cached = diversity_cache.get(cache_key)
     if cached is not None:
@@ -407,6 +386,7 @@ def diversity_page(
         offset=0,
         collections=collections or None,
         allowed_ids=search_allowed_ids,
+        path_filter=path_filter,
     )
     if not hits:
         stats = DiversityStats(
@@ -498,6 +478,7 @@ def centroid_diversity_page(
     strength: float,
     depth: str,
     pool_depth: int,
+    path_filter: Any | None = None,
 ) -> tuple[list[SearchHit], bool, Any]:
     """Diversity ranking for centroid/album search — the Layer-2-aware
     analogue of `diversity_page`.
@@ -549,6 +530,7 @@ def centroid_diversity_page(
         collections or None,
         allowed_ids,
         seed_ids or None,
+        path_filter,
     )
 
     # Layer 2: drop candidates that are near-duplicates of a seed
@@ -616,6 +598,26 @@ def _digest_values(values: Iterable[str] | None) -> str:
     return digest.hexdigest()
 
 
+def _digest_filter(path_filter: Any | None) -> str:
+    """SHA-256 digest of a Qdrant filter condition — used to hash a
+    request-shape input into the diversity cache key.
+
+    The filter is a Pydantic model, so its canonical JSON form is
+    stable across requests that build an equivalent condition. None
+    maps to the same sentinel as `_digest_values(None)`, so a request
+    without a filename filter never shares a cache entry with one
+    that has it.
+    """
+    import hashlib
+    if path_filter is None:
+        return _digest_values(None)
+    try:
+        canonical = path_filter.model_dump_json(exclude_none=True)
+    except AttributeError:
+        canonical = repr(path_filter)
+    return hashlib.sha256(canonical.encode("utf-8", "replace")).hexdigest()[:32]
+
+
 def diversity_cache_key(
     cfg: Any,
     vector: list[float],
@@ -625,6 +627,7 @@ def diversity_cache_key(
     collections: list[str],
     allowed_ids: list[str] | None,
     favorite_ids: set[str] | None,
+    path_filter: Any | None = None,
 ) -> str:
     """Build the cache key for one Diversity ordering request.
 
@@ -646,6 +649,7 @@ def diversity_cache_key(
         _digest_values(collections),
         _digest_values(allowed_ids),
         _digest_values(favorite_ids),
+        _digest_filter(path_filter),
     ))
 
 
@@ -660,6 +664,7 @@ async def materialize_search_page(
     collections: list[str],
     allowed_ids: list[str] | None,
     favorite_ids: set[str] | None,
+    path_filter: Any | None = None,
 ) -> tuple[list[SearchHit], bool]:
     """Return one page of a *stable* ranking, plus `has_more`.
 
@@ -702,6 +707,7 @@ async def materialize_search_page(
         allowed_ids=allowed_ids,
         favorite_ids=favorite_ids,
         band_size=cfg.search_band_size,
+        path_filter=path_filter,
     )
     snap = await asyncio.to_thread(snapshot_cache.get_or_create, key)
 
@@ -729,6 +735,7 @@ async def materialize_search_page(
                     collections or None,
                     allowed_ids,
                     list(snap.ids) or None,
+                    path_filter,
                 )
                 if not hits:
                     snap.exhausted = True
@@ -775,6 +782,7 @@ async def materialize_search_page(
         vector=vector,
         collections=collections,
         allowed_ids=allowed_ids,
+        path_filter=path_filter,
         offset=offset,
         limit=limit,
         cap=cap,
@@ -793,6 +801,7 @@ def _prefetch_next_band(
     offset: int,
     limit: int,
     cap: int,
+    path_filter: Any | None = None,
 ) -> None:
     """Kick off a background fetch of the next band, if one will be needed.
 
@@ -843,6 +852,7 @@ def _prefetch_next_band(
                         collections or None,
                         allowed_ids,
                         list(snap.ids) or None,
+                        path_filter,
                     )
                     if not hits:
                         snap.exhausted = True

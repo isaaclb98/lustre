@@ -73,7 +73,7 @@ import threading
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from search.qdrant_client import SearchHit
@@ -236,6 +236,7 @@ def snapshot_key(
     allowed_ids: list[str] | None,
     favorite_ids: set[str] | None,
     band_size: int,
+    path_filter: Any | None = None,
 ) -> str:
     """Hash the inputs that determine a ranking.
 
@@ -258,7 +259,25 @@ def snapshot_key(
         _digest(collections),
         _digest(allowed_ids),
         _digest(sorted(favorite_ids) if favorite_ids else None),
+        _digest_filter(path_filter),
     ))
+
+
+def _digest_filter(path_filter: Any | None) -> str:
+    """Stable digest of a Qdrant filter condition.
+
+    The condition is a Pydantic model, so its canonical JSON form is
+    stable across requests that build an equivalent filter. None maps
+    to the same sentinel as `_digest(None)`, so a request without a
+    filename filter never collides with one that has it.
+    """
+    if path_filter is None:
+        return _digest(None)
+    try:
+        canonical = path_filter.model_dump_json(exclude_none=True)
+    except AttributeError:
+        canonical = repr(path_filter)
+    return hashlib.sha256(canonical.encode("utf-8", "replace")).hexdigest()[:20]
 
 
 def _digest(values: Iterable[str] | None) -> str:
