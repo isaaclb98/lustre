@@ -106,6 +106,23 @@ jobs:
         working-directory: frontend
         run: npm ci --no-audit --no-fund
 
+      # Round-50: install libvips system package so the new
+      # pyvips-based thumbnail tests can load libvips.so.42. The
+      # indexer's primary encoder is now libvips (via pyvips); the
+      # PIL fallback path is still covered by tests but pyvips is
+      # importable at module load time, so libvips MUST be present
+      # for the test process to even start.
+      - name: Install libvips (test host)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvips42 \
+            libvips-tools
+          # Verify pyvips can locate the shared library; the test
+          # collection errors at import time with "cannot load
+          # library 'libvips.so.42'" if the apt install failed.
+          uv run python -c "import pyvips; print('pyvips', pyvips.__version__)"
+
       # ---------------- Backend ----------------
       - name: Lint (ruff, full tree)
         # Full tree — not --changed. Catches new debt immediately;

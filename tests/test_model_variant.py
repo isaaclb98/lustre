@@ -8,7 +8,6 @@ chokes on it because config.get_siglip_variant() reads the env
 at call time, not at import time).
 """
 import pytest
-from qdrant_client.http.exceptions import UnexpectedResponse
 from search import config
 
 
@@ -235,8 +234,15 @@ class TestReconcileVariantFromQdrant:
             qdrant_collection="images",
         )
 
-    def test_dim_mismatch_drops_collection(self, monkeypatch):
-        """Collection dim ≠ env variant → drop the collection."""
+    def test_dim_mismatch_raises_and_keeps_collection(self, monkeypatch):
+        """Collection dim ≠ env variant → raise, do NOT drop.
+
+        Refuse-to-start reconciler. The collection is preserved so
+        the operator can recover manually (rename + reindex, fix
+        the env, or explicit drop via curl). The old behavior —
+        silently dropping the collection on startup — is the bug
+        this test exists to prevent.
+        """
         client = _make_client_for_reconcile()
         # Old data at 768 (B/16-256). User now wants so400m (1152).
         _dim_via_payloads(client, "images", dim=768)
@@ -244,25 +250,35 @@ class TestReconcileVariantFromQdrant:
             config, "QdrantClient",
             lambda **kw: client,
         )
-        config.reconcile_variant_from_qdrant(
-            "so400m/16-384",
-            qdrant_url="ignored", qdrant_api_key=None,
-            qdrant_collection="images",
-        )
-        # Collection should be dropped. Network Qdrant raises
-        # UnexpectedResponse; in-memory Qdrant raises ValueError.
-        with pytest.raises((UnexpectedResponse, ValueError)):
-            client.get_collection(collection_name="images")
+        with pytest.raises(config.QdrantVariantMismatch) as excinfo:
+            config.reconcile_variant_from_qdrant(
+                "so400m/16-384",
+                qdrant_url="ignored", qdrant_api_key=None,
+                qdrant_collection="images",
+            )
+        # The error message must surface all three recovery paths
+        # so the operator doesn't have to dig through docs to
+        # figure out what to do next.
+        msg = str(excinfo.value)
+        assert "Set SIGLIP_VARIANT" in msg, "must suggest the env-var fix path"
+        assert "rename" in msg.lower(), "must suggest the rename-for-postmortem path"
+        assert "curl -X DELETE" in msg, "must surface the manual-drop command"
+        # Collection still exists — that's the whole point.
+        info = client.get_collection(collection_name="images")
+        assert info is not None
+        assert (info.points_count or 0) > 0
 
-    def test_payload_mismatch_drops_collection(self, monkeypatch):
-        """Dim matches but per-point payload differs → drop."""
+    def test_payload_mismatch_raises_and_keeps_collection(self, monkeypatch):
+        """Dim matches but per-point payload differs → raise, do NOT drop."""
         client = _make_client_for_reconcile()
         from qdrant_client.http import models as qm
         client.create_collection(
             collection_name="images",
             vectors_config=qm.VectorParams(size=1152, distance=qm.Distance.COSINE),
         )
-        # Single point with model_variant=payload-mismatch
+        # Single point with model_variant=L/16-256 (dim=1024, but we're
+        # pretending the indexer wrote the wrong payload for the actual
+        # 1152-dim vectors).
         client.upsert(
             collection_name="images",
             points=[qm.PointStruct(
@@ -274,14 +290,37 @@ class TestReconcileVariantFromQdrant:
             config, "QdrantClient",
             lambda **kw: client,
         )
-        config.reconcile_variant_from_qdrant(
-            "so400m/16-384",
-            qdrant_url="ignored", qdrant_api_key=None,
-            qdrant_collection="images",
+        with pytest.raises(config.QdrantVariantMismatch) as excinfo:
+            config.reconcile_variant_from_qdrant(
+                "so400m/16-384",
+                qdrant_url="ignored", qdrant_api_key=None,
+                qdrant_collection="images",
+            )
+        msg = str(excinfo.value)
+        assert "L/16-256" in msg, "must report the actual stored variant"
+        # Collection still exists.
+        info = client.get_collection(collection_name="images")
+        assert info is not None
+        assert (info.points_count or 0) > 0
+
+    def test_mismatch_error_lists_the_stored_dim_variant(self, monkeypatch):
+        """The error message should suggest the variant that matches
+        the stored dim, so the operator doesn't have to guess.
+        """
+        client = _make_client_for_reconcile()
+        # Stored at 768 → likely variant is B/16-256.
+        _dim_via_payloads(client, "images", dim=768)
+        monkeypatch.setattr(
+            config, "QdrantClient",
+            lambda **kw: client,
         )
-        from qdrant_client.http.exceptions import UnexpectedResponse
-        with pytest.raises((UnexpectedResponse, ValueError)):
-            client.get_collection(collection_name="images")
+        with pytest.raises(config.QdrantVariantMismatch) as excinfo:
+            config.reconcile_variant_from_qdrant(
+                "so400m/16-384",
+                qdrant_url="ignored", qdrant_api_key=None,
+                qdrant_collection="images",
+            )
+        assert "B/16-256" in str(excinfo.value)
 
     def test_legacy_payload_missing_proceeds(self, monkeypatch):
         """Dim matches, payload missing (legacy data) → proceed."""
