@@ -147,8 +147,18 @@ jobs:
         # upload below; --cov-report=term-missing keeps the live
         # log readable.
         # --junitxml feeds the GHA Tests tab.
+        #
+        # QDRANT_URL must point at a port nothing listens on, NOT
+        # the production Qdrant port. The env var here OVERRIDES
+        # the default in tests/conftest.py, so setting it to 6333
+        # would re-arm the exact failure that deleted the
+        # production collection twice: a test that reaches the
+        # reconciler with a variant mismatch would drop the live
+        # collection. The reconciler now refuses to start on a
+        # mismatch, but the dead port is the second line of
+        # defence — a connection error instead of a deletion.
         env:
-          QDRANT_URL: "http://localhost:6333"
+          QDRANT_URL: "http://localhost:16333"
           SEARCH_TEST_MODE: "1"
           LOG_LEVEL: "WARNING"
         run: |

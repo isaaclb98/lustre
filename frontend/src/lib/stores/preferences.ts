@@ -8,8 +8,8 @@
  *     Lightbox auto-advance (Play button in the action bar).
  *     Default 3000 (3s).
  *   - gridSize: how dense the photo grid renders. Single setting
- *     drives tile size, gap, and max columns. See
- *     GRID_SIZE_CONFIG below for the per-size numbers.
+ *     drives tile size, gap, and max columns. See $lib/grid/config
+ *     for the per-size numbers.
  *     Default 'large' (preserves the Round-55 visual).
  *
  * Add new knobs by extending `Preferences` + `defaults` and
@@ -25,6 +25,7 @@
  */
 import { writable } from 'svelte/store';
 import { SLIDESHOW_PRESETS_MS, DEFAULT_SLIDESHOW_MS } from '$lib/api/limits';
+import { DEFAULT_GRID_SIZE, type GridSize } from '$lib/grid/config';
 
 const STORAGE_KEY = 'lustre:preferences';
 
@@ -45,52 +46,13 @@ export const SLIDESHOW_PRESETS: { label: string; ms: SlideshowPreset }[] =
 // historically read DEFAULT_SLIDESHOW_MS from this module.
 export { DEFAULT_SLIDESHOW_MS };
 
-// Grid size — single user-facing knob that drives three
-// derived CSS/JS values. The mapping is in one place so the
-// Settings page, the layout-level ResizeObserver, and the
-// virtualizer all read the same numbers.
-//
-// Tile size: 240/192/144 px. Large matches the Round-55
-// default; medium and small pack progressively more photos
-// per row.
-//
-// Gap: 14/8/4 px. Larger photos get more breathing room
-// (preserves the Round-38 design intent — 14px reads as
-// "personal photo library", tighter gaps read as utilitarian).
-// Smaller photos need a tighter gap to read as a continuous
-// wall instead of fragmenting into a grid of small squares.
-//
-// Max cols: 6/8/10. The CSS grid uses `auto-fit` with the
-// tile size as the minmax floor, so a narrow viewport shows
-// fewer cols; the max-cols cap kicks in only on wide monitors.
-// This is the per-size density promise: "Large is 6 cols
-// wide, Small is 10 cols wide" regardless of viewport.
-export type GridSize = 'large' | 'medium' | 'small';
-
-export interface GridSizeConfig {
-  tile: number;
-  gap: number;
-  maxCols: number;
-  // First-page result count for infinite-scrolled grids
-  // (home search, /random). Scales with the grid so every
-  // size fills ~4 rows on initial load, matching the Large
-  // preset's historical "fills the viewport" target. Sized
-  // as a multiple of maxCols so the last row is always full
-  // — no awkward trailing partial row.
-  //
-  // 4 rows × N cols is the design intent. Large stays at 24
-  // (no behavior change for users who never touch the
-  // setting), Medium gets 32 (8×4), Small gets 40 (10×4).
-  pageSize: number;
-}
-
-export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
-  large: { tile: 240, gap: 14, maxCols: 6, pageSize: 24 },
-  medium: { tile: 192, gap: 8, maxCols: 8, pageSize: 32 },
-  small: { tile: 144, gap: 4, maxCols: 10, pageSize: 40 }
-};
-
-export const DEFAULT_GRID_SIZE: GridSize = 'large';
+// The grid-size numbers (tile, gap, max columns, rows per page)
+// live in $lib/grid/config — they are static layout constants, not
+// user state, and both the CSS/JS renderer and the fetch layer
+// read them from there. This module owns only the user's CHOICE
+// of size; the mapping from choice to numbers lives in one place
+// so the Settings page, the layout-level ResizeObserver, the
+// virtualizer, and the request sizing cannot drift apart.
 
 type Preferences = {
   slideshowIntervalMs: number;

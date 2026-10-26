@@ -45,7 +45,8 @@
     TEMPERATURE_MIN,
     TEMPERATURE_MAX
   } from '$lib/api/limits';
-  import { preferences, GRID_SIZE_CONFIG } from '$lib/stores/preferences';
+  import { preferences } from '$lib/stores/preferences';
+  import { currentPageSize } from '$lib/grid/geometry';
   import { SvelteMap } from 'svelte/reactivity';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
@@ -61,10 +62,13 @@
     is_disliked?: boolean;
   };
 
-  // Same per-grid-size scaling as home and /random: 4 rows ×
-  // maxCols at every size, so the first page fills the viewport
-  // regardless of which density the user picked.
-  const PAGE = $derived(GRID_SIZE_CONFIG[$preferences.gridSize].pageSize);
+  // Photos per request — derived from the column count the grid
+  // renders at the current viewport (see $lib/grid/geometry) so a
+  // page always fills whole rows. Measured per request, so it
+  // follows the viewport and the Settings → Grid size choice.
+  function pageLimit(): number {
+    return currentPageSize($preferences.gridSize);
+  }
   // Phase 1: temperature / pool bounds now live in
   // $lib/api/limits (POOL_STOPS_FOR_YOU, DEFAULT_POOL_INDEX_FOR_YOU,
   // TEMPERATURE_MIN, TEMPERATURE_MAX, DEFAULT_TEMPERATURE) so the
@@ -75,7 +79,11 @@
   let items = $state<Item[]>([]);
   let loading = $state(false);
   let hasMore = $state(false);
-  let nextPage = $state(0);
+  // Absolute position in the server's cached Gumbel deck. The
+  // endpoint slices the deck by offset, so the cursor must be a
+  // running position — a page index times a page size breaks as
+  // soon as the limit varies between requests.
+  let nextOffset = $state(0);
   // Sliders update these freely; the "Surprise me" button
   // is the only thing that commits them into a request.
   let temperature = $state(DEFAULT_TEMPERATURE);
@@ -129,13 +137,14 @@
     mountSeed = rollSeed();
     sessionId = null;
     items = [];
-    nextPage = 0;
+    nextOffset = 0;
     hasMore = false;
     errorMsg = null;
     loading = true;
     try {
+      const limit = pageLimit();
       const res = await forYouFeed({
-        limit: PAGE,
+        limit,
         offset: 0,
         temperature,
         pool_size: poolSize,
@@ -143,7 +152,7 @@
         signal: ctrl.signal
       });
       items = (res?.results ?? []) as Item[];
-      nextPage = 1;
+      nextOffset = limit;
       sessionId = res?.session_id ?? null;
       hasMore = !!res?.has_more && items.length > 0;
     } catch (e: unknown) {
@@ -169,9 +178,10 @@
     if (loading || !hasMore) return;
     loading = true;
     try {
+      const limit = pageLimit();
       const res = await forYouFeed({
-        limit: PAGE,
-        offset: nextPage * PAGE,
+        limit,
+        offset: nextOffset,
         temperature,
         pool_size: poolSize,
         seed: mountSeed,
@@ -180,7 +190,11 @@
       });
       const more = (res?.results ?? []) as Item[];
       items = [...items, ...more];
-      nextPage += 1;
+      // The deck advances by the limit sent — ids deleted between
+      // deck build and page request are skipped server-side, so the
+      // delivered count can be smaller than the limit. Tracking the
+      // limit keeps the next request aligned with the deck.
+      nextOffset += limit;
       sessionId = res?.session_id ?? sessionId;
       hasMore = !!res?.has_more && more.length > 0;
     } catch (_e) {

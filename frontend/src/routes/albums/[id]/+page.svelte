@@ -14,7 +14,8 @@
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import { getAlbum, removePhotoFromAlbum, deleteAlbum } from '$lib/api/endpoints';
-  import { preferences, GRID_SIZE_CONFIG } from '$lib/stores/preferences';
+  import { preferences } from '$lib/stores/preferences';
+  import { currentPageSize } from '$lib/grid/geometry';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
   import { dialog } from '$lib/components/Dialog.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
@@ -37,8 +38,13 @@
     is_favorite?: boolean;
   };
 
-  // Per-grid-size page size — same as home and /random.
-  const PAGE = $derived(GRID_SIZE_CONFIG[$preferences.gridSize].pageSize);
+  // Photos per request — derived from the column count the grid
+  // renders at the current viewport (see $lib/grid/geometry) so a
+  // page always fills whole rows. Read on every fetch, so it
+  // follows the viewport and the Settings → Grid size choice.
+  function pageLimit(): number {
+    return currentPageSize($preferences.gridSize);
+  }
 
   let detail = $state<AlbumDetail | null>(null);
   // Accumulated members across paged /api/albums/{id} responses.
@@ -56,12 +62,19 @@
     const id = String($page.params.id);
     loading = true;
     try {
-      const res = (await getAlbum(id, PAGE, 0)) as AlbumDetail;
+      const limit = pageLimit();
+      const res = (await getAlbum(id, limit, 0)) as AlbumDetail;
       detail = res;
       members = (res.members ?? []) as Member[];
+      // The members endpoint applies LIMIT/OFFSET to the album's
+      // member query, so the offset is an absolute row position.
+      // The accumulated member count IS that position — every row
+      // the server returns is one row the next page skips past.
       offset = members.length;
       const total = res.member_total ?? members.length;
-      hasMore = offset < total && members.length >= PAGE;
+      // A page shorter than the limit means the album is exhausted
+      // (the query returns min(limit, remaining) rows).
+      hasMore = offset < total && members.length >= limit;
       error = null;
     } catch (e: unknown) {
       error = (e as Error).message ?? 'Failed to load album';
@@ -79,12 +92,13 @@
       // it already returns metadata + a member slice in one
       // round-trip, and the first call cached the album's name/
       // description/total in `detail` so we just take `members`.
-      const res = (await getAlbum(id, PAGE, offset, signal)) as AlbumDetail;
+      const limit = pageLimit();
+      const res = (await getAlbum(id, limit, offset, signal)) as AlbumDetail;
       const more = (res.members ?? []) as Member[];
       members = [...members, ...more];
       offset = members.length;
       const total = res.member_total ?? members.length;
-      hasMore = offset < total && more.length >= PAGE;
+      hasMore = offset < total && more.length >= limit;
     } catch (_e) {
       // Leave the existing list intact; the user can keep paging
       // — losing scroll progress on a transient error is worse

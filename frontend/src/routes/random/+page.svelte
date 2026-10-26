@@ -20,7 +20,8 @@
     unlikePoint,
     dislikePoint
   } from '$lib/api/endpoints';
-  import { preferences, GRID_SIZE_CONFIG } from '$lib/stores/preferences';
+  import { preferences } from '$lib/stores/preferences';
+  import { currentPageSize } from '$lib/grid/geometry';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
 
@@ -34,11 +35,13 @@
     is_disliked?: boolean;
   };
 
-  // Per-grid-size page size — same logic as the home page.
-  // 4 rows × maxCols, so Large 24, Medium 32, Small 40. A
-  // Settings → Grid size change takes effect on the next
-  // refresh() / loadMore() call.
-  const PAGE = $derived(GRID_SIZE_CONFIG[$preferences.gridSize].pageSize);
+  // Photos per request — derived from the column count the grid
+  // renders at the current viewport (see $lib/grid/geometry) so a
+  // page always fills whole rows. Measured per request, so it
+  // follows the viewport and the Settings → Grid size choice.
+  function pageLimit(): number {
+    return currentPageSize($preferences.gridSize);
+  }
   let items = $state<Item[]>([]);
   let loading = $state(false);
   let hasMore = $state(true);
@@ -55,10 +58,16 @@
     loading = true;
     try {
       // New session, start from offset 0.
-      const res = await random({ limit: PAGE });
+      const limit = pageLimit();
+      const res = await random({ limit });
       items = (res?.results ?? []) as Item[];
       sessionId = res?.session_id ?? null;
-      nextOffset = items.length;
+      // The deck advances by the limit we asked for — the server
+      // slices its shuffled id list by absolute position and drops
+      // ids it can't materialise, so the delivered count can be
+      // smaller than the limit. Tracking the limit keeps the next
+      // request from re-walking the tail of the current slice.
+      nextOffset = limit;
       // session_total is the deck length. has_more from the server
       // tells us whether there's anything left to fetch.
       hasMore = !!res?.has_more && items.length > 0;
@@ -74,15 +83,16 @@
     if (loading || !hasMore || !sessionId) return;
     loading = true;
     try {
+      const limit = pageLimit();
       const res = await random({
         session: sessionId,
         offset: nextOffset,
-        limit: PAGE,
+        limit,
         signal
       });
       const more = (res?.results ?? []) as Item[];
       items = [...items, ...more];
-      nextOffset += more.length;
+      nextOffset += limit;
       hasMore = !!res?.has_more && more.length > 0;
     } catch (_e) {
       if (signal?.aborted) return; // clean cancel from pre-fetch retrigger

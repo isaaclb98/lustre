@@ -15,7 +15,8 @@
   import { get } from 'svelte/store';
   import { forYouFeed, likePoint, unlikePoint, dislikePoint, listAlbums } from '$lib/api/endpoints';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
-  import { preferences, GRID_SIZE_CONFIG } from '$lib/stores/preferences';
+  import { preferences } from '$lib/stores/preferences';
+  import { currentColumns } from '$lib/grid/geometry';
 
   type Tile = {
     id: string;
@@ -34,28 +35,15 @@
     loading = true;
     try {
       const poolSize = 800;
-      // Target exactly 3 rows of tiles. Compute the column count
-      // the CSS grid will pick at this viewport and round the
-      // sample size to a multiple of it, so the last row is always
-      // full (no awkward partial-row of clustered tiles on the
-      // left).
-      //
-      // CSS: `grid-template-columns: repeat(auto-fit,
-      // var(--grid-tile-size))` — see PhotoGrid. With the
-      // active gap:
-      //   cols = floor((wrapperW + GAP) / (TILE + GAP))
-      // .shell is capped at 2400px (Round-36), so the wrapper
-      // width is min(viewport - 48, 2352).
-      // Read the current preference value at the moment load()
-      // runs — the next load() will pick up a new value if the
+      // Target exactly 3 rows of tiles. The column count comes
+      // from the shared geometry helper — the same measurement the
+      // grid itself renders from — so the sample size is always a
+      // multiple of the columns that actually appear, and the last
+      // row is full (no partial row of clustered tiles on the
+      // left). Read the current preference value at the moment
+      // load() runs — the next load() picks up a new value if the
       // user changed grid size in Settings between fetches.
-      const config = GRID_SIZE_CONFIG[get(preferences).gridSize];
-      const TILE = config.tile;
-      const GAP = config.gap;
-      const MAIN_PAD = 48; // 24px each side, matches `.shell`
-      const MAIN_MAX = 2352; // 2400px cap minus padding
-      const wrapperW = Math.min(window.innerWidth - MAIN_PAD, MAIN_MAX);
-      const cols = Math.max(1, Math.floor((wrapperW + GAP) / (TILE + GAP)));
+      const cols = currentColumns(get(preferences).gridSize);
       const want = cols * 3;
       const res = await forYouFeed({ limit: poolSize });
       const pool = res?.results ?? [];
