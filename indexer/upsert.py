@@ -201,6 +201,12 @@ def build_payload(
     return {
         "id": id_for(path, shard),
         "path": str(path.resolve()),
+        # Copy of `path` for the prefix-tokenized text index. The
+        # `?filename=cha*` pattern needs a prefix-tokenized index,
+        # and a Qdrant collection supports only one text index per
+        # field name — so the prefix index lives on its own field
+        # holding the same value. See `search/path_filter.py`.
+        "path_prefix": str(path.resolve()),
         "shard": shard,
         "collection": collection,
         # T9 — LQIP. None when compute failed (file missing / unreadable /
