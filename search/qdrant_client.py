@@ -59,6 +59,7 @@ class QdrantSearch:
         collections: list[str] | None = None,
         allowed_ids: list[str] | None = None,
         exclude_ids: list[str] | None = None,
+        path_filter: Any | None = None,
     ) -> tuple[list[SearchHit], bool]:
         """
         Top-K search with optional offset and collection filter.
@@ -90,6 +91,17 @@ class QdrantSearch:
         naturally yield an empty result set when the seed ids
         are the only things that would match.
 
+        `path_filter` is an optional pre-built Qdrant filter
+        condition (typically a `FieldCondition` on the `path`
+        payload field using the native text index). It is AND'd
+        into the same `must` list as the other conditions, so a
+        query that sets `path_filter` and `collections` returns
+        only points matching BOTH. `None` skips it. This is the
+        native replacement for materialising an id list from the
+        SQLite FTS5 index and passing it as `allowed_ids` — the
+        text index is evaluated server-side, so no id list is
+        serialised per request.
+
         Pass None or an empty list to skip filtering (search all
         collections / all points, which is the default behavior).
 
@@ -117,6 +129,8 @@ class QdrantSearch:
             must_conditions.append(
                 qmodels.HasIdCondition(has_id=cast("list[int|str|UUID]", allowed_ids))
             )
+        if path_filter is not None:
+            must_conditions.append(path_filter)
         must_not_conditions: list[Any] = []
         if exclude_ids:
             must_not_conditions.append(
@@ -318,11 +332,124 @@ class QdrantSearch:
             logger.debug("count_points failed: %s", e)
             return 0
 
+    def count_filtered(self, path_filter: Any) -> int:
+        """
+        Count the points matching a filter condition.
+
+        Used by the filename-filter cardinality guard, which needs
+        to know what fraction of the corpus a pattern covers before
+        deciding whether applying the filter is worth it. The count
+        is exact — the approximate variant returns a wildly wrong
+        number for a text filter (measured 390,953 vs the true
+        83,098 for `chaewon`), which would make the guard fire on
+        the wrong patterns.
+
+        Returns 0 if the count call fails. The caller treats 0 as
+        "no matches", which is the safe direction: the filter is
+        skipped rather than applied to an unknown set.
+        """
+        from qdrant_client.http import models as qmodels
+
+        try:
+            result = self.client.count(
+                collection_name=self.collection,
+                count_filter=qmodels.Filter(must=[path_filter]),
+                exact=True,
+                timeout=self.timeout_ms // 1000,
+            )
+            return int(result.count)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("count_filtered failed: %s", e)
+            return 0
+
+    def ensure_path_text_index(self) -> None:
+        """
+        Idempotently create the native text indexes the filename
+        filter needs.
+
+        Two indexes, because the two pattern shapes need different
+        tokenizers:
+
+        * `path` — `word` tokenizer with phrase matching. Serves
+          exact patterns. Its settings reproduce FTS5's
+          `unicode61 remove_diacritics 2` exactly: `word` splits
+          on the same boundaries, `lowercase` folds case, and
+          `ascii_folding` strips diacritics. Phrase matching is
+          what makes a multi-token pattern (e.g. `img_2024`) match
+          only adjacent tokens, as FTS5 does.
+
+        * `path_prefix` — `prefix` tokenizer. Serves prefix
+          patterns (`chaewon*`). The `prefix` tokenizer indexes
+          every prefix of every token, so a bare term matches any
+          token that starts with it — FTS5's `body*` behaviour,
+          which a `word`-tokenized index cannot express.
+
+        A collection supports one text index per field name, so the
+        two need two fields. `path_prefix` holds a copy of `path`.
+
+        Both indexes are created with `on_disk=True`. The prefix
+        tokenizer indexes every prefix of every token, so holding it
+        in RAM needs >16 GB on a 2.2M-point corpus — it OOM-kills
+        the container against a 4 GB memory limit, and a half-built
+        index makes every subsequent startup try to rebuild it, so
+        Qdrant restart-loops and never comes up. `on_disk=True`
+        mmaps the index instead: the same index builds in ~50s at
+        1.3 GB RSS and boots in ~10s at the 4 GB limit.
+
+        Both are created at startup so a fresh collection (or one
+        restored from a snapshot taken before the indexes existed)
+        can answer filtered searches. Safe to call repeatedly —
+        Qdrant treats an existing index as a no-op.
+        """
+        from qdrant_client.http import models as qmodels
+
+        self._ensure_text_index(
+            "path",
+            qmodels.TextIndexParams(
+                type=qmodels.TextIndexType.TEXT,
+                tokenizer=qmodels.TokenizerType.WORD,
+                min_token_len=1,
+                lowercase=True,
+                ascii_folding=True,
+                phrase_matching=True,
+                on_disk=True,
+            ),
+        )
+        self._ensure_text_index(
+            "path_prefix",
+            qmodels.TextIndexParams(
+                type=qmodels.TextIndexType.TEXT,
+                tokenizer=qmodels.TokenizerType.PREFIX,
+                min_token_len=1,
+                lowercase=True,
+                ascii_folding=True,
+                phrase_matching=False,
+                on_disk=True,
+            ),
+        )
+
+    def _ensure_text_index(self, field: str, params: Any) -> None:
+        try:
+            self.client.create_payload_index(
+                collection_name=self.collection,
+                field_name=field,
+                field_schema=params,
+            )
+            logger.info("ensured text index on %s.%s", self.collection, field)
+        except Exception as e:  # noqa: BLE001
+            # Qdrant errors on a duplicate create; the index is
+            # already there in that case, which is what we want.
+            logger.debug(
+                "text index ensure on %s.%s failed (likely already exists): %s",
+                self.collection, field, e,
+            )
+
     def search_with_vectors(
         self, vector: list[float], limit: int, offset: int = 0,
         collections: list[str] | None = None,
         allowed_ids: list[str] | None = None,
         exclude_ids: list[str] | None = None,
+        path_filter: Any | None = None,
     ) -> tuple[list[tuple[SearchHit, list[float]]], bool]:
         """
         Like ``search()`` but returns ``(hit, vector)`` pairs so the
@@ -337,8 +464,13 @@ class QdrantSearch:
         list is dropped before the result ever leaves Qdrant. Used
         by the dynamic-centroid search route's Layer 2 (over-fetch
         + numpy post-pass) so the over-fetch round-trip doesn't
-        waste bandwidth shipping vectors we're going to drop on
-        the python side anyway. Empty / None skips.
+        waste bandwidth shipping vectors we're going to drop on the
+        python side anyway. Empty / None skips.
+
+        ``path_filter`` mirrors ``search()``: an optional pre-built
+        Qdrant filter condition (the native text-index condition
+        for a ``?filename=`` pattern), AND'd into the same ``must``
+        list. Empty / None skips.
         """
         from qdrant_client.http import models as qmodels
 
@@ -354,6 +486,8 @@ class QdrantSearch:
             must_conditions.append(
                 qmodels.HasIdCondition(has_id=cast("list[int|str|UUID]", allowed_ids))
             )
+        if path_filter is not None:
+            must_conditions.append(path_filter)
         must_not_conditions: list[Any] = []
         if exclude_ids:
             must_not_conditions.append(
