@@ -791,6 +791,26 @@ def create_app(
             except Exception as e:  # noqa: BLE001
                 logger.warning("text encoder background warm-up failed: %s", e)
 
+        async def _bg_ensure_text_indexes() -> None:
+            """Create the native text indexes the filename filter needs.
+
+            A collection restored from a snapshot, or one created by an
+            older indexer, has no text index on `path` — and a filename
+            query against an unindexed field falls back to a full
+            payload scan. Creating the indexes is idempotent, so this
+            runs on every startup.
+
+            It runs in the background for the same reason the other
+            startup work does: building a text index over millions of
+            paths takes long enough that doing it inline would blow
+            the readiness probe budget.
+            """
+            try:
+                await asyncio.to_thread(qdrant.ensure_path_text_index)
+                logger.info("native path text indexes ready")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("native path text index setup failed: %s", e)
+
         async def _bg_init_from_qdrant() -> None:
             try:
                 count = await asyncio.to_thread(index_db.init_from_qdrant)
@@ -814,6 +834,7 @@ def create_app(
         # them on the running loop without blocking lifespan return.
         encoder_warmup_task = asyncio.create_task(_bg_text_encoder_warmup())
         index_init_task = asyncio.create_task(_bg_init_from_qdrant())
+        text_index_task = asyncio.create_task(_bg_ensure_text_indexes())
 
         # Option B: no SyncManager to start. The indexer writes
         # directly to the canonical collection, so the search side
@@ -1225,87 +1246,6 @@ def create_app(
                 return None
         return None
 
-    async def _resolve_filename_filter(
-        pattern: str,
-    ) -> tuple[list[str] | None, str | None]:
-        """
-        Translate a raw `?filename=` pattern to an `allowed_ids` list
-        for Qdrant's `HasId` filter, applying the cardinality guard.
-
-        Returns one of four outcomes (always a 2-tuple):
-
-          (None, None)            — no filter requested (pattern
-                                    was empty), OR the guard decided
-                                    to skip the filter because
-                                    matching ids cover > 50% of
-                                    the cache. Caller passes `None`
-                                    to qdrant.search meaning "no
-                                    HasId filter".
-          ([], None)              — pattern matched zero images.
-                                    Caller surfaces an empty result
-                                    (the user typed
-                                    `?filename=nonsense`).
-          (list[str], None)       — a usable set of allowed ids.
-          (None, "bad_request")   — pattern was syntactically
-                                    invalid (caller surfaces a 400
-                                    with the validator's message
-                                    via `path_token_ids`).
-
-        The cardinality guard is the load-bearing piece: when a
-        pattern like `2024` matches 60% of the collection, applying
-        `HasId` to the rest actively hurts search quality (HNSW
-        has to pick the top-K from a non-uniform distribution AND
-        serialise the id list on every request) without meaningfully
-        narrowing anything. By dropping the filter above the guard
-        threshold we get "full ranking + 0 wasted work", which is
-        the right default for very-broad queries.
-
-        The guard uses the SQLite cache rowcount as the denominator
-        — it's already loaded and O(1) to read. For the 1.5M-row
-        live cache that's a free comparison.
-
-        Total count is fetched via `await asyncio.to_thread` so it
-        doesn't block the event loop on the (cheap) SQLite read.
-        """
-        if not pattern or not pattern.strip():
-            return None, None
-        try:
-            ids = await asyncio.to_thread(
-                index_db.path_token_ids, pattern
-            )
-        except ValueError:
-            # Pattern failed FTS5 validation (e.g. leading `*`,
-            # multi-token input, etc). Surface as a 400 — the
-            # validator's message is already user-friendly and
-            # includes the offending pattern, so we just signal
-            # the route handler to wrap it.
-            return None, "bad_request"
-        if ids is None:
-            # Empty pattern after sanitisation. Same as no filter.
-            return None, None
-        if not ids:
-            # Pattern matched zero images. Distinguish this from
-            # "skip the filter" so the caller can render an empty
-            # results state with the right message (rather than
-            # ranking over the whole collection).
-            return [], None
-        # Cardinality guard. The guard is symmetric: we apply it
-        # whether the filter is super-narrow or super-broad — both
-        # are degenerate. The > 0.5 threshold matches the design
-        # discussion; below it the filter strictly improves latency
-        # and relevance; above it the filter competes with HNSW
-        # scoring without adding value.
-        total = await asyncio.to_thread(index_db.count_images)
-        if total > 0:
-            coverage = len(ids) / total
-            if coverage > _cfg.filename_cardinality_guard:
-                logger.info(
-                    "filename filter %r matched %d/%d (%.1f%%); "
-                    "skipping HasId per cardinality guard",
-                    pattern, len(ids), total, coverage * 100,
-                )
-                return None, None
-        return ids, None
     # _normalize_prompt_state lives in search/_indexed_helpers.py (§B2 step 37).
 
     # _search_query_string lives in search/_indexed_helpers.py (§B2 step 36).

@@ -60,7 +60,6 @@ from search._result_helpers import (
 )
 from search.diversity import resolve_depth, resolve_mode
 from search.models import DiversityMetadata, SearchResponse, SearchResult
-from search.qdrant_client import SearchHit
 from search.surprise_deck import (
     DEFAULT_POOL_SIZE,
     DEFAULT_TEMPERATURE,
@@ -170,10 +169,14 @@ def build_search_router(
         active_weights = parse_weights(request, len(active_centroids))
         active_centroid = active_centroids[0] if active_centroids else None
         filename_pattern = parse_filename(request)
-        # Resolve `allowed_ids` from the filename pattern up front so
-        # any 400 lands before the long-running Qdrant search.
-        allowed_ids, fname_err = await resolve_filename_filter(
-            index_db, cfg=cfg, pattern=filename_pattern,
+        # Resolve the filename pattern into a native Qdrant filter
+        # condition up front so any 400 lands before the long-running
+        # Qdrant search. The condition is evaluated server-side
+        # against the native text index on the `path` payload field,
+        # so the matching photo ids never have to be materialised
+        # and shipped back to Qdrant as a `HasId` filter.
+        path_filter, fname_err = await resolve_filename_filter(
+            qdrant, cfg=cfg, pattern=filename_pattern,
         )
         if fname_err == "bad_request":
             return bad_request(
@@ -343,93 +346,51 @@ def build_search_router(
                 if surprise else None
             )
         )
-        # `allowed_ids == []` short-circuit: skip the Qdrant round-trip
-        # and return zero hits. See the matching block in `/` for why
-        # we can't pass `has_id=[]` directly to HasIdCondition.
+        # A filename pattern that matches nothing yields no hits from
+        # Qdrant — the native filter simply returns an empty result
+        # set, so there is no separate zero-match short-circuit here.
+        # (The old id-list path needed one, because an empty
+        # `HasIdCondition` is not the same as no filter at all.)
         deck_ids: list[str] = []  # populated by the surprise branch; empty otherwise
-        if allowed_ids is not None and not allowed_ids:
-            hits: list[SearchHit] = []
-            has_more = False
-            favorite_ids: set[str] = set()
-            diversity_meta = DiversityMetadata(
-                requested=diverse,
-                applied=False,
-                mode=diversity_mode,
-                strength=diversity_strength,
-                depth=diversity_depth_mode,
-                pool_depth=0,
-            )
-        else:
-            try:
-                if diverse:
-                    if fav_task is not None:
-                        favorite_ids = await fav_task
-                    else:
-                        # No favorites filter requested — pass None
-                        # to diversity_page so it takes the request's
-                        # search_allowed_ids verbatim (not an empty
-                        # allowed_ids, which would short-circuit to
-                        # zero hits).
-                        favorite_ids = None  # type: ignore[assignment]
-                    hits, has_more, diversity_meta = diversity_page(
-                        cfg, qdrant, diversity_cache,
-                        vector=vec,
-                        effective_limit=effective_limit,
-                        offset=offset,
-                        collections=collections,
-                        allowed_ids=allowed_ids,
-                        favorite_ids=favorite_ids,
-                        mode=diversity_mode,
-                        strength=diversity_strength,
-                        depth=diversity_depth_mode,
-                        pool_depth=diversity_pool_depth,
-                    )
-                elif favorites:
-                    # The favorites branch owns surprise+favorites
-                    # composition too, because `favorites` is the
-                    # more specific filter (it restricts the Qdrant
-                    # pool to a whitelist). When `surprise` is also
-                    # set, run the Gumbel deck flow over the
-                    # favorites-restricted pool; otherwise the
-                    # plain page-through-the-pool flow.
-                    if fav_task is not None:
-                        favorite_ids = await fav_task
-                    else:
-                        favorite_ids = set()
-                    fav_allowed = list(favorite_ids)
-                    if surprise:
-                        assert surprise_seed_parsed is not None, (  # noqa: S101
-                            "surprise_seed_parsed must be set when surprise=True"
-                        )
-                        assert surprise_cache_key is not None, (  # noqa: S101
-                            "surprise_cache_key must be set when surprise=True"
-                        )
-                        hits, has_more, deck_ids = await build_surprise_deck(
-                            qdrant=qdrant,
-                            vec=vec,
-                            collections=collections,
-                            surprise_allowed_ids=fav_allowed,
-                            surprise_pool=surprise_pool_parsed,
-                            surprise_temperature=surprise_temperature_parsed,
-                            surprise_seed=surprise_seed_parsed,
-                            surprise_session=surprise_session,
-                            surprise_cache_key=surprise_cache_key,
-                            surprise_deck_cache=surprise_deck_cache,
-                            effective_limit=effective_limit,
-                            offset=offset,
-                        )
-                    else:
-                        hits, has_more = await asyncio.to_thread(
-                            qdrant.search,
-                            vec,
-                            effective_limit,
-                            offset,
-                            collections or None,
-                            fav_allowed,
-                        )
-                    diversity_meta = DiversityMetadata()
-                elif surprise:
-                    # Pure surprise (no favorites filter).
+        try:
+            if diverse:
+                if fav_task is not None:
+                    favorite_ids = await fav_task
+                else:
+                    # No favorites filter requested — pass None
+                    # to diversity_page so it takes the request's
+                    # search_allowed_ids verbatim (not an empty
+                    # allowed_ids, which would short-circuit to
+                    # zero hits).
+                    favorite_ids = None
+                hits, has_more, diversity_meta = diversity_page(
+                    cfg, qdrant, diversity_cache,
+                    vector=vec,
+                    effective_limit=effective_limit,
+                    offset=offset,
+                    collections=collections,
+                    allowed_ids=None,
+                    favorite_ids=favorite_ids,
+                    mode=diversity_mode,
+                    strength=diversity_strength,
+                    depth=diversity_depth_mode,
+                    pool_depth=diversity_pool_depth,
+                    path_filter=path_filter,
+                )
+            elif favorites:
+                # The favorites branch owns surprise+favorites
+                # composition too, because `favorites` is the
+                # more specific filter (it restricts the Qdrant
+                # pool to a whitelist). When `surprise` is also
+                # set, run the Gumbel deck flow over the
+                # favorites-restricted pool; otherwise the
+                # plain page-through-the-pool flow.
+                if fav_task is not None:
+                    favorite_ids = await fav_task
+                else:
+                    favorite_ids = set()
+                fav_allowed = list(favorite_ids)
+                if surprise:
                     assert surprise_seed_parsed is not None, (  # noqa: S101
                         "surprise_seed_parsed must be set when surprise=True"
                     )
@@ -440,7 +401,8 @@ def build_search_router(
                         qdrant=qdrant,
                         vec=vec,
                         collections=collections,
-                        surprise_allowed_ids=allowed_ids,
+                        surprise_allowed_ids=fav_allowed,
+                        path_filter=path_filter,
                         surprise_pool=surprise_pool_parsed,
                         surprise_temperature=surprise_temperature_parsed,
                         surprise_seed=surprise_seed_parsed,
@@ -450,39 +412,75 @@ def build_search_router(
                         effective_limit=effective_limit,
                         offset=offset,
                     )
-                    diversity_meta = DiversityMetadata()
                 else:
-                    favorite_ids = set()
-                    # Stable pagination: rank once, slice pages from a
-                    # frozen snapshot. Passing `offset` straight to
-                    # Qdrant is unsound on HNSW — each page ranks at
-                    # depth offset+limit, so neighbouring pages overlap.
-                    hits, has_more = await materialize_search_page(
-                        cfg,
-                        qdrant,
-                        snapshot_cache,
-                        vector=vec,
-                        offset=offset,
-                        limit=effective_limit,
-                        collections=collections,
-                        allowed_ids=allowed_ids,
-                        favorite_ids=None,
+                    hits, has_more = await asyncio.to_thread(
+                        qdrant.search,
+                        vec,
+                        effective_limit,
+                        offset,
+                        collections or None,
+                        fav_allowed,
+                        None,
+                        path_filter,
                     )
-                    diversity_meta = DiversityMetadata()
-            except (ConnectionError, OSError) as e:
-                log_qdrant_error(logger, endpoint="/api/search", error=e, op="search")
-                return qdrant_unreachable(str(e))
-            except Exception as e:  # noqa: BLE001
-                if "timeout" in type(e).__name__.lower() or "Timeout" in str(e):
-                    log_qdrant_timeout(
-                        logger, endpoint="/api/search", op="search",
-                        timeout_ms=cfg.query_timeout_ms,
-                    )
-                    return qdrant_timeout(str(e))
-                log_qdrant_error(
-                    logger, endpoint="/api/search", error=e, op="search",
+                diversity_meta = DiversityMetadata()
+            elif surprise:
+                # Pure surprise (no favorites filter).
+                assert surprise_seed_parsed is not None, (  # noqa: S101
+                    "surprise_seed_parsed must be set when surprise=True"
                 )
-                return internal_error(str(e))
+                assert surprise_cache_key is not None, (  # noqa: S101
+                    "surprise_cache_key must be set when surprise=True"
+                )
+                hits, has_more, deck_ids = await build_surprise_deck(
+                    qdrant=qdrant,
+                    vec=vec,
+                    collections=collections,
+                    surprise_allowed_ids=None,
+                    path_filter=path_filter,
+                    surprise_pool=surprise_pool_parsed,
+                    surprise_temperature=surprise_temperature_parsed,
+                    surprise_seed=surprise_seed_parsed,
+                    surprise_session=surprise_session,
+                    surprise_cache_key=surprise_cache_key,
+                    surprise_deck_cache=surprise_deck_cache,
+                    effective_limit=effective_limit,
+                    offset=offset,
+                )
+                diversity_meta = DiversityMetadata()
+            else:
+                favorite_ids = set()
+                # Stable pagination: rank once, slice pages from a
+                # frozen snapshot. Passing `offset` straight to
+                # Qdrant is unsound on HNSW — each page ranks at
+                # depth offset+limit, so neighbouring pages overlap.
+                hits, has_more = await materialize_search_page(
+                    cfg,
+                    qdrant,
+                    snapshot_cache,
+                    vector=vec,
+                    offset=offset,
+                    limit=effective_limit,
+                    collections=collections,
+                    allowed_ids=None,
+                    favorite_ids=None,
+                    path_filter=path_filter,
+                )
+                diversity_meta = DiversityMetadata()
+        except (ConnectionError, OSError) as e:
+            log_qdrant_error(logger, endpoint="/api/search", error=e, op="search")
+            return qdrant_unreachable(str(e))
+        except Exception as e:  # noqa: BLE001
+            if "timeout" in type(e).__name__.lower() or "Timeout" in str(e):
+                log_qdrant_timeout(
+                    logger, endpoint="/api/search", op="search",
+                    timeout_ms=cfg.query_timeout_ms,
+                )
+                return qdrant_timeout(str(e))
+            log_qdrant_error(
+                logger, endpoint="/api/search", error=e, op="search",
+            )
+            return internal_error(str(e))
         took_ms = int((time.time() - t0) * 1000)
         # Resolve fav/dis for the SearchResult list via the indexed
         # helper. The diversity path already pulled the favorite set;
