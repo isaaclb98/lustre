@@ -37,7 +37,8 @@
   import { readUrl, writeUrl, pushUrlSearch } from '$lib/state/urlState';
   import type { SavedSearch } from '$lib/api/endpoints';
   import { POOL_STOPS_HOME, DEFAULT_POOL_INDEX_HOME } from '$lib/api/limits';
-  import { preferences, GRID_SIZE_CONFIG } from '$lib/stores/preferences';
+  import { preferences } from '$lib/stores/preferences';
+  import { currentPageSize } from '$lib/grid/geometry';
   import Button from '$lib/components/Button.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
 
@@ -51,19 +52,19 @@
     is_disliked?: boolean;
   };
 
-  // Per-grid-size page size — drives both the initial search
-  // limit and every loadMore() call. Scales with the grid so
-  // every size fills ~4 rows on first load: Large 24 (6×4),
-  // Medium 32 (8×4), Small 40 (10×4). Reads from the same
-  // GRID_SIZE_CONFIG the virtualizer + CSS use, so a Settings
-  // → Grid size change applies to page size too.
+  // Page size for one request — the number of photos a single
+  // fetch asks for. Derived from the column count the grid
+  // actually renders at the current viewport (see
+  // $lib/grid/geometry): the configured photo count rounded up
+  // to a whole number of grid rows, so a page never ends on a
+  // half-filled row and never carries fewer photos than the
+  // density preset promises.
   //
-  // GRID_PAGE_SIZE in $lib/api/limits is now a back-compat
-  // export for callers that don't have a gridSize preference
-  // (the For You page uses its own sampling math). Keep the
-  // constant there as the documented default (24 = Large's
-  // pageSize).
-  const PAGE = $derived(GRID_SIZE_CONFIG[$preferences.gridSize].pageSize);
+  // Measured per request rather than derived once, so it
+  // follows the viewport and the Settings → Grid size choice.
+  function pageLimit(): number {
+    return currentPageSize($preferences.gridSize);
+  }
 
   // Composer state (hoisted from PromptChips).
   let positives = $state<string[]>([]);
@@ -247,12 +248,13 @@
     surpriseSession = null;
     surpriseTotal = null;
     try {
+      const limit = pageLimit();
       const res = await search(
         {
           positives,
           negatives,
           filename,
-          limit: PAGE,
+          limit,
           offset: 0,
           centroid: activeCentroid ?? undefined,
           // Round-92: `centroidMode` is no longer forwarded.
@@ -276,8 +278,20 @@
         ctrl.signal
       );
       items = (res?.results ?? []) as Item[];
-      offset = items.length;
-      hasMore = items.length >= PAGE && !!res?.has_more;
+      // The backend's offset is an ABSOLUTE position in its result
+      // sequence (a frozen search snapshot, a Surprise deck, a
+      // cached diversity ranking). It advances by the limit we
+      // asked for, not by the number of photos that came back — a
+      // pruned photo is dropped during hydration, so the two can
+      // legitimately differ. Tracking the limit keeps the next
+      // request aligned with the server's cursor.
+      offset = limit;
+      // The server's has_more is authoritative: it is computed from
+      // the snapshot/deck, not from the hydrated page length, so a
+      // photo pruned mid-session can't make the result set look
+      // like it ended. The only thing to guard against is a page
+      // that came back empty — nothing to append, so stop.
+      hasMore = !!res?.has_more && items.length > 0;
       // Capture the surprise session for the next page; without
       // this, loadMore() would either rebuild the deck (slow)
       // or send surprise_session="" and miss the cache (also
@@ -301,9 +315,10 @@
     if (loading || !hasMore) return;
     loading = true;
     try {
+      const limit = pageLimit();
       const res = await search({
         positives, negatives, filename,
-        limit: PAGE, offset,
+        limit, offset,
         centroid: activeCentroid ?? undefined,
         // Round-92: `centroidMode` no longer forwarded (see
         // reload() for the full rationale).
@@ -315,8 +330,11 @@
       }, signal);
       const more = (res?.results ?? []) as Item[];
       items = [...items, ...more];
-      offset += more.length;
-      hasMore = more.length >= PAGE && !!res?.has_more;
+      // Advance by the limit sent — see the note in reload().
+      offset += limit;
+      // The server's has_more is authoritative; an empty page means
+      // there is nothing left to append.
+      hasMore = !!res?.has_more && more.length > 0;
       // Refresh the session id in case the backend regenerated
       // it (e.g. a cache miss with a fresh key).
       if (surpriseOn) {

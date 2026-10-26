@@ -6,7 +6,9 @@
   import Dialog from '$lib/components/Dialog.svelte';
   import { onNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { preferences, GRID_SIZE_CONFIG } from '$lib/stores/preferences';
+  import { preferences } from '$lib/stores/preferences';
+  import { GRID_SIZE_CONFIG } from '$lib/grid/config';
+  import { columnsForWidth, widthForColumns } from '$lib/grid/geometry';
 
   let { children } = $props();
 
@@ -98,7 +100,7 @@
   // as `--grid-row-max-width` so the CSS grid's max-width clamp
   // matches the JS math — without it, auto-fit would let tracks
   // grow past the cap and the row would fill the viewport.
-  const ROW_MAX_WIDTH = $derived(MAX_COLS * TILE + (MAX_COLS - 1) * GAP);
+  const ROW_MAX_WIDTH = $derived(widthForColumns(MAX_COLS, config));
 
   // Compute and publish `--grid-width` on :root so any page
   // element (header bar, filters panel, etc.) can size to match
@@ -142,11 +144,8 @@
         // gridSize change that happens to coincide with a width
         // change can't get out of sync.
         publishSizeVars();
-        const cols = Math.max(
-          1,
-          Math.min(MAX_COLS, Math.floor((containerWidth + GAP) / (TILE + GAP)))
-        );
-        const gridWidth = cols * TILE + (cols - 1) * GAP;
+        const cols = columnsForWidth(containerWidth, config);
+        const gridWidth = widthForColumns(cols, config);
         document.documentElement.style.setProperty('--grid-width', gridWidth + 'px');
       }
     });

@@ -383,10 +383,9 @@ test('Random page walks through the full session without duplicates', async ({ p
 
 test('Search page infinite-scrolls: scrolls append a second page', async ({ page }) => {
   // / IS the search route now (the /search route was removed).
-  // Initial page size is 24 (see GRID_SIZE_CONFIG.large.pageSize;
-  // was a global GRID_PAGE_SIZE=24 before the per-grid-size
-  // scaling landed — same value for the Large default, just
-  // sourced from a different constant). Scope the tile count
+  // The first page holds a whole number of grid rows at the
+  // column count the viewport renders (see $lib/grid/geometry) —
+  // the count is derived, not a fixed 24. Scope the tile count
   // to the search results section so the home page's For You
   // row tiles don't contaminate the count. Use a generic
   // prompt that's likely to match many photos — "photo"
@@ -401,8 +400,22 @@ test('Search page infinite-scrolls: scrolls append a second page', async ({ page
   // from a previous render cycle.
   await page.waitForTimeout(1500);
 
+  // The rendered track count is the ground truth for the column
+  // count. The virtualizer renders whole rows, so the tile count
+  // must be a multiple of it — that is the whole-row guarantee,
+  // visible in the DOM.
+  const renderedCols = await page.evaluate(() => {
+    const row = document.querySelector('section.results .grid-row');
+    if (!row) return 0;
+    return getComputedStyle(row).gridTemplateColumns
+      .split(' ')
+      .filter(Boolean).length;
+  });
+  expect(renderedCols).toBeGreaterThan(0);
+
   const initial = await page.locator('section.results .grid-tile').count();
-  expect(initial).toBe(24);
+  expect(initial).toBeGreaterThan(0);
+  expect(initial % renderedCols).toBe(0);
 
   // Scroll the sentinel into view to trigger the next-page load.
 // The sentinel lives inside section.results; the page has other
@@ -416,5 +429,7 @@ test('Search page infinite-scrolls: scrolls append a second page', async ({ page
   }
 
   const final = await page.locator('section.results .grid-tile').count();
-  expect(final).toBeGreaterThan(24);
+  expect(final).toBeGreaterThan(initial);
+  // The appended page keeps the whole-row guarantee.
+  expect(final % renderedCols).toBe(0);
 });

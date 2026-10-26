@@ -19,6 +19,15 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 
+/**
+ * The configured photo count per page at each preset's maximum
+ * density (4 rows × maxCols) — the floor for any request. The
+ * actual request rounds UP to a whole number of rows at the
+ * column count the viewport renders, so this is a minimum, never
+ * an exact value. Mirrors $lib/grid/config.
+ */
+const BASE_PAGE_SIZE = { large: 24, medium: 32, small: 40 } as const;
+
 async function gotoSettings(page: Page) {
   await page.goto('/settings');
   await expect(
@@ -114,23 +123,17 @@ test.describe('Grid size preference', () => {
     }
   });
 
-  test('/random fetches a per-grid-size page (Large=24, Medium=32, Small=40)', async ({ page }) => {
-    // Per-grid-size page size: 4 rows × maxCols. /random is
-    // the cleanest page to test this on because the grid IS
-    // the page (no hero) and the first load fires
-    // automatically on mount.
+  test('/random requests a whole number of grid rows at every size', async ({ page }) => {
+    // The page size follows the column count the grid actually
+    // renders at the current viewport (see $lib/grid/geometry), so
+    // the invariant to pin is "the limit is a whole number of
+    // rendered rows" — not a magic number. A fixed limit would
+    // leave a ragged last row at every width that renders fewer
+    // columns than the preset's maximum.
     //
-    // Strategy: intercept the first /api/random?limit= call
-    // and assert the limit value matches the per-grid-size
-    // pageSize. This is the most direct test of the behavior
-    // (vs. counting DOM tiles, which is fragile because of
-    // virtualizer row-recycling).
-    const limits: Record<'large' | 'medium' | 'small', number> = {
-      large: 24,
-      medium: 32,
-      small: 40
-    };
-    for (const [size, expectedLimit] of Object.entries(limits) as Array<['large' | 'medium' | 'small', number]>) {
+    // Strategy: intercept the first /api/random?limit= call, then
+    // read the rendered track count from the DOM and compare.
+    for (const size of ['large', 'medium', 'small'] as const) {
       // Set the preference in localStorage before the page
       // mounts. Going through localStorage is faster than
       // clicking through the Settings page between every
@@ -152,8 +155,69 @@ test.describe('Grid size preference', () => {
       const req = await requestPromise;
       const url = new URL(req.url());
       const limit = Number(url.searchParams.get('limit'));
-      expect(limit).toBe(expectedLimit);
+
+      // The rendered track count is the ground truth for "how many
+      // columns does this page actually show".
+      await page.waitForSelector('.grid-row', { timeout: 15000 });
+      const renderedCols = await page.evaluate(() => {
+        const row = document.querySelector('.grid-row');
+        if (!row) return 0;
+        return getComputedStyle(row).gridTemplateColumns
+          .split(' ')
+          .filter(Boolean).length;
+      });
+
+      expect(renderedCols).toBeGreaterThan(0);
+      // The whole-row guarantee.
+      expect(limit % renderedCols).toBe(0);
+      // And the page never carries fewer photos than the preset
+      // asks for (4 rows at maximum density).
+      expect(limit).toBeGreaterThanOrEqual(BASE_PAGE_SIZE[size]);
     }
+  });
+
+  test('resizing the window changes the page size to keep rows whole', async ({ page }) => {
+    // The request size tracks the viewport. A narrow window
+    // renders fewer columns, so the limit must grow (rounded up
+    // to whole rows) to stay a multiple of the rendered columns.
+    await page.goto('/');
+    await page.evaluate(() => {
+      localStorage.setItem(
+        'lustre:preferences',
+        JSON.stringify({ slideshowIntervalMs: 3000, gridSize: 'large' })
+      );
+    });
+
+    const limitsAt = async (width: number) => {
+      await page.setViewportSize({ width, height: 900 });
+      const requestPromise = page.waitForRequest(
+        (req) => req.url().includes('/api/random') && !req.url().includes('offset='),
+        { timeout: 15000 }
+      );
+      await page.goto('/random', { waitUntil: 'domcontentloaded' });
+      const req = await requestPromise;
+      const limit = Number(new URL(req.url()).searchParams.get('limit'));
+      await page.waitForSelector('.grid-row', { timeout: 15000 });
+      const cols = await page.evaluate(() => {
+        const row = document.querySelector('.grid-row');
+        if (!row) return 0;
+        return getComputedStyle(row).gridTemplateColumns
+          .split(' ')
+          .filter(Boolean).length;
+      });
+      return { limit, cols };
+    };
+
+    const wide = await limitsAt(1920);
+    const narrow = await limitsAt(768);
+
+    // Fewer columns at the narrow width...
+    expect(narrow.cols).toBeLessThan(wide.cols);
+    // ...and both requests fill whole rows.
+    expect(wide.limit % wide.cols).toBe(0);
+    expect(narrow.limit % narrow.cols).toBe(0);
+    expect(narrow.limit).toBeGreaterThanOrEqual(BASE_PAGE_SIZE.large);
+    expect(wide.limit).toBeGreaterThanOrEqual(BASE_PAGE_SIZE.large);
   });
 
   test('The CSS vars on :root reflect the chosen size', async ({ page }) => {

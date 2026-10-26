@@ -1,20 +1,14 @@
 /**
- * Centralised grid sizing — single source of truth for the page
- * size every infinite-scroll grid in the app uses. Grid behaviour
- * is a primitive (not bespoke per page), so the value lives here
- * and is imported by every consumer instead of being a literal
- * scattered across routes and API wrappers.
+ * Fallback page size for API wrappers whose caller doesn't pass a
+ * limit. The grid routes size their requests from the column count
+ * the grid actually renders — see $lib/grid/geometry — so this
+ * value only applies to a call that omits the limit entirely.
  *
  * If a future grid genuinely needs a different page size (e.g.
  * one-page detail view that renders everything), add a separate
  * exported constant alongside this one rather than overriding.
  *
- * Round‑36: dropped from 28 → 24. The 6-col 4K grid (`auto-fill,
- * 384px` at the 2400px container cap) needs a multiple of 6 for
- * the last row to be full. 28 left an awkward 4-tile trailing
- * row; 24 = 4 clean rows on 4K, 8 on laptop (3 cols), 12 on
- * mobile (2 cols). Smallest multiple of every common col count,
- * so the page looks complete at every breakpoint.
+ * 24 = 4 clean rows of 6 (the Large preset at full width).
  */
 export const GRID_PAGE_SIZE = 24;
 

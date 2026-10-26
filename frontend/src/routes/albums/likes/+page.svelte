@@ -17,7 +17,8 @@
     unlikePoint
   } from '$lib/api/endpoints';
   import { usePagedAlbumList } from '$lib/composables/usePagedAlbumList.svelte';
-  import { preferences, GRID_SIZE_CONFIG } from '$lib/stores/preferences';
+  import { preferences } from '$lib/stores/preferences';
+  import { currentPageSize } from '$lib/grid/geometry';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
 
@@ -28,14 +29,19 @@
     is_favorite?: boolean;
   };
 
-  // Per-grid-size page size — same as home and /random.
-  const PAGE = $derived(GRID_SIZE_CONFIG[$preferences.gridSize].pageSize);
+  // Photos per request — derived from the column count the grid
+  // renders at the current viewport (see $lib/grid/geometry) so a
+  // page always fills whole rows. Read on every fetch, so it
+  // follows the viewport and the Settings → Grid size choice.
+  function pageLimit(): number {
+    return currentPageSize($preferences.gridSize);
+  }
 
   // Phase 5: usePagedAlbumList owns the load/loadMore/remove
   // pattern. The useIndexMap flag enables an O(1) SvelteMap
   // shadow of items (worth it on Likes at 1000+ items).
   const list = usePagedAlbumList<Item>({
-    pageSize: () => PAGE,
+    pageSize: () => pageLimit(),
     fetchPage: (limit, offset, signal) =>
       // listFavorites returns the SearchResponse envelope when
       // called via as_results=1 (which listFavorites sets).

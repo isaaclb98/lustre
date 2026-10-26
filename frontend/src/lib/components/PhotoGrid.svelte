@@ -28,7 +28,9 @@
   import PhotoTile from './PhotoTile.svelte';
   import ImageContextMenu from './ImageContextMenu.svelte';
   import Lightbox from './Lightbox.svelte';
-  import { preferences, GRID_SIZE_CONFIG } from '$lib/stores/preferences';
+  import { preferences } from '$lib/stores/preferences';
+  import { GRID_SIZE_CONFIG } from '$lib/grid/config';
+  import { columnsForWidth } from '$lib/grid/geometry';
 
   // Use the generated SearchResult shape so `url`, `width`,
   // `height`, `is_disliked` etc. stay in lockstep with the
@@ -160,12 +162,14 @@
   // `auto-fill minmax(COLUMN_MIN, 1fr)` so the virtualizer's row
   // slicing matches the DOM's actual column count — otherwise the
   // last columns of every row stay empty.
+  //
+  // columnsForWidth() is the shared implementation the layout's
+  // ResizeObserver and the fetch layer also call, so the row count
+  // the grid renders, the width the chrome publishes, and the
+  // number of photos a request asks for can never drift apart.
   let columns = $derived(
     tileSize > 0 && containerWidth > 0
-      ? Math.max(
-          1,
-          Math.min(MAX_COLS, Math.floor((containerWidth + GAP) / (TILE + GAP)))
-        )
+      ? columnsForWidth(containerWidth, config)
       : ESTIMATED_COLUMNS
   );
 

@@ -18,6 +18,8 @@
     unlikePoint,
     dislikePoint
   } from '$lib/api/endpoints';
+  import { preferences } from '$lib/stores/preferences';
+  import { currentPageSizeWithin } from '$lib/grid/geometry';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
 
@@ -41,9 +43,12 @@
     loading = true;
     error = null;
     try {
-      // Fetch the full MAX_TOTAL in one call — the endpoint is a
-      // vector top-k and there's no "next page" semantics.
-      const res = await similarPhotos(id, MAX_TOTAL);
+      // Fetch the neighbours in one call — the endpoint is a vector
+      // top-k and there's no "next page" semantics. The count is
+      // the largest whole number of grid rows that fits under
+      // MAX_TOTAL, so the grid never ends on a ragged row.
+      const limit = currentPageSizeWithin($preferences.gridSize, MAX_TOTAL);
+      const res = await similarPhotos(id, limit);
       items = (res?.results ?? []) as Item[];
     } catch (e: unknown) {
       error = (e as Error).message ?? 'Failed to load similar photos';

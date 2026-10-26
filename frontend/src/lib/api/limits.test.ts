@@ -24,7 +24,7 @@ import {
 } from './limits';
 
 describe('GRID_PAGE_SIZE', () => {
-  it('is 24 (4K-friendly multiple of every common column count)', () => {
+  it('is 24 (the fallback default for API calls that omit a limit)', () => {
     expect(GRID_PAGE_SIZE).toBe(24);
   });
 });

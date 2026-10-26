@@ -21,14 +21,14 @@
     preferences,
     SLIDESHOW_PRESETS,
     setSlideshowInterval,
-    setGridSize,
-    type GridSize
+    setGridSize
   } from '$lib/stores/preferences';
+  import { type GridSize } from '$lib/grid/config';
 
   // Grid size — three user-facing labels, single knob. The
   // CSS/JS derive tile size, gap, and max columns from the
-  // choice via GRID_SIZE_CONFIG. Order matters: rendered
-  // left-to-right in the settings row.
+  // choice via GRID_SIZE_CONFIG ($lib/grid/config). Order
+  // matters: rendered left-to-right in the settings row.
   const GRID_SIZE_PRESETS: { label: string; value: GridSize }[] = [
     { label: 'Large', value: 'large' },
     { label: 'Medium', value: 'medium' },
@@ -227,7 +227,10 @@
       How dense the photo grid renders. Larger tiles are easier to
       scan one at a time; smaller tiles pack more photos per row
       and work better on wide monitors. Applies to every page that
-      shows the photo grid (home, /random, /for-you, /albums).
+      shows the photo grid (home, /random, /for-you, /albums). The
+      number of photos loaded per page follows your window width, so
+      every row comes out full — resize the window and the page size
+      adjusts to match.
     </p>
     <div
       class="preset-row"
