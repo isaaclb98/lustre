@@ -1,4 +1,14 @@
-"""Tests for the POST /api/cache/refresh endpoint."""
+"""Tests for the POST /api/cache/refresh endpoint.
+
+There is no cache to refresh any more. The photo corpus, its
+metadata, and the native text index all live in Qdrant; this
+SQLite database holds only the user's own state. What the endpoint
+still does is the one thing that needed a trigger: dropping
+user-state rows that point at photos the indexer has pruned.
+
+The liveness check is against Qdrant, so a favourite is only ever
+dropped when the COLLECTION says the photo is gone.
+"""
 from __future__ import annotations
 
 import pytest
@@ -10,8 +20,8 @@ from indexer.upsert import VECTOR_DIM
 @pytest.fixture
 def refresh_app(tmp_path, monkeypatch):
     """A FastAPI app wired to an in-memory Qdrant with three seeded
-    points and a SQLite cache. Mirrors the search_api fixture shape
-    so the refresh path is exercised end-to-end.
+    points and a SQLite side store. Mirrors the search_api fixture
+    shape so the refresh path is exercised end-to-end.
     """
     # The fix for the UNC-payload bug (2026-08-15) calls resolve_local
     # before _is_path_alive. The fixture's seeded paths don't match
@@ -78,7 +88,8 @@ def refresh_app(tmp_path, monkeypatch):
         (seed_ids["c"], {"id": seed_ids["c"], "path": "/photos/c.jpg",
                           "collection": "portrait", "indexed_at": "2026-01-01T00:00:00Z"}),
     ]
-    from lustre_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
+    from lustre_kernel.registry import MockEmbedder
+    _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
     upsert.upsert_batch(
         client, cfg.qdrant_collection,
         [(pid, _mock_embed(pid), payload) for pid, payload in seed],
@@ -108,166 +119,115 @@ def refresh_app_state(refresh_app):
     return {"seed_ids": refresh_app.app.state.test_seed_ids}
 
 
-def test_api_cache_refresh_rebuilds_index(refresh_app):
-    """First call: cache is empty, refresh inserts the 3 seeded
-    Qdrant points via the diff path (3 new ids, 0 orphans).
-    """
-    resp = refresh_app.post("/api/cache/refresh")
+def test_api_cache_refresh_reports_ok(refresh_app):
+    """The endpoint answers with the purge result."""
+    resp = refresh_app.get("/api/cache/refresh")
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    assert data["mode"] == "incremental"
-    assert data["skipped"] is False
-    assert data["inserted"] == 3
-    assert data["deleted"] == 0
+    assert "purged" in data
 
 
-def test_api_cache_refresh_picks_up_new_qdrant_points(refresh_app, refresh_app_state):
-    """Cache rebuilt, then a new point is added to Qdrant directly,
-    then refresh picks it up.
-    """
+def test_api_cache_refresh_purges_orphaned_favourites(
+    refresh_app, refresh_app_state,
+):
+    """A favourite whose photo left the collection is purged."""
     seed_ids = refresh_app_state["seed_ids"]
-    refresh_app.post("/api/cache/refresh")
-    first = refresh_app.get("/api/random?limit=10").json()
-    assert {r["id"] for r in first["results"]} == {seed_ids["a"], seed_ids["b"], seed_ids["c"]}
 
-    # Add a fourth point to Qdrant without going through the cache.
-    from indexer import upsert
-    from lustre_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
-    # Reach into the app's raw QdrantClient (stored on app.state by
-    # the fixture) and upsert a fourth point directly.
-    client = refresh_app.app.state.qdrant_client
-    collection = refresh_app.app.state.qdrant_collection
-    upsert.upsert_batch(
-        client, collection,
-        [(
-            seed_ids["d"],
-            _mock_embed("d"),
-            {"id": seed_ids["d"], "path": "/photos/d.jpg",
-             "collection": "portrait", "indexed_at": "2026-01-02T00:00:00Z"},
-        )],
+    # Favourite a photo, then remove it from the collection.
+    resp = refresh_app.post(f"/api/favorites/{seed_ids['a']}")
+    assert resp.status_code in (200, 201)
+
+    refresh_app.app.state.qdrant_client.delete(
+        collection_name=refresh_app.app.state.qdrant_collection,
+        points_selector=[seed_ids["a"]],
         wait=True,
     )
 
-    # Before refresh: cache still shows only the original 3.
-    stale = refresh_app.get("/api/random?limit=10").json()
-    assert seed_ids["d"] not in {r["id"] for r in stale["results"]}
-
-    # After refresh: d is included.
-    refresh_app.post("/api/cache/refresh")
-    fresh = refresh_app.get("/api/random?limit=10").json()
-    assert {r["id"] for r in fresh["results"]} == {
-        seed_ids["a"], seed_ids["b"], seed_ids["c"], seed_ids["d"],
-    }
-
-
-def test_api_cache_refresh_preserves_favourites(refresh_app, refresh_app_state):
-    """The whole point of the persistence refactor: refresh
-    shouldn't wipe a favourite.
-    """
-    refresh_app.post("/api/cache/refresh")
-    # Mark a favourite (use one of the seeded UUIDs).
-    fav_id = refresh_app_state["seed_ids"]["a"]
-    refresh_app.post(f"/api/favorites/{fav_id}")
-    assert refresh_app.get("/api/favorites").json()["total"] == 1
-
-    # Force a refresh.
-    resp = refresh_app.post("/api/cache/refresh")
+    resp = refresh_app.get("/api/cache/refresh")
     assert resp.status_code == 200
-    assert resp.json()["skipped"] is True  # no drift between calls
-    assert resp.json()["inserted"] == 0
-    assert resp.json()["deleted"] == 0
+    assert resp.json()["purged"]["favorites"] == 1
 
-    # Favourite is still there.
-    assert refresh_app.get("/api/favorites").json()["total"] == 1
+    # And it is really gone.
+    body = refresh_app.get("/api/favorites").json()
+    assert seed_ids["a"] not in {f["id"] for f in body.get("favorites", [])}
 
 
-def test_api_cache_refresh_bails_when_indexer_running(refresh_app, monkeypatch):
-    """Round-35: the default incremental refresh is SAFE to run
-    concurrently with the indexer (it only touches orphan ids, not
-    the whole table) — so it does NOT bail when the indexer is
-    running. Only the explicit ?full=true wipe+rebuild still bails,
-    because that path races the indexer's INSERTs.
+def test_api_cache_refresh_preserves_favourites(
+    refresh_app, refresh_app_state,
+):
+    """A favourite whose photo is still in the collection survives."""
+    seed_ids = refresh_app_state["seed_ids"]
 
-    This test exercises the explicit-full path: a manual refresh
-    with ?full=true refuses to run while the indexer is actively
-    writing.
+    resp = refresh_app.post(f"/api/favorites/{seed_ids['a']}")
+    assert resp.status_code in (200, 201)
 
-    Sets the runner's _state to RUNNING directly (bypassing the
-    normal start() flow which spawns a real subprocess) so the
-    test stays fast and self-contained.
-    """
-    from search.indexer_runner import IndexerState
-
-    runner = refresh_app.app.state.indexer_runner
-    monkeypatch.setattr(runner, "_state", IndexerState.RUNNING)
-    monkeypatch.setattr(runner, "_job_id", "test-job-running-1234")
-
-    resp = refresh_app.post("/api/cache/refresh?full=true")
+    resp = refresh_app.get("/api/cache/refresh")
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "skipped"
-    assert "indexer is running" in data["reason"]
-    assert data["job_id"] == "test-job-running-1234"
+    assert resp.json()["purged"]["favorites"] == 0
+
+    body = refresh_app.get("/api/favorites").json()
+    assert seed_ids["a"] in {f["id"] for f in body.get("favorites", [])}
 
 
-def test_api_cache_refresh_incremental_proceeds_when_indexer_running(refresh_app, monkeypatch):
-    """Round-35: the default (incremental) refresh is safe to run
-    concurrently with the indexer. Same setup as the bail test
-    above, but without ?full=true — the refresh succeeds and
-    inserts the drift.
+def test_api_cache_refresh_never_deletes_when_qdrant_unreachable(
+    refresh_app, refresh_app_state, monkeypatch,
+):
+    """THE safety property.
+
+    If the liveness check cannot be answered, nothing is deleted.
+    A user-state row is authoritative; a failed lookup is not
+    evidence that the photo is gone.
     """
-    from search.indexer_runner import IndexerState
+    from search import index_db as index_db_mod
 
-    runner = refresh_app.app.state.indexer_runner
-    monkeypatch.setattr(runner, "_state", IndexerState.RUNNING)
-    monkeypatch.setattr(runner, "_job_id", "test-job-running-1234")
+    seed_ids = refresh_app_state["seed_ids"]
+    resp = refresh_app.post(f"/api/favorites/{seed_ids['a']}")
+    assert resp.status_code in (200, 201)
 
-    resp = refresh_app.post("/api/cache/refresh")
+    def _boom(_self, _ids):
+        raise RuntimeError("qdrant unreachable")
+
+    # Scope the patch to the refresh call only — the verification
+    # below reads the store back through a path that also asks
+    # Qdrant for liveness.
+    with monkeypatch.context() as mp:
+        mp.setattr(index_db_mod.IndexDB, "_live_point_ids", _boom)
+        # The endpoint surfaces the failure rather than pretending the
+        # rows are orphans.
+        with pytest.raises(RuntimeError):
+            refresh_app.get("/api/cache/refresh")
+
+    body = refresh_app.get("/api/favorites").json()
+    assert seed_ids["a"] in {f["id"] for f in body.get("favorites", [])}
+
+
+def test_api_cache_refresh_accepts_the_legacy_full_flag(refresh_app):
+    """An old caller passing `full=true` does not break.
+
+    The parameter is accepted and ignored — there is no cache to
+    rebuild.
+    """
+    resp = refresh_app.get("/api/cache/refresh?full=true")
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "ok"
-    assert data["mode"] == "incremental"
-    # The fixture seeds 3 Qdrant points; sqlite starts empty, so
-    # the diff inserts all 3.
-    assert data["inserted"] == 3
-    assert data["skipped"] is False
+    assert resp.json()["status"] == "ok"
 
 
-def test_api_cache_refresh_proceeds_when_indexer_idle(refresh_app):
-    """Sanity: the manual refresh guard does NOT trip when the
-    indexer is idle (the normal happy path).
-    """
-    # runner is freshly constructed → state defaults to IDLE
-    resp = refresh_app.post("/api/cache/refresh")
+def test_api_cache_refresh_purges_orphaned_dislikes(
+    refresh_app, refresh_app_state,
+):
+    """A dislike whose photo left the collection is purged too."""
+    seed_ids = refresh_app_state["seed_ids"]
+
+    resp = refresh_app.post(f"/api/dislikes/{seed_ids['b']}")
+    assert resp.status_code in (200, 201, 204)
+
+    refresh_app.app.state.qdrant_client.delete(
+        collection_name=refresh_app.app.state.qdrant_collection,
+        points_selector=[seed_ids["b"]],
+        wait=True,
+    )
+
+    resp = refresh_app.get("/api/cache/refresh")
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "ok"
-    assert data["mode"] == "incremental"
-
-
-def test_periodic_refresh_skipped_while_indexer_running(refresh_app, monkeypatch):
-    """The _periodic_refresh_loop's wipe+rebuild path races the
-    indexer's INSERTs. Loop must skip when indexer is RUNNING.
-
-    We can't trivially trigger the periodic loop in a unit test
-    (it waits on an asyncio.sleep), so we test the equivalent
-    guard logic directly via a focused micro-loop.
-    """
-    from search.indexer_runner import IndexerState
-
-    runner = refresh_app.app.state.indexer_runner
-    monkeypatch.setattr(runner, "_state", IndexerState.RUNNING)
-
-    # Replicate the guard inline so we're testing the predicate,
-    # not asyncio scheduling. The actual loop calls
-    # `indexer_runner.status()` then checks `state is RUNNING`.
-    status = runner.status()
-    assert status.state is IndexerState.RUNNING
-
-    # Now flip back to idle and re-check — the guard must release.
-    monkeypatch.setattr(runner, "_state", IndexerState.IDLE)
-    status = runner.status()
-    assert status.state is IndexerState.IDLE
-
-
+    assert resp.json()["purged"]["dislikes"] == 1

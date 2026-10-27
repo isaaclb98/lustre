@@ -7,12 +7,13 @@ from indexer import upsert
 from indexer.upsert import VECTOR_DIM
 
 
-# Reuse the search-side fixture but seed three rows directly into the
-# SQLite cache so we don't have to round-trip through Qdrant — the
-# random page reads from the cache, not from Qdrant.
+# Reuse the search-side fixture but seed the photos directly into
+# QDRANT — the collection owns the corpus, so the random page reads
+# the deck's ids from there. The `images` table was a derived mirror
+# of exactly this and is no longer the source.
 @pytest.fixture
 def random_app(tmp_path, monkeypatch):
-    import sqlite3
+    import uuid
 
     from search.app import create_app
     from search.config import Config
@@ -57,47 +58,81 @@ def random_app(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(_app_mod, "_is_path_alive", lambda path: True)
 
-    # Seed the SQLite cache directly — the random page reads from
-    # there, not from Qdrant, so we can skip the indexer entirely.
-    db_path = str(tmp_path / "images.db")
-    conn = sqlite3.connect(db_path)
-    conn.executescript(
-        """
-        CREATE TABLE images (
-          id            TEXT PRIMARY KEY,
-          path          TEXT NOT NULL,
-          shard         TEXT DEFAULT '',
-          collection    TEXT DEFAULT '',
-          mtime         INTEGER,
-          size          INTEGER,
-          indexed_at    TEXT,
-          is_favorite   INTEGER DEFAULT 0,
-          favorited_at  TEXT,
-          width         INTEGER,
-          height        INTEGER
-        );
-        INSERT INTO images (id, path, collection, width, height) VALUES
-          ('a', '/photos/a.jpg', 'kpop',    640, 480),
-          ('b', '/photos/b.jpg', 'kpop',    800, 600),
-          ('c', '/photos/c.jpg', 'portrait', 400, 400),
-          ('d', '/photos/d.jpg', 'portrait', 500, 700);
-        """
-    )
-    conn.commit()
-    conn.close()
-
-    # The app still wants a Qdrant client + index_db handle, even
-    # though /random doesn't use Qdrant. Hand it an in-memory one.
+    # Seed QDRANT — the collection owns the corpus, so the random
+    # page reads the deck's ids from there. The `images` table was
+    # a derived mirror of exactly this and is no longer the source.
+    #
+    # The ids are short strings ('a', 'b'), not UUIDs, so they are
+    # used verbatim — Qdrant accepts any non-empty string id.
+    # Qdrant point ids must be UUIDs (or unsigned ints). The tests
+    # assert on short ids ('a', 'b', ...), so each is mapped to a
+    # deterministic UUID — and the payload's `id` field carries the
+    # SAME value, exactly as the indexer writes it in production
+    # (the point id and the payload id are the same uuid5 of the
+    # path). The mapping is exposed so the assertions can map back.
     from qdrant_client import QdrantClient
+    from qdrant_client.http import models as qmodels
+
     client = QdrantClient(location=":memory:")
     upsert.ensure_collection(client, cfg.qdrant_collection, dim=VECTOR_DIM)
+
+    short_to_uuid = {
+        short: str(uuid.uuid5(uuid.NAMESPACE_OID, f"lustre-test-{short}"))
+        for short in ("a", "b", "c", "d")
+    }
+    client.upsert(
+        collection_name=cfg.qdrant_collection,
+        points=[
+            qmodels.PointStruct(
+                id=short_to_uuid[short],
+                vector=[0.0] * VECTOR_DIM,
+                payload={
+                    # Same value as the point id, as in production.
+                    "id": short_to_uuid[short],
+                    "path": path,
+                    "collection": collection,
+                    "width": width,
+                    "height": height,
+                    "shard": "",
+                    "mtime": 100,
+                    "size": 200,
+                    "indexed_at": "2026-01-01T00:00:00+00:00",
+                    "blurhash": "",
+                },
+            )
+            for short, path, collection, width, height in (
+                ("a", "/photos/a.jpg", "kpop", 640, 480),
+                ("b", "/photos/b.jpg", "kpop", 800, 600),
+                ("c", "/photos/c.jpg", "portrait", 400, 400),
+                ("d", "/photos/d.jpg", "portrait", 500, 700),
+            )
+        ],
+        wait=True,
+    )
 
     from search.qdrant_client import QdrantSearch
     qdrant = QdrantSearch(client=client, collection=cfg.qdrant_collection, timeout_ms=2000)
 
     from fastapi.testclient import TestClient
     app = create_app(cfg=cfg, qdrant=qdrant)
-    return TestClient(app)
+    tc = TestClient(app)
+    # The id mapping rides on the TestClient, so the tests can map
+    # the API's UUID ids back to the short ids they assert on.
+    tc.short_to_uuid = short_to_uuid
+    return tc
+
+
+
+def _short_ids(tc, ids):
+    """Map the API's point ids back to the short ids the tests use.
+
+    The fixture seeds Qdrant with UUID point ids (Qdrant requires
+    them) and the payload's `id` field carries the same value, as in
+    production. The tests assert on short ids, so this maps back.
+    """
+    mapping = getattr(tc, "short_to_uuid", {})
+    reverse = {v: k for k, v in mapping.items()}
+    return {reverse.get(i, i) for i in ids}
 
 
 def test_api_random_returns_rows(random_app):
@@ -109,7 +144,7 @@ def test_api_random_returns_rows(random_app):
     assert data["centroid"] is None
     assert data["limit"] == 10
     # All four seeded rows are present (no collection filter).
-    ids = {r["id"] for r in data["results"]}
+    ids = _short_ids(random_app, {r["id"] for r in data["results"]})
     assert ids == {"a", "b", "c", "d"}
 
 
@@ -124,7 +159,7 @@ def test_api_random_default_limit_is_35(random_app):
 def test_api_random_filters_by_collection(random_app):
     resp = random_app.get("/api/random?limit=10&collections=kpop")
     assert resp.status_code == 200
-    ids = {r["id"] for r in resp.json()["results"]}
+    ids = _short_ids(random_app, {r["id"] for r in resp.json()["results"]})
     assert ids == {"a", "b"}
 
 
@@ -133,7 +168,7 @@ def test_api_random_multi_collection_filter(random_app):
         "/api/random?limit=10&collections=kpop&collections=portrait"
     )
     assert resp.status_code == 200
-    ids = {r["id"] for r in resp.json()["results"]}
+    ids = _short_ids(random_app, {r["id"] for r in resp.json()["results"]})
     assert ids == {"a", "b", "c", "d"}
 
 
@@ -230,18 +265,18 @@ def test_session_walks_forward_no_duplicates(random_app):
     """
     r1 = random_app.get("/api/random?limit=2")
     sid = r1.json()["session_id"]
-    seen = {r["id"] for r in r1.json()["results"]}
+    seen = _short_ids(random_app, {r["id"] for r in r1.json()["results"]})
 
     # Walk the rest of the deck in chunks of 2.
     for offset in (2, 4):  # we have 4 photos total
         r = random_app.get(
             f"/api/random?session={sid}&offset={offset}&limit=2"
         )
-        for photo in r.json()["results"]:
-            assert photo["id"] not in seen, (
-                f"Duplicate {photo['id']} at offset {offset}"
+        for photo in _short_ids(random_app, {p["id"] for p in r.json()["results"]}):
+            assert photo not in seen, (
+                f"Duplicate {photo} at offset {offset}"
             )
-            seen.add(photo["id"])
+            seen.add(photo)
 
     # We saw all 4 distinct photos.
     assert seen == {"a", "b", "c", "d"}
@@ -254,7 +289,7 @@ def test_session_full_walk_returns_everything_once(random_app):
     r = random_app.get("/api/random?limit=10")  # fixture has 4
     data = r.json()
     ids = [photo["id"] for photo in data["results"]]
-    assert sorted(ids) == ["a", "b", "c", "d"]
+    assert sorted(_short_ids(random_app, ids)) == ["a", "b", "c", "d"]
     assert len(ids) == len(set(ids))  # no dupes
     assert data["has_more"] is False
 
@@ -332,7 +367,7 @@ def test_session_with_collection_filter(random_app):
         "/api/random?limit=10&collections=portrait"
     )
     data = r.json()
-    ids = {photo["id"] for photo in data["results"]}
+    ids = _short_ids(random_app, {photo["id"] for photo in data["results"]})
     # 'portrait' has c, d in the fixture.
     assert ids == {"c", "d"}
     assert data["session_total"] == 2

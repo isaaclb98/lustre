@@ -23,7 +23,7 @@ from search.index_db import IndexDB
 def index_db():
     """IndexDB pointed at :memory:, bypassing the qdrant refresh path.
 
-    `init_from_qdrant` is what populates the `images` table from
+    The Qdrant collection is what populates the photo data from
     Qdrant; the saved-searches tests don't touch that path, so we
     short-circuit it by leaving `qdrant_client=None` (the constructor
     tolerates None — only the refresh path uses it). This gives us

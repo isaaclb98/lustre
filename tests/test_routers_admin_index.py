@@ -116,15 +116,22 @@ def test_post_starts_job_and_returns_202(client):
 
 
 def test_post_rebuild_wipes_sqlite_side_store(client):
+    """A rebuild clears the side store's user state.
+
+    The side store holds only user state now — favourites, dislikes,
+    albums, memberships, saved searches, feedback. A rebuild replaces
+    the collection's point ids, so the rows that referenced the old
+    ids are cleared first rather than left dangling.
+    """
     http, _runner, db = client
-    # Seed an image row + a favourite + a saved search so we can prove
-    # the wipe cleared them.
+    # Seed a favourite + a saved search so we can prove the wipe
+    # cleared them. The row is written directly because the fixture
+    # has no Qdrant to check liveness against.
     db._conn.execute(
-        "INSERT INTO images (id, path) VALUES (?, ?)",
-        ("deadbeef", "/tmp/fake.jpg"),  # noqa: S108 — fake path inserted into the test DB; never read
+        "INSERT INTO favorites (id, favorited_at) VALUES (?, ?)",
+        ("deadbeef", "2026-01-01T00:00:00+00:00"),
     )
     db._conn.commit()
-    db.mark_favorite("deadbeef")
     db.create_saved_search(name="trip", positives=["beach"], negatives=[])
     assert db.count_favorites() >= 1
 

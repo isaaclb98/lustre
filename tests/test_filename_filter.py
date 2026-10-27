@@ -1,23 +1,23 @@
 """
 tests/test_filename_filter.py
 
-Tests for the `?filename=` path-substring filter:
+Tests for the `?filename=` path-substring filter.
 
-  1. IndexDB.path_token_ids() — FTS5 query correctness, including
-     token-substring, prefix (`cha*`), case-insensitivity,
-     empty/whitespace handling, suffix-rejection, multi-token rejection,
-     and the trigger-sync on INSERT/UPDATE/DELETE.
+The filter is served by Qdrant's native text index, not by FTS5.
+The pattern parsing, the exact/prefix semantics, and the native
+resolver have their own suite in tests/test_native_filename_filter.py;
+this file covers how the filter travels through the API.
 
-  2. qdrant_client.search() — the `allowed_ids` argument ANDs a
-     `HasId` condition into the existing `must` filter (it doesn't
-     replace the collections filter).
+  1. qdrant_client.search() — the native `path_filter` ANDs into
+     the existing `must` filter (it doesn't replace the collections
+     filter).
 
-  3. Cardinality guard — when the matching set covers > 50% of the
-     cache, the `HasId` filter is dropped server-side (logged) and
+  2. Cardinality guard — when the matching set covers > 50% of the
+     collection, the filter is dropped server-side (logged) and
      the full result set comes back.
 
-  4. End-to-end /api/search — the full round-trip from URL param
-     through the FTS5 lookup, the Qdrant filter, and the response
+  3. End-to-end /api/search — the full round-trip from URL param
+     through the native filter, the Qdrant query, and the response
      JSON. Includes `q` + `filename` interaction, empty pattern,
      invalid pattern (400), pagination (forwarding the filter on
      `loadMorePage` is exercised in the JS mirror), and the
@@ -124,171 +124,19 @@ def app_with_filename_paths(qdrant_in_memory, nas_base, monkeypatch):
 
 
 # ============================================================
-#  IndexDB.path_token_ids() — FTS5 query correctness
+#  The filename filter, end to end
 # ============================================================
 
 
-def test_path_token_ids_token_substring_match():
-    """A bare token matches paths where the token appears."""
-
-    qdrant = _FakeQdrant(
-        [
-            {"id": "a", "path": CHAEWON_PATH},
-            {"id": "b", "path": KAZUHA_PATH},
-            {"id": "c", "path": YUJIN_PATH},
-        ]
-    )
-    db = _make_db(qdrant)
-    try:
-        ids = sorted(db.path_token_ids("chaewon"))
-        assert ids == ["a"]
-        ids = sorted(db.path_token_ids("kpop"))
-        assert ids == ["a", "b", "c"]
-    finally:
-        db.close()
 
 
-def test_path_token_ids_prefix_match():
-    """A trailing `*` matches any token starting with the body."""
-
-    qdrant = _FakeQdrant(
-        [
-            {"id": "a", "path": CHAEWON_PATH},
-            {"id": "b", "path": KAZUHA_PATH},
-            {"id": "c", "path": "/photos/kpop/chaewon_variant/2025.jpg"},
-        ]
-    )
-    db = _make_db(qdrant)
-    try:
-        ids = sorted(db.path_token_ids("cha*"))
-        assert ids == ["a", "c"]
-    finally:
-        db.close()
 
 
-def test_path_token_ids_case_insensitive():
-    """FTS5 with unicode61 is case-insensitive by default."""
-
-    qdrant = _FakeQdrant([{"id": "a", "path": "/photos/Kpop/Chaewon/2024.JPG"}])
-    db = _make_db(qdrant)
-    try:
-        # Path tokens are lowercased by the tokeniser, so any
-        # casing of the query body matches.
-        assert db.path_token_ids("chaewon") == ["a"]
-        assert db.path_token_ids("CHAEWON") == ["a"]
-        assert db.path_token_ids("Chaewon*") == ["a"]
-    finally:
-        db.close()
 
 
-def test_path_token_ids_empty_returns_none():
-    """Empty / whitespace-only patterns return None (skip filter)."""
-
-    qdrant = _FakeQdrant([{"id": "a", "path": CHAEWON_PATH}])
-    db = _make_db(qdrant)
-    try:
-        assert db.path_token_ids("") is None
-        assert db.path_token_ids("   ") is None
-        assert db.path_token_ids("\t\n") is None
-    finally:
-        db.close()
 
 
-def test_path_token_ids_suffix_match_raises():
-    """`*foo` suffix matching is not supported by FTS5."""
 
-    qdrant = _FakeQdrant([{"id": "a", "path": CHAEWON_PATH}])
-    db = _make_db(qdrant)
-    try:
-        with pytest.raises(ValueError, match="trailing"):
-            db.path_token_ids("*ewon")
-        with pytest.raises(ValueError, match="trailing"):
-            db.path_token_ids("*.jpg")
-    finally:
-        db.close()
-
-
-def test_path_token_ids_multi_token_raises():
-    """Multiple tokens in one query are rejected — callers should
-    pick one token at a time."""
-
-    qdrant = _FakeQdrant([{"id": "a", "path": CHAEWON_PATH}])
-    db = _make_db(qdrant)
-    try:
-        with pytest.raises(ValueError, match="single token"):
-            db.path_token_ids("chaewon won")
-    finally:
-        db.close()
-
-
-def test_path_token_ids_fts5_operator_raises():
-    """FTS5 special characters are rejected before reaching FTS5."""
-
-    qdrant = _FakeQdrant([{"id": "a", "path": CHAEWON_PATH}])
-    db = _make_db(qdrant)
-    try:
-        # Quotes, parens, colons, +/- are FTS5 syntax we forbid.
-        for bad in ['foo"bar', "foo(bar)", "foo:bar", "foo+bar", "foo-bar"]:
-            with pytest.raises(ValueError):
-                db.path_token_ids(bad)
-    finally:
-        db.close()
-
-
-def test_path_token_ids_trigger_sync_on_insert():
-    """Adding a new image via INSERT makes it searchable via FTS5
-    without a manual rebuild."""
-
-    qdrant = _FakeQdrant([{"id": "a", "path": CHAEWON_PATH}])
-    db = _make_db(qdrant)
-    try:
-        assert "b" not in db.path_token_ids("kazuha")
-        # Insert directly via the connection. The trigger should
-        # populate images_fts.
-        with db._lock:
-            db._conn.execute(
-                "INSERT INTO images(id, path) VALUES (?, ?)",
-                ("b", KAZUHA_PATH),
-            )
-            db._conn.commit()
-        assert sorted(db.path_token_ids("kazuha")) == ["b"]
-    finally:
-        db.close()
-
-
-def test_path_token_ids_trigger_sync_on_update():
-    """Updating an image's path updates the FTS index."""
-
-    qdrant = _FakeQdrant([{"id": "a", "path": CHAEWON_PATH}])
-    db = _make_db(qdrant)
-    try:
-        assert db.path_token_ids("kazuha") == []
-        with db._lock:
-            db._conn.execute(
-                "UPDATE images SET path = ? WHERE id = ?",
-                (KAZUHA_PATH, "a"),
-            )
-            db._conn.commit()
-        # The old token is gone, the new one is present.
-        assert db.path_token_ids("chaewon") == []
-        assert db.path_token_ids("kazuha") == ["a"]
-    finally:
-        db.close()
-
-
-def test_path_token_ids_trigger_sync_on_delete():
-    """Deleting an image removes it from the FTS index."""
-
-    qdrant = _FakeQdrant([{"id": "a", "path": CHAEWON_PATH}])
-    db = _make_db(qdrant)
-    try:
-        assert db.path_token_ids("chaewon") == ["a"]
-        with db._lock:
-            db._conn.execute("DELETE FROM images WHERE id = ?", ("a",))
-            db._conn.commit()
-        assert db.path_token_ids("chaewon") == []
-    finally:
-        db.close()
 def test_api_search_filename_filter_restricts_results(app_with_filename_paths):
     """`?filename=chaewon` restricts results to the matching ids only."""
     resp = app_with_filename_paths.get("/api/search?q=chaewon&filename=chaewon")
@@ -607,7 +455,6 @@ def _make_db(qdrant, tmp_path_factory=None):
     ) as handle:
         db_path = handle.name
     db = IndexDB(db_path, qdrant, refresh_interval_seconds=3600)
-    db.init_from_qdrant()
     return db
 
 
