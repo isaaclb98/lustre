@@ -892,13 +892,25 @@ def create_app(
                             # that still needs a periodic trigger is
                             # the orphan purge: user-state rows whose
                             # photo the indexer has pruned.
-                            stats = await asyncio.to_thread(
-                                index_db.purge_orphaned_user_data
+                            #
+                            # `maybe_refresh` is the single entry
+                            # point for that work, so the timestamp
+                            # the status endpoint reports is the
+                            # timestamp of the last real run.
+                            ran = await asyncio.to_thread(
+                                index_db.maybe_refresh
                             )
                             dt_ms = int((time.time() - t0) * 1000)
-                            logger.info(
-                                "periodic user-data purge: %s in %d ms", stats, dt_ms,
-                            )
+                            if ran:
+                                logger.info(
+                                    "periodic user-data purge ran in %d ms",
+                                    dt_ms,
+                                )
+                            else:
+                                logger.debug(
+                                    "periodic user-data purge: "
+                                    "not due yet"
+                                )
                         finally:
                             await asyncio.to_thread(index_db.release_refresh_lock)
                     except asyncio.CancelledError:

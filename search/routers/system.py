@@ -77,13 +77,19 @@ def build_system_router(
 
     @router.get("/api/cache/status", response_model=CacheStatusResponse)
     async def cache_status() -> CacheStatusResponse:
-        """Operator visibility into the dual-store sync.
+        """Operator visibility into the corpus and the maintenance timer.
 
-        Returns last refresh timestamp + duration, point counts in
-        both stores, drift between them, the liveness cache size +
-        cap, and the configured refresh interval / TTL. Drift is
-        "unknown" when Qdrant is unreachable (qdrant_count == -1)
-        so operators don't see a misleading negative number.
+        Returns the point count, the last maintenance timestamp, the
+        configured maintenance interval, and the path-liveness cache
+        size + cap.
+
+        `index_db_count` and `qdrant_count` are both read from
+        Qdrant — there is no second copy of the corpus to drift
+        from, so `drift` is 0 by construction. The field is kept so
+        the response shape does not change for existing operators.
+        Drift is "unknown" when Qdrant is unreachable
+        (qdrant_count == -1) so operators don't see a misleading
+        negative number.
         """
         # IndexDB reads are sync (sqlite3). With WEB_CONCURRENCY=1
         # each would block the event loop for the duration of any
