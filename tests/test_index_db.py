@@ -16,6 +16,31 @@ class FakeQdrant:
         self.refreshes += 1
         yield from self.batches
 
+    def retrieve_batch(self, point_ids):
+        """The points this fake holds — the authoritative liveness set.
+
+        The orphan purge checks liveness against Qdrant, not against
+        the derived `images` mirror, so the fake has to answer the
+        same question the real client does: which of these ids do
+        you still hold?
+        """
+        from search.qdrant_client import SearchHit
+
+        wanted = {str(i) for i in point_ids}
+        live = []
+        for batch in self.batches:
+            for point in batch:
+                if str(point["id"]) in wanted:
+                    live.append(
+                        SearchHit(
+                            id=str(point["id"]),
+                            path=point["payload"].get("path", ""),
+                            score=0.0,
+                            payload=point["payload"],
+                        )
+                    )
+        return live
+
 
 def _point(pid: str, path: str) -> dict:
     return {
@@ -547,5 +572,74 @@ def test_purge_returns_per_table_counts(tmp_path):
             "album_memberships": 0,
             "album_covers_reset": 0,
         }
+    finally:
+        db.close()
+
+
+def test_purge_uses_qdrant_not_the_mirror_for_liveness(tmp_path):
+    """A stale/empty `images` mirror must NOT delete user state.
+
+    This is the safety property the purge inversion exists for. The
+    `images` table is a DERIVED mirror — it can be empty, stale, or
+    half-built. If it were used to decide which favourites are
+    orphans, a stale mirror would make every favourite look
+    orphaned and the purge would delete the user's authoritative
+    state.
+
+    So: the mirror is emptied, but Qdrant still holds the photos.
+    The purge must keep every row.
+    """
+    db = _make_db(tmp_path, ["a", "b"])
+    try:
+        db.mark_favorite("a")
+        db.mark_favorite("b")
+        db.mark_dislike("a")
+        album_id = db.create_album("Test album")
+        db.add_album_member(album_id, "a")
+        db.set_album_cover(album_id, "a")
+
+        # The mirror is wiped — but Qdrant still holds a and b.
+        with db._lock:
+            db._conn.execute("DELETE FROM images")
+            db._conn.commit()
+
+        db.purge_orphaned_user_data()
+
+        # Every user row survived, because Qdrant still holds the
+        # photos they point at.
+        with db._lock:
+            favs = db._conn.execute("SELECT id FROM favorites").fetchall()
+            dis = db._conn.execute("SELECT id FROM dislikes").fetchall()
+        assert {r["id"] for r in favs} == {"a", "b"}
+        assert {r["id"] for r in dis} == {"a"}
+        assert db.list_album_member_ids(album_id) == ["a"]
+        assert db.get_album(album_id)["cover_favorite_id"] == "a"
+    finally:
+        db.close()
+
+
+def test_purge_keeps_everything_when_the_liveness_check_fails(tmp_path):
+    """A failed liveness check must never become a mass deletion.
+
+    If Qdrant cannot be reached, the answer to "does this photo
+    still exist?" is unknown — and the only safe response to
+    "unknown" is to keep the user's state. Deleting it would turn a
+    transient outage into permanent data loss.
+    """
+    db = _make_db(tmp_path, ["a", "b"])
+    try:
+        db.mark_favorite("a")
+        db.mark_favorite("b")
+
+        class _BrokenQdrant:
+            def retrieve_batch(self, point_ids):
+                raise RuntimeError("qdrant is down")
+
+        db.qdrant_client = _BrokenQdrant()
+        db.purge_orphaned_user_data()
+
+        with db._lock:
+            favs = db._conn.execute("SELECT id FROM favorites").fetchall()
+        assert {r["id"] for r in favs} == {"a", "b"}
     finally:
         db.close()

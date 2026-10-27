@@ -725,8 +725,45 @@ class IndexDB:
             "skipped": False,
         }
 
+    def _live_point_ids(self, point_ids: list[str]) -> set[str]:
+        """Which of `point_ids` does Qdrant still hold?
+
+        This is the authoritative liveness check — the collection is
+        the source of truth for whether a photo exists. The `images`
+        table is a derived mirror and must never be used for this:
+        a stale or empty mirror would make every favourite look
+        orphaned, and the purge would delete the user's authoritative
+        state.
+
+        Qdrant's `retrieve` is a single round-trip that returns the
+        points it holds and omits the ones it does not, so one call
+        answers the whole batch. The ids are chunked so a very large
+        candidate set cannot exceed the request-size limit.
+
+        If the check itself fails (Qdrant unreachable), the SAFE
+        answer is "everything is live" — keep all user state. A
+        failed liveness check must never become a mass deletion.
+        """
+        if not point_ids:
+            return set()
+        chunk_size = 500
+        live: set[str] = set()
+        for start in range(0, len(point_ids), chunk_size):
+            chunk = point_ids[start:start + chunk_size]
+            try:
+                hits = self.qdrant_client.retrieve_batch(chunk)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "liveness check failed for %d ids (%s) — keeping all "
+                    "user state (a failed check must never delete anything)",
+                    len(chunk), e,
+                )
+                return set(point_ids)
+            live.update(hit.id for hit in hits)
+        return live
+
     def purge_orphaned_user_data(self) -> dict[str, int]:
-        """Delete user-state rows whose photo is gone from the cache.
+        """Delete user-state rows whose photo is gone from Qdrant.
 
         Orphans accumulate when the indexer prunes Qdrant points
         (files deleted from disk): the favourite/dislike/album rows
@@ -743,15 +780,31 @@ class IndexDB:
         guaranteed to mirror Qdrant. NOT called on the startup
         warm-up path, which may short-circuit against a stale cache.
 
+        **Liveness is decided by Qdrant, never by the `images` cache.**
+        The `images` table is a DERIVED mirror: it can be empty or
+        stale (a half-finished rebuild, a mirror that was never
+        populated, a mirror that drifted from the collection). If it
+        were used to decide which user rows are orphans, a stale
+        mirror would delete the user's favourites, dislikes and album
+        memberships — the authoritative state — because the photos
+        they point at are not in the mirror. The mirror says nothing
+        about whether a photo exists; only Qdrant does.
+
+        So the candidate ids are collected from the user-state
+        tables, and each is checked against Qdrant directly. A
+        candidate that Qdrant still holds is kept, no matter what
+        the mirror says. A candidate Qdrant no longer holds is
+        deleted.
+
         Purges:
-          - favorites / dislikes rows with no `images` match
-          - album_memberships whose photo left the cache (a
+          - favorites / dislikes rows whose id Qdrant no longer holds
+          - album_memberships whose photo Qdrant no longer holds (a
             membership of a deleted photo renders as a dead
             thumbnail; note memberships do NOT require the photo
             to be a favourite — add_album_member allows any id —
-            so liveness is checked against `images` only)
-          - albums.cover_favorite_id refs pointing at photos that
-            left the cache (reset to '' so the UI falls back to
+            so liveness is checked against Qdrant only)
+          - albums.cover_favorite_id refs pointing at photos Qdrant
+            no longer holds (reset to '' so the UI falls back to
             the first member)
 
         Keeps: feedback_events (append-only history log, not state —
@@ -760,25 +813,66 @@ class IndexDB:
 
         Returns per-table deletion counts for logging/API response.
         """
+        # Every id the user state refers to. This is a small set —
+        # thousands of rows, not millions — so each one is checked
+        # against Qdrant directly.
         with self._lock:
+            candidate_ids: set[str] = set()
+            for table, column in (
+                ("favorites", "id"),
+                ("dislikes", "id"),
+                ("album_memberships", "favorite_id"),
+                ("albums", "cover_favorite_id"),
+            ):
+                rows = self._conn.execute(
+                    f"SELECT DISTINCT {column} AS v FROM {table} "  # noqa: S608
+                    f"WHERE {column} IS NOT NULL AND {column} != ''"
+                ).fetchall()
+                candidate_ids.update(r["v"] for r in rows)
+
+            if not candidate_ids:
+                return {
+                    "favorites": 0,
+                    "dislikes": 0,
+                    "album_memberships": 0,
+                    "album_covers_reset": 0,
+                }
+
+        # Which of those ids does Qdrant still hold? This is the
+        # authoritative liveness check.
+        live_ids = self._live_point_ids(sorted(candidate_ids))
+
+        with self._lock:
+            orphans = [pid for pid in candidate_ids if pid not in live_ids]
+            if not orphans:
+                return {
+                    "favorites": 0,
+                    "dislikes": 0,
+                    "album_memberships": 0,
+                    "album_covers_reset": 0,
+                }
+            placeholders = ",".join("?" * len(orphans))
             cur_memberships = self._conn.execute(
-                """
+                f"""
                 DELETE FROM album_memberships
-                WHERE favorite_id NOT IN (SELECT id FROM images)
-                """
+                WHERE favorite_id IN ({placeholders})
+                """,  # noqa: S608
+                orphans,
             )
             cur_favs = self._conn.execute(
-                "DELETE FROM favorites WHERE id NOT IN (SELECT id FROM images)"
+                f"DELETE FROM favorites WHERE id IN ({placeholders})",  # noqa: S608
+                orphans,
             )
             cur_dis = self._conn.execute(
-                "DELETE FROM dislikes WHERE id NOT IN (SELECT id FROM images)"
+                f"DELETE FROM dislikes WHERE id IN ({placeholders})",  # noqa: S608
+                orphans,
             )
             cur_covers = self._conn.execute(
-                """
+                f"""
                 UPDATE albums SET cover_favorite_id = ''
-                WHERE cover_favorite_id != ''
-                  AND cover_favorite_id NOT IN (SELECT id FROM images)
-                """
+                WHERE cover_favorite_id IN ({placeholders})
+                """,  # noqa: S608
+                orphans,
             )
             self._conn.commit()
             purged = {
