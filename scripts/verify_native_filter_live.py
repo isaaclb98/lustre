@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -59,8 +60,12 @@ def main() -> int:
     args = parser.parse_args()
 
     terms = args.terms or [
+        # exact
         "chaewon", "sana", "2024", "kpop", "yujin", "winter",
         "img_2024", "twice_sana", "blackpink", "aespa",
+        # prefix
+        "chaewon*", "sana*", "2024*", "kpop*", "yujin*", "winter*",
+        "blackpink*", "twice_sana*", "img_2024*", "newjeans_minji*",
     ]
 
     con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
@@ -72,25 +77,38 @@ def main() -> int:
     for term in terms:
         is_prefix = term.endswith("*")
         body = term[:-1] if is_prefix else term
+        # The same token split the production code uses: `_` is a
+        # separator in FTS5's tokenizer, so `img_2024` is two tokens
+        # and the phrase must carry them separated.
+        tokens = re.findall(r"[0-9A-Za-zÀ-ɏ]+", body)
 
         # FTS5: the system being replaced.
+        #
+        # COUNT(DISTINCT path), not COUNT(*): the FTS5 table can hold
+        # the SAME path under more than one id (the same file indexed
+        # twice — 16 paths in the live corpus are). FTS5's COUNT(*)
+        # counts rows, so it over-reports by the number of
+        # duplicates, while the native index counts POINTS. The
+        # comparable quantity is the number of distinct photos, so
+        # that is what is counted here.
         t0 = time.time()
         # The FTS5 index is `images_fts`; `images` is the content
         # table it shadows.
-        sql = (
-            "SELECT count(*) FROM images_fts WHERE images_fts MATCH ?"
-        )
         fts_count = con.execute(
-            sql, (body if not is_prefix else f"{body}*",)
+            "SELECT count(DISTINCT path) FROM images_fts WHERE images_fts MATCH ?",
+            (body if not is_prefix else f"{body}*",),
         ).fetchone()[0]
         fts_s = time.time() - t0
 
-        # Native: the replacement.
+        # Native: the replacement. The prefix shape goes to the
+        # prefix-tokenized index on `path_prefix`, and BOTH shapes
+        # use a phrase match — the prefix index's phrase matching is
+        # what preserves FTS5's adjacency for a multi-token prefix.
         if is_prefix:
-            match = {"text": body}
+            match = {"phrase": " ".join(tokens)}
             field = "path_prefix"
         else:
-            match = {"phrase": body}
+            match = {"phrase": " ".join(tokens)}
             field = "path"
         t0 = time.time()
         native_count = qdrant_count(field, match, exact=True)
