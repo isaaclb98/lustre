@@ -111,7 +111,27 @@ def build(field: str, schema: dict) -> None:
         {"field_name": field, "field_schema": schema},
         "PUT",
     )
-    print(f"    built in {time.time() - t:.0f}s")
+    print(f"    build call returned after {time.time() - t:.0f}s")
+    # The create returns when the build is SCHEDULED, not when it is
+    # done. Until every segment carries the index, the collection is
+    # `yellow` and a text filter falls back to a looser in-memory
+    # match that returns the WRONG counts — measured on the 2.2M
+    # corpus: `MatchPhrase('won')` reported 84,964 against FTS5's
+    # true 613 until the collection went green. So wait for green
+    # before trusting any count.
+    deadline = time.time() + 1800
+    while time.time() < deadline:
+        status = call(f"/collections/{COLLECTION}", method="GET")["result"].get("status")
+        if status == "green":
+            break
+        time.sleep(5)
+    else:
+        raise SystemExit(
+            f"the collection did not settle within 1800s — the index on "
+            f"{field!r} may still be building, and text-filter counts would "
+            f"be wrong"
+        )
+    print(f"    collection green after {time.time() - t:.0f}s total")
 
 
 def main() -> int:

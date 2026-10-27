@@ -448,3 +448,92 @@ def test_the_same_pattern_gets_the_same_cache_key():
         **common, path_filter=build_path_filter(parse_filename_pattern("chaewon"))
     )
     assert a == b
+
+
+# ============================================================
+#  6. The index must be fully built before it is queried
+# ============================================================
+
+
+def test_ensure_text_index_waits_for_the_collection_to_settle():
+    """A text index is only correct once every segment carries it.
+
+    `create_payload_index` returns when the build is SCHEDULED, not
+    when it is done. Until the collection goes `green`, the segments
+    that are not indexed yet fall back to a looser in-memory match
+    and a text filter returns the WRONG counts — measured on the
+    2.2M-point corpus, `MatchPhrase('won')` reported 84,964 against
+    FTS5's true 613 while the collection was still `yellow`.
+
+    So the creation must wait for `green` before it reports success.
+    """
+    from unittest.mock import MagicMock
+
+    from search.qdrant_client import QdrantSearch
+
+    qdrant = QdrantSearch(client=MagicMock(), collection="images")
+    qdrant.client.get_collection.side_effect = [
+        MagicMock(status="yellow"),
+        MagicMock(status="yellow"),
+        MagicMock(status="green"),
+    ]
+
+    import search.qdrant_client as qc
+
+    original_sleep = qc.time.sleep
+    qc.time.sleep = lambda _s: None
+    try:
+        ready = qdrant._await_index_ready("path", timeout_s=60)
+    finally:
+        qc.time.sleep = original_sleep
+
+    assert ready is True
+    # It polled until green, and did not give up.
+    assert qdrant.client.get_collection.call_count == 3
+
+
+def test_ensure_text_index_gives_up_rather_than_hanging():
+    """A collection stuck `yellow` must not block startup forever."""
+    from unittest.mock import MagicMock
+
+    from search.qdrant_client import QdrantSearch
+
+    qdrant = QdrantSearch(client=MagicMock(), collection="images")
+    qdrant.client.get_collection.return_value = MagicMock(status="yellow")
+
+    import search.qdrant_client as qc
+
+    original_sleep = qc.time.sleep
+    qc.time.sleep = lambda _s: None
+    try:
+        ready = qdrant._await_index_ready("path", timeout_s=0.05)
+    finally:
+        qc.time.sleep = original_sleep
+
+    assert ready is False
+
+
+def test_ensure_text_index_warns_when_the_collection_does_not_settle(caplog):
+    """A half-built index must be reported, not silently accepted."""
+    import logging
+
+    from unittest.mock import MagicMock
+
+    from search.qdrant_client import QdrantSearch
+
+    qdrant = QdrantSearch(client=MagicMock(), collection="images")
+    qdrant.client.get_collection.return_value = MagicMock(status="yellow")
+
+    import search.qdrant_client as qc
+
+    original_sleep = qc.time.sleep
+    qc.time.sleep = lambda _s: None
+    try:
+        with caplog.at_level(logging.WARNING):
+            # A short timeout: the wait must give up rather than
+            # block for the full production budget.
+            qdrant._ensure_text_index("path", MagicMock(), timeout_s=0.05)
+    finally:
+        qc.time.sleep = original_sleep
+
+    assert any("did not" in r.message for r in caplog.records)

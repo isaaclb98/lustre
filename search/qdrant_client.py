@@ -11,6 +11,7 @@ indexer's job. The search side is read-only.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, cast
@@ -428,14 +429,40 @@ class QdrantSearch:
             ),
         )
 
-    def _ensure_text_index(self, field: str, params: Any) -> None:
+    def _ensure_text_index(
+        self, field: str, params: Any, timeout_s: float = 900.0
+    ) -> None:
+        """Create a text index on `field` and wait until it is usable.
+
+        `create_payload_index` returns as soon as the build is
+        *scheduled*, not when it is *done*. On a multi-million-point
+        collection the build keeps running for minutes after the call
+        returns, and until it finishes the collection's status is
+        `yellow` — the segments that are not indexed yet fall back to
+        a looser in-memory match, which returns WRONG counts for a
+        text filter.
+
+        Measured on the 2.2M-point production corpus: immediately
+        after the create call returned, `MatchPhrase('won')` reported
+        84,964 against FTS5's true 613. The same query reported 613
+        once the collection went `green` — about 90 seconds later.
+
+        So the create is followed by a wait for the collection to
+        report `green`. A text filter answered against a half-built
+        index silently returns the wrong photos, which is worse than
+        not having the index at all.
+
+        A collection that is `yellow` for an unrelated reason (an
+        optimizer merge, say) would make this wait out its full
+        timeout, so the wait is bounded and the index creation is
+        idempotent — a later startup retries it.
+        """
         try:
             self.client.create_payload_index(
                 collection_name=self.collection,
                 field_name=field,
                 field_schema=params,
             )
-            logger.info("ensured text index on %s.%s", self.collection, field)
         except Exception as e:  # noqa: BLE001
             # Qdrant errors on a duplicate create; the index is
             # already there in that case, which is what we want.
@@ -443,6 +470,34 @@ class QdrantSearch:
                 "text index ensure on %s.%s failed (likely already exists): %s",
                 self.collection, field, e,
             )
+        if self._await_index_ready(field, timeout_s=timeout_s):
+            logger.info("ensured text index on %s.%s", self.collection, field)
+        else:
+            logger.warning(
+                "text index on %s.%s was created but the collection did not "
+                "settle in time — text-filter counts may be wrong until the "
+                "index finishes building",
+                self.collection, field,
+            )
+
+    def _await_index_ready(self, field: str, timeout_s: float = 900.0) -> bool:
+        """Wait until the collection is `green` — i.e. every segment
+        carries the text index.
+
+        Returns True when the collection settled, False on timeout.
+        """
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                info = self.client.get_collection(self.collection)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("collection status check failed: %s", e)
+                return False
+            status = getattr(info, "status", None)
+            if status == "green":
+                return True
+            time.sleep(5.0)
+        return False
 
     def search_with_vectors(
         self, vector: list[float], limit: int, offset: int = 0,
