@@ -12,16 +12,14 @@ This means:
   - UUID5 over a fixed namespace gives stable, collision-resistant
     ids across machines and restarts.
 
-Round-35: also writes the same row to the search-side `images.db`
-when a SQLite connection is supplied, so the search app's browse
-cache stays in sync with Qdrant during indexing without needing
-periodic full-Qdrant scrolls.
+Qdrant is the only store of the photo corpus. The indexer writes
+vectors and payloads there and nothing else — there is no derived
+SQLite mirror to keep in sync.
 """
 
 from __future__ import annotations
 
 import logging
-import sqlite3
 import time
 import uuid
 from collections.abc import Iterable, Sequence
@@ -311,8 +309,6 @@ def upsert_batch(
     name: str,
     items: Sequence[tuple[str, list[float], dict]],
     wait: bool = False,
-    *,
-    sqlite_conn: sqlite3.Connection | None = None,
 ) -> None:
     """
     Upsert a batch of (id, vector, payload) tuples.
@@ -324,12 +320,6 @@ def upsert_batch(
         wait: if True, block until the upsert is indexed. The indexer
             uses wait=False during the run and wait=True on the
             final batch to ensure consistent state.
-        sqlite_conn: optional SQLite connection to the search-side
-            `images.db`. When provided, every successful Qdrant upsert
-            also writes an `INSERT OR REPLACE INTO images` row in the
-            same transaction so the search-side browse cache stays in
-            sync with Qdrant during indexing. Default None (Qdrant-only,
-            used by tests and standalone callers). See round-35.
     """
     if not items:
         return
@@ -338,62 +328,6 @@ def upsert_batch(
         for (pid, vec, payload) in items
     ]
     client.upsert(collection_name=name, points=points, wait=wait)
-    if sqlite_conn is not None:
-        _write_images_cache(sqlite_conn, items)
-
-
-def _write_images_cache(
-    conn: sqlite3.Connection,
-    items: Sequence[tuple[str, list[float], dict]],
-) -> None:
-    """
-    Mirror a freshly-upserted batch into the search-side `images` table.
-
-    Called immediately after Qdrant upsert succeeds (round-35). The
-    indexer subprocess and the search app share the same
-    `/app/data/images.db`; with WAL mode enabled in the search app
-    (see search/index_db.py), this write doesn't block any reader.
-
-    Only writes the columns the search app's `images` table expects.
-    Other payload fields (model_name, model_dim, etc.) stay in Qdrant
-    only — the search-side cache is for browse, not search.
-
-    Idempotent: `INSERT OR REPLACE` overwrites the row if it already
-    exists (e.g. a force-rebuild touching an existing point).
-    """
-    rows = [
-        {
-            "id": pid,
-            # `path` may be a PosixPath object (local_sync sets
-            # `payload["path"] = path` after build_payload) rather
-            # than a string. Coerce defensively so SQLite doesn't
-            # choke on a non-string bind. round-35: surfaced when
-            # the indexer's INDEX_DB_PATH fallback to
-            # `./data/images.db` started actually firing writes in
-            # the test suite (which inherits the same bug).
-            "path": str(payload.get("path", "") or ""),
-            "shard": str(payload.get("shard", "") or ""),
-            "collection": str(payload.get("collection", "") or ""),
-            "mtime": int(payload.get("mtime") or 0),
-            "size": int(payload.get("size") or 0),
-            "indexed_at": str(payload.get("indexed_at", "") or ""),
-            "width": int(payload["width"]) if payload.get("width") is not None else None,
-            "height": int(payload["height"]) if payload.get("height") is not None else None,
-            "blurhash": str(payload.get("blurhash", "") or ""),
-        }
-        for (_pid, _vec, payload) in items
-        for pid in [_pid]
-    ]
-    with conn:
-        conn.executemany(
-            """
-            INSERT OR REPLACE INTO images
-              (id, path, shard, collection, mtime, size, indexed_at, width, height, blurhash)
-            VALUES
-              (:id, :path, :shard, :collection, :mtime, :size, :indexed_at, :width, :height, :blurhash)
-            """,
-            rows,
-        )
 
 
 def existing_ids(
@@ -424,8 +358,6 @@ def prune_missing(
     source_dirs: list[str] | None = None,
     batch_size: int = 1000,
     source_names: list[str] | None = None,
-    *,
-    sqlite_conn: sqlite3.Connection | None = None,
 ) -> int:
     """
     Scroll all points in the collection and delete the ones whose
@@ -449,11 +381,6 @@ def prune_missing(
     scroll covers the whole collection, so an alive-set built from one
     dir makes every other source look dead. Pass the full set of
     sources being managed by this run and only those get pruned.
-
-    `sqlite_conn` (round-35): if provided, also deletes the
-    corresponding rows from the search-side `images` table in the
-    same transaction so the search-side browse cache doesn't
-    accumulate orphans pointing at missing paths.
 
     Returns the number of points deleted.
     """
@@ -534,21 +461,6 @@ def prune_missing(
             )
             removed += len(to_delete)
             logger.info("prune: removed %d points (batch)", len(to_delete))
-            if sqlite_conn is not None:
-                # Mirror to search-side cache. Same id set so we
-                # delete exactly the rows that no longer exist in
-                # Qdrant. Chunk into batches of 999 (SQLite's default
-                # SQLITE_MAX_VARIABLE_NUMBER) to avoid the "too many
-                # SQL variables" error on large collections.
-                for i in range(0, len(to_delete), 999):
-                    chunk = to_delete[i : i + 999]
-                    placeholders = ",".join("?" for _ in chunk)
-                    with sqlite_conn:
-                        sqlite_conn.execute(
-                            f"DELETE FROM images WHERE id IN ({placeholders})",  # noqa: S608
-                            chunk,
-                        )
-
         if next_offset is None:
             break
 

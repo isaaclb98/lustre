@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import sqlite3
 import threading
 import time
@@ -55,10 +56,13 @@ class IndexDB:
         self.qdrant_client = qdrant_client
         self.refresh_interval_seconds = refresh_interval_seconds
         self._lock = threading.RLock()
-        self._last_refresh = 0.0
+        # The periodic maintenance clock starts at "now": there is
+        # no derived cache to build at startup, and the corpus in
+        # Qdrant is always current.
+        self._last_refresh = time.time()
         # Refresh lock — non-reentrant guard against the periodic
         # background task and the manual /api/cache/refresh endpoint
-        # racing. Acquired before `init_from_qdrant` runs, released
+        # racing. Acquired before the maintenance runs, released
         # after. NOT the same as `_lock` (which guards DB operations);
         # this one spans the whole Qdrant scroll + rebuild and
         # prevents two scrolls from running at once.
@@ -86,26 +90,21 @@ class IndexDB:
         with self._lock:
             self._conn.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS images (
-                  id            TEXT PRIMARY KEY,
-                  path          TEXT NOT NULL,
-                  shard         TEXT DEFAULT '',
-                  collection    TEXT DEFAULT '',
-                  mtime         INTEGER,
-                  size          INTEGER,
-                  indexed_at    TEXT,
-                  width         INTEGER,
-                  height         INTEGER,
-                  blurhash       TEXT DEFAULT ''
-                );
-
-                -- Persistent user state. Independent of the images
-                -- cache so a cache rebuild (init_from_qdrant) never
-                -- drops a favourite for a photo that still exists.
-                -- A favourite whose photo id was PRUNED from Qdrant
-                -- (file deleted from disk) is purged at the end of
-                -- the next forced cache rebuild — see
-                -- purge_orphaned_user_data().
+                -- Persistent user state. This database holds ONLY
+                -- authoritative user state — favourites, dislikes,
+                -- albums, memberships, saved searches, feedback.
+                --
+                -- The photo corpus is NOT mirrored here. Qdrant owns
+                -- it: the photos, their metadata, and the native
+                -- text index the filename filter queries. A derived
+                -- mirror was a second copy of the same facts that
+                -- could disagree with the collection — and, worse, it
+                -- could be used to decide that a favourite's photo
+                -- no longer exists, which would delete the user's
+                -- state over a cache that was merely stale.
+                --
+                -- Liveness is therefore always decided against
+                -- Qdrant — see purge_orphaned_user_data().
                 CREATE TABLE IF NOT EXISTS favorites (
                   id            TEXT PRIMARY KEY,
                   favorited_at  TEXT NOT NULL
@@ -214,62 +213,7 @@ class IndexDB:
                 """
             )
             self._conn.commit()
-            # Lightweight migrations for additive columns. Idempotent —
-            # _ensure_column checks PRAGMA table_info before issuing
-            # ALTER TABLE ADD COLUMN, so re-opens are no-ops. Must run
-            # BEFORE creating the indexes that reference these columns,
-            # since a pre-migration DB doesn't have them yet.
-            self._ensure_column("images", "width", "INTEGER")
-            self._ensure_column("images", "height", "INTEGER")
-            self._ensure_column("images", "collection", "TEXT DEFAULT ''")
-            self._ensure_column("images", "blurhash", "TEXT DEFAULT ''")
-            self._conn.executescript(
-                """
-                CREATE INDEX IF NOT EXISTS idx_images_path
-                  ON images(path);
-                CREATE INDEX IF NOT EXISTS idx_images_collection
-                  ON images(collection) WHERE collection != '';
-                """
-            )
-            self._conn.commit()
 
-            # Filename/path FTS5 index. Backed by an FTS5 virtual
-            # table that stores its own copy of `path` — no
-            # `content='images'` linkage. The alternative
-            # `content=` mode requires a `'rebuild'` step after
-            # any bulk insert AND silently fails to populate the
-            # inverted index on certain commit-timing
-            # combinations, so we keep the path denormalised
-            # inside the FTS index itself. The FTS index is
-            # read-only from the application code's perspective
-            # — the triggers below are the only path that
-            # touches it. Sync triggers cover INSERT / UPDATE /
-            # DELETE on `images`.
-            #
-            # Why not a `path_tokens` column on `images`? FTS5
-            # handles the tokenisation once and serves MATCH
-            # queries via the inverted index, which is O(log N)
-            # instead of full-table scans. A denormalised tokens
-            # column would either be hand-maintained (drift risk)
-            # or built lazily on read (slow).
-            #
-            # The triggers populate `images_fts` automatically as
-            # `init_from_qdrant` walks Qdrant and INSERTs rows
-            # into `images`. Single code path; source of truth is
-            # Qdrant. The migration method forces a one-time
-            # refresh on legacy DBs (where `images` is already
-            # populated but `images_fts` is empty).
-            #
-            # Patterns accepted by `path_token_ids()`:
-            #   * `chaewon`           — token substring match
-            #                            (FTS5 default).
-            #   * `chaewon*`          — token prefix match.
-            #   Anything else (notably `*chaewon` suffix or
-            #   `*.jpg` glob) raises ValueError — FTS5 doesn't
-            #   support suffix matching and fnmatch semantics are
-            #   not native. Callers that need suffix should
-            #   switch to a substring (drop the leading `*`).
-            self._create_images_fts()
 
     def _ensure_column(self, table: str, column: str, type_sql: str) -> None:
         """Add a column to `table` if it doesn't already exist.
@@ -293,437 +237,47 @@ class IndexDB:
                 )
                 self._conn.commit()
 
-    FTS_TABLE = "images_fts"
-    FTS_TOKENIZER = "unicode61 remove_diacritics 2"
+    def _payloads_by_id(self, point_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Photo metadata for `point_ids`, straight from Qdrant.
 
-    def _create_images_fts(self) -> None:
-        """Create the FTS5 virtual table + sync triggers if missing.
+        The photo's metadata — path, shard, collection, mtime, size,
+        indexed_at, width, height, blurhash — belongs to the photo,
+        so Qdrant is the source of truth for it. The `images` table
+        was a derived mirror of exactly this, and keeping both meant
+        two copies of the same facts that could disagree.
 
-        Triggers cover the three DML paths that hit `images`:
-        `ai` (AFTER INSERT), `au` (AFTER UPDATE), `ad` (AFTER
-        DELETE). The OLD/NEW pseudo-rows carry the rowid and path
-        values; we project to the FTS table's `(rowid, path)` shape.
-
-        Note: FTS5 has two ways to delete a row from the index — the
-        `INSERT INTO fts(fts, rowid, ...) VALUES('delete', ...)`
-        "delete command" and the SQL `DELETE FROM fts WHERE ...`.
-        The delete command requires every indexed column to be
-        re-supplied in the INSERT and is brittle (varies across
-        SQLite minor versions — we hit SQLITE_LOGIC_ERROR on the
-        3.45.1 build under the typical syntax). The plain SQL DELETE
-        works reliably inside triggers, so we use that form here.
-
-        CREATE TRIGGER has IF NOT EXISTS on SQLite >= 3.10; the
-        floor we target ships 3.41+, so it's safe. CREATE VIRTUAL
-        TABLE also supports IF NOT EXISTS in FTS5.
-
-        Schema-failure recovery: if any of these statements raises
-        we re-raise so the surrounding `_init_schema` doesn't
-        silently leave the DB in a half-built state.
+        Returns a map of id → metadata for the ids Qdrant holds.
+        Ids it does not hold are simply absent — the caller decides
+        what an absent id means (an orphan, usually).
         """
-        with self._lock:
-            # FTS_TABLE and FTS_TOKENIZER are static class constants
-            # inlined here as literal identifiers — no user input.
-            ddl = """
-                CREATE VIRTUAL TABLE IF NOT EXISTS images_fts USING fts5(
-                  path,
-                  tokenize='unicode61 remove_diacritics 2'
-                );
-
-                CREATE TRIGGER IF NOT EXISTS images_ai
-                AFTER INSERT ON images BEGIN
-                  INSERT INTO images_fts(rowid, path)
-                  VALUES (new.rowid, new.path);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS images_au
-                AFTER UPDATE ON images BEGIN
-                  DELETE FROM images_fts
-                  WHERE rowid = old.rowid;
-                  INSERT INTO images_fts(rowid, path)
-                  VALUES (new.rowid, new.path);
-                END;
-
-                CREATE TRIGGER IF NOT EXISTS images_ad
-                AFTER DELETE ON images BEGIN
-                  DELETE FROM images_fts
-                  WHERE rowid = old.rowid;
-                END;
-                """
-            self._conn.executescript(ddl)
-            self._conn.commit()
-
-    def path_token_ids(self, pattern: str) -> list[str] | None:
-        """Resolve a filename/path-substring pattern to image ids.
-
-        Returns `None` when the pattern is empty / whitespace-only —
-        the caller is expected to skip the filter in that case so we
-        don't pay the FTS5 round-trip on every request. Otherwise
-        returns the list of image ids whose `path` matches the
-        pattern under the FTS5 token-substring / prefix rules:
-
-          * `chaewon`  → token-substring match. FTS5 splits the path
-            into tokens on `/`, `-`, `_`, `.` etc, and matches each
-            token as a substring. So `/photos/kpop/chaewon/2024.jpg`
-            tokenises to [photos, kpop, chaewon, 2024, jpg] and any
-            single-token query (e.g. `chaewon`, `kpop`, `2024`)
-            hits. The match is anchored to token boundaries — `won`
-            does NOT match `chaewon` (substring but not token-aligned).
-          * `chaewon*` → token-prefix match. `won*` would NOT match
-            `chaewon` (token prefix, not substring prefix).
-
-        Anything else (notably `*ewon` or `*.jpg`) raises a
-        ValueError so the caller surfaces a 400 with a clear error.
-        The fnmatch-style suffix / bracket / question-mark syntax is
-        intentionally NOT supported — FTS5 has no native equivalent,
-        and silently no-op'ing would confuse users into thinking the
-        filter is broken. Callers can either drop the leading `*`
-        (becomes a token match) or use a plain substring via the
-        implicit token-substring semantics above.
-
-        The matching itself is case-insensitive (FTS5 default with
-        unicode61), and diacritics are folded (remove_diacritics=2
-        tokenizer option).
-
-        Performance: FTS5 with content='images' is fast — typically
-        sub-10ms for tens of thousands of matching rows on the
-        live 1.5M cache. The caller should still apply the
-        cardinality guard (see app.py) before passing the result to
-        Qdrant, since `HasId` with >50% of the collection is
-        strictly worse than no filter at all.
-        """
-        if not pattern or not pattern.strip():
-            return None
-        # Validate: accept only alphanumeric runs and (optionally) a
-        # single trailing `*`. Reject anything else so the caller can
-        # surface a 400. Strip quotes / surrounding whitespace first
-        # so casual typing doesn't trip the validator.
-        candidate = pattern.strip().strip('"').strip("'")
-        if not candidate:
-            return None
-        # Explicit suffix / glob rejection. FTS5 has no native
-        # suffix-match and we deliberately don't try to emulate it
-        # — silent zero-result matches would look like a broken
-        # filter. The user should drop the leading `*` and use the
-        # implicit token-substring semantics instead.
-        if "*" in candidate[:-1]:
-            # Trailing `*` is the only `*` we accept (prefix match).
-            # Anything else — leading `*`, internal `*`, multiple
-            # `*` — is a syntax error. We surface this BEFORE the
-            # FTS5 layer so the message is about filename patterns,
-            # not about FTS5 internals.
-            raise ValueError(
-                f"filename pattern only supports trailing '*' for "
-                f"prefix match (got {pattern!r})"
-            )
-        prefix_only = candidate.endswith("*")
-        body = candidate[:-1] if prefix_only else candidate
-        # Whitespace or empty after stripping the optional `*` is a
-        # no-op (treated like no pattern) — the user typed just `*`.
-        if not body or body != body.strip() or any(ch.isspace() for ch in body):
-            raise ValueError(
-                f"filename pattern must be a single token "
-                f"(got {pattern!r})"
-            )
-        # Disallow FTS5 operators inside the body. The unicode61
-        # tokeniser already strips most punctuation, but quotes and
-        # colons are FTS5 syntax we explicitly want to forbid.
-        if any(ch in body for ch in ('"', "'", ":", "(", ")", "+", "-")):
-            # `+` and `-` are FTS5 mandatory/exclusion operators;
-            # we don't surface them as a user feature.
-            raise ValueError(
-                f"filename pattern must not contain FTS5 operators "
-                f"(got {pattern!r})"
-            )
-        # Build the FTS5 query. Token-substring is the FTS5 default
-        # (just `body`), so a bare alphanumeric token is enough.
-        # Prefix mode appends `*` to express "starts with body".
-        fts_query = f"{body}*" if prefix_only else body
-        with self._lock:
-            try:
-                rows = self._conn.execute(
-                    f"""
-                    SELECT images.id FROM {self.FTS_TABLE}
-                    INNER JOIN images ON images.rowid = {self.FTS_TABLE}.rowid
-                    WHERE {self.FTS_TABLE} MATCH ?
-                    """,  # noqa: S608
-                    (fts_query,),
-                ).fetchall()
-            except sqlite3.OperationalError as e:
-                # FTS5 syntax errors fall through as OperationalError.
-                # Surface as ValueError so the API layer can 400
-                # uniformly.
-                raise ValueError(f"invalid filename pattern {pattern!r}: {e}") from e
-        return [str(r["id"]) for r in rows] if rows else []
-
-
-
-
-    def init_from_qdrant(self, force: bool = False) -> int:
-        """
-        Rebuild the photo-metadata cache from Qdrant.
-
-        The `images` table is disposable cache of Qdrant payload
-        metadata. This method wipes it and repopulates from a fresh
-        scroll. User-data tables (favorites, dislikes, albums) are
-        NOT wiped — but when the rebuild produces a non-empty cache,
-        `purge_orphaned_user_data()` runs afterwards and deletes
-        user rows whose photo id is no longer in Qdrant (see that
-        method for the full contract and the empty-rebuild guard).
-
-        When `force=False` (the default) and the cache already contains
-        rows, this is a no-op for the Qdrant scroll: the previous
-        build is restored from SQLite and the periodic refresh task
-        remains responsible for catching drift. Pass `force=True` to
-        always rebuild (used by tests and manual recovery / the
-        `POST /api/cache/refresh` endpoint).
-        """
-        if not force:
-            with self._lock:
-                existing = int(
-                    self._conn.execute("SELECT COUNT(*) AS n FROM images").fetchone()["n"]
-                )
-            if existing > 0:
-                logger.info(
-                    "index cache already populated (%d rows); skipping Qdrant scroll",
-                    existing,
-                )
-                self._last_refresh = time.time()
-                return existing
-        count = 0
-        with self._lock:
-            # Disposable cache: a force rebuild is a full wipe + repopulate.
-            # User-data tables (favorites/dislikes/albums) survive the
-            # wipe itself; orphans among them are purged afterwards by
-            # purge_orphaned_user_data() (below), only when the rebuild
-            # produced rows.
-            self._conn.execute("DELETE FROM images")
-            try:
-                for batch in self.qdrant_client.scroll_all():
-                    rows = [self._row_from_point(point) for point in batch]
-                    if not rows:
-                        continue
-                    self._conn.executemany(
-                        """
-                        INSERT INTO images (id, path, shard, collection, mtime, size, indexed_at, blurhash)
-                        VALUES (:id, :path, :shard, :collection, :mtime, :size, :indexed_at, :blurhash)
-                        """,
-                        rows,
-                    )
-                    count += len(rows)
-                self._conn.commit()
-            except Exception:
-                self._conn.rollback()
-                logger.exception("index cache rebuild failed")
-                raise
-            self._last_refresh = time.time()
-        logger.info("index cache built from Qdrant: %d points", count)
-        # Purge user-data rows whose photo id is no longer in the
-        # (freshly rebuilt) cache. Only safe right here, right after
-        # a full rebuild — at any other moment `images` may be stale
-        # and the purge would delete rows for photos that still
-        # exist. Skipped when the rebuild produced zero rows: an
-        # empty Qdrant is far more likely to mean "collection
-        # unreachable / mid-rebuild" than "user deleted 2M photos",
-        # and wiping the entire taste history on a transient blip
-        # is unrecoverable.
-        if count > 0:
-            self.purge_orphaned_user_data()
-        return count
-
-    def refresh_incremental(self) -> dict[str, int]:
-        """
-        Round-35: sync images.db to match Qdrant via a 3-way diff.
-
-        Replaces the wipe+rebuild path that init_from_qdrant(force=True)
-        used to do. Instead of nuking every row and re-INSERTing 2M,
-        this:
-
-          1. Cheap count check: if Qdrant's points_count equals our
-             sqlite row count, return early. Steady-state cost is
-             one round-trip to Qdrant (an `O(1)` `count()`), nothing
-             else. This is the new periodic-refresh fast path.
-
-          2. Drift detected: id-only scroll of Qdrant (cheap, no
-             payload deserialization) + one SELECT id FROM images.
-             Set-difference in memory:
-
-               new_ids     = qdrant_ids - sqlite_ids  →  INSERT
-               orphan_ids  = sqlite_ids - qdrant_ids  →  DELETE
-               common_ids  = qdrant_ids ∩ sqlite_ids  →  no-op
-                             (the indexer's write-through keeps
-                              common rows current; a payload
-                              mutation without an id change is
-                              rare and self-corrects on the next
-                              rebuild pass)
-
-          3. INSERTs: retrieve payloads for new_ids and feed them
-             through upsert_records (the existing INSERT OR REPLACE).
-             Bounded by drift size, not total collection size.
-
-          4. DELETEs: chunk into 999-id batches (SQLite's default
-             SQLITE_MAX_VARIABLE_NUMBER) and DELETE WHERE id IN (...).
-
-        Returns:
-            {
-              "qdrant_count": int,
-              "sqlite_count": int,   # before the sync
-              "inserted":     int,
-              "deleted":      int,
-              "skipped":      bool,  # true when fast path took it
-            }
-
-        Concurrency:
-          - The Qdrant id-scroll is a point-in-time snapshot.
-          - Any indexer writes that land mid-scroll are missing
-            from the diff but get written via write-through anyway.
-          - The orphan-DELETE step can theoretically delete a row
-            the indexer just wrote via write-through — but only
-            if that exact id was deleted from Qdrant in the same
-            window. In practice that means an external admin
-            deleted the point at the same time the indexer was
-            re-upserting it, which is a user-driven ambiguity and
-            the LAST write wins either way.
-          - No DELETE FROM images; only the orphan ids get removed.
-
-        User data:
-          - purge_orphaned_user_data() runs at the end (same
-            contract as init_from_qdrant): when the orphan set is
-            non-empty, favorite/dislike rows for those ids are
-            cleared.
-        """
-        # Step 1: cheap count check.
+        if not point_ids:
+            return {}
         try:
-            qdrant_count = int(
-                self.qdrant_client.client.count(
-                    collection_name=self.qdrant_client.collection,
-                ).count
-            )
-        except Exception as e:
-            logger.warning("refresh_incremental: Qdrant count() failed: %s", e)
-            raise
-
-        with self._lock:
-            sqlite_count = int(
-                self._conn.execute("SELECT COUNT(*) AS n FROM images").fetchone()["n"]
-            )
-
-        if qdrant_count == sqlite_count:
-            # Steady-state fast path. Skip the whole diff. ~1ms.
-            self._last_refresh = time.time()
-            logger.debug(
-                "refresh_incremental: in sync (qdrant=%d, sqlite=%d); fast path",
-                qdrant_count,
-                sqlite_count,
-            )
-            return {
-                "qdrant_count": qdrant_count,
-                "sqlite_count": sqlite_count,
-                "inserted": 0,
-                "deleted": 0,
-                "skipped": True,
+            hits = self.qdrant_client.retrieve_batch(list(point_ids))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("payload fetch failed for %d ids: %s", len(point_ids), e)
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for hit in hits:
+            payload = hit.payload or {}
+            # Keyed by the Qdrant POINT id, because that is what the
+            # caller asked for: the random deck is built from point
+            # ids and joined back on them. The payload's own `id`
+            # field is carried inside the row, so the API can surface
+            # the app-level id.
+            out[hit.id] = {
+                "id": payload.get("id", hit.id),
+                "path": payload.get("path", hit.path or ""),
+                "shard": payload.get("shard", ""),
+                "collection": payload.get("collection", ""),
+                "mtime": payload.get("mtime", 0),
+                "size": payload.get("size", 0),
+                "indexed_at": payload.get("indexed_at", ""),
+                "width": payload.get("width", 0),
+                "height": payload.get("height", 0),
+                "blurhash": payload.get("blurhash", ""),
             }
-
-        logger.info(
-            "refresh_incremental: drift detected (qdrant=%d, sqlite=%d); diffing",
-            qdrant_count,
-            sqlite_count,
-        )
-
-        # Step 2a: id-only scroll of Qdrant.
-        qdrant_ids: set[str] = set()
-        try:
-            for id_batch in self.qdrant_client.scroll_ids_only():
-                qdrant_ids.update(id_batch)
-        except Exception:
-            logger.exception("refresh_incremental: scroll_ids_only failed")
-            raise
-
-        # Step 2b: SELECT all ids from images.
-        with self._lock:
-            sqlite_ids = {
-                row["id"]
-                for row in self._conn.execute("SELECT id FROM images").fetchall()
-            }
-
-        # Step 2c: set-difference.
-        new_ids = qdrant_ids - sqlite_ids
-        orphan_ids = sqlite_ids - qdrant_ids
-
-        # Step 3: INSERT new ids.
-        inserted = 0
-        if new_ids:
-            logger.info(
-                "refresh_incremental: %d new ids to insert", len(new_ids)
-            )
-            try:
-                # retrieve() with a long list of ids can fail with
-                # a payload-size error on huge diffs. Chunk into
-                # 256-id retrievals to stay under the wire limit.
-                retrieved_points = []
-                for i in range(0, len(new_ids), 256):
-                    chunk = list(new_ids)[i : i + 256]
-                    retrieved_points.extend(
-                        self.qdrant_client.client.retrieve(
-                            collection_name=self.qdrant_client.collection,
-                            ids=chunk,
-                            with_payload=True,
-                            with_vectors=False,
-                        )
-                    )
-                inserted = self.upsert_records(retrieved_points)
-            except Exception:
-                logger.exception(
-                    "refresh_incremental: retrieve+upsert failed for %d new ids",
-                    len(new_ids),
-                )
-                raise
-
-        # Step 4: DELETE orphan ids.
-        deleted = 0
-        if orphan_ids:
-            logger.info(
-                "refresh_incremental: %d orphan ids to delete", len(orphan_ids)
-            )
-            with self._lock:
-                try:
-                    # Chunk into 999-id batches to respect SQLite's
-                    # default SQLITE_MAX_VARIABLE_NUMBER.
-                    for i in range(0, len(orphan_ids), 999):
-                        chunk = list(orphan_ids)[i : i + 999]
-                        placeholders = ",".join("?" for _ in chunk)
-                        cur = self._conn.execute(
-                            f"DELETE FROM images WHERE id IN ({placeholders})",  # noqa: S608
-                            chunk,
-                        )
-                        deleted += cur.rowcount
-                    self._conn.commit()
-                except Exception:
-                    self._conn.rollback()
-                    raise
-
-        self._last_refresh = time.time()
-
-        # Step 5: purge user-data orphans (same contract as
-        # init_from_qdrant — only after we've actually changed
-        # the images cache).
-        if orphan_ids:
-            self.purge_orphaned_user_data()
-
-        logger.info(
-            "refresh_incremental: done inserted=%d deleted=%d (qdrant=%d, sqlite was %d)",
-            inserted,
-            deleted,
-            qdrant_count,
-            sqlite_count,
-        )
-        return {
-            "qdrant_count": qdrant_count,
-            "sqlite_count": sqlite_count,
-            "inserted": inserted,
-            "deleted": deleted,
-            "skipped": False,
-        }
+        return out
 
     def _live_point_ids(self, point_ids: list[str]) -> set[str]:
         """Which of `point_ids` does Qdrant still hold?
@@ -774,21 +328,19 @@ class IndexDB:
         search/for_you.py) and orphan album members render as dead
         thumbnails.
 
-        Called at the end of every forced `images` cache rebuild
-        (init_from_qdrant(force=True)) — i.e. on POST /api/cache/
-        refresh and the periodic 6h refresh — when `images` is
-        guaranteed to mirror Qdrant. NOT called on the startup
-        warm-up path, which may short-circuit against a stale cache.
+        Called from POST /api/cache/refresh.
 
-        **Liveness is decided by Qdrant, never by the `images` cache.**
-        The `images` table is a DERIVED mirror: it can be empty or
-        stale (a half-finished rebuild, a mirror that was never
-        populated, a mirror that drifted from the collection). If it
-        were used to decide which user rows are orphans, a stale
-        mirror would delete the user's favourites, dislikes and album
-        memberships — the authoritative state — because the photos
-        they point at are not in the mirror. The mirror says nothing
-        about whether a photo exists; only Qdrant does.
+        **Liveness is decided by Qdrant, and by nothing else.**
+        There used to be an `images` table in this database — a
+        DERIVED mirror of the collection. It could be empty or stale
+        (a half-finished rebuild, a mirror that was never populated,
+        a mirror that drifted from the collection). If it were used
+        to decide which user rows are orphans, a stale mirror would
+        delete the user's favourites, dislikes and album memberships
+        — the authoritative state — because the photos they point at
+        are not in the mirror. The mirror said nothing about whether
+        a photo existed; only Qdrant did. The mirror is gone now, and
+        so is the possibility of that mistake.
 
         So the candidate ids are collected from the user-state
         tables, and each is checked against Qdrant directly. A
@@ -838,6 +390,37 @@ class IndexDB:
                     "album_covers_reset": 0,
                 }
 
+        # NAS-dropout guard: a collection that reports ZERO points is
+        # far more likely to mean "the collection was just recreated"
+        # or "we are looking at the wrong collection" than "every
+        # photo was deleted". Purging on that signal would wipe the
+        # user's entire taste history irrecoverably. An empty
+        # collection is therefore not evidence that anything is an
+        # orphan — the orphans survive until the collection has
+        # points again and a real liveness check can answer.
+        try:
+            total_points = int(self.qdrant_client.count_points())
+        except Exception as e:  # noqa: BLE001
+            logger.warning("purge: count_points failed, keeping all user data: %s", e)
+            return {
+                "favorites": 0,
+                "dislikes": 0,
+                "album_memberships": 0,
+                "album_covers_reset": 0,
+            }
+        if total_points == 0:
+            logger.info(
+                "purge: collection %r is empty — not evidence that any "
+                "photo is gone; keeping all user data",
+                getattr(self.qdrant_client, "collection", "?"),
+            )
+            return {
+                "favorites": 0,
+                "dislikes": 0,
+                "album_memberships": 0,
+                "album_covers_reset": 0,
+            }
+
         # Which of those ids does Qdrant still hold? This is the
         # authoritative liveness check.
         live_ids = self._live_point_ids(sorted(candidate_ids))
@@ -885,16 +468,6 @@ class IndexDB:
             logger.info("purged orphaned user data: %s", purged)
         return purged
 
-    def pick_random(self, n: int) -> list[str]:
-        if n <= 0:
-            return []
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT id FROM images ORDER BY RANDOM() LIMIT ?",
-                (int(n),),
-            ).fetchall()
-        return [str(row["id"]) for row in rows]
-
     def shuffled_id_deck(
         self, collections: tuple[str, ...] | list[str] = ()
     ) -> list[str]:
@@ -903,83 +476,94 @@ class IndexDB:
         This is what backs the /random session-cursor shape: one
         full shuffle per session, then sequential reads via
         `rows_by_ids`. At 182 photos this is microseconds; at 2M
-        it's a one-time ~5s query, then O(1) per request.
+        it's a one-time ~3s query, then O(1) per request.
+
+        The ids come from Qdrant, which owns the corpus. The
+        collection filter is applied SERVER-SIDE against the
+        `collection` keyword index, so the filtered case does not
+        have to fetch any payload — measured on the 2.2M corpus: a
+        full unfiltered id scroll is 2.9s, and the same scroll
+        filtered to one collection is 1.4s (it reads fewer points).
 
         Returns ALL ids matching the collection filter (or all ids
         if `collections` is empty), in a random order. The caller
         uses this as the deck; offsets slice into it.
         """
         collections = tuple(c for c in (collections or ()) if c)
-        with self._lock:
-            if collections:
-                placeholders = ",".join("?" for _ in collections)
-                rows = self._conn.execute(
-                    f"""
-                    SELECT id FROM images
-                    WHERE collection IN ({placeholders})
-                    ORDER BY RANDOM()
-                    """,  # noqa: S608
-                    collections,
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT id FROM images ORDER BY RANDOM()"
-                ).fetchall()
-        return [str(row["id"]) for row in rows]
+        ids = self._all_point_ids(collections)
+        # Qdrant returns ids in storage order; the deck must be a
+        # random permutation, so shuffle locally. This is the same
+        # distribution SQLite's ORDER BY RANDOM() produced.
+        random.shuffle(ids)
+        return ids
+
+    def _all_point_ids(self, collections: tuple[str, ...] = ()) -> list[str]:
+        """Every point id in the collection, optionally filtered by collection.
+
+        Scrolls the collection with `with_payload=False` so only the
+        ids cross the wire. The collection filter is a server-side
+        `MatchAny` against the keyword index on `collection`, so the
+        filtered case transfers no payload at all.
+        """
+        try:
+            hits = self.qdrant_client.scroll_ids(collections)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("id scroll failed (%s) — empty deck", e)
+            return []
+        return [hit.id for hit in hits]
 
     def rows_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
         """Look up full row dicts for a list of point ids.
 
-        Returns one row per id that exists in the cache. Order of
-        the returned rows is arbitrary — callers that need a
+        Returns one row per id that exists in the collection. Order
+        of the returned rows is arbitrary — callers that need a
         specific order (e.g. /random session-cursor) should reorder
         themselves. Missing ids are silently dropped.
+
+        The photo metadata comes from Qdrant, which owns it; the
+        favourite/dislike flags come from SQLite, which owns them.
+        That split is the point: neither store decides whether the
+        other one's data is real.
         """
         if not ids:
             return []
         ids = [str(i) for i in ids if i]
+        if not ids:
+            return []
+        payload_by_id = self._payloads_by_id(ids)
+        if not payload_by_id:
+            return []
         placeholders = ",".join("?" for _ in ids)
         with self._lock:
             rows = self._conn.execute(
                 f"""
-                SELECT i.id, i.path, i.shard, i.collection, i.mtime,
-                       i.size, i.indexed_at, i.width, i.height,
-                       i.blurhash,
-                       (f.id IS NOT NULL) AS is_favorite,
-                       f.favorited_at,
-                       (d.id IS NOT NULL) AS is_disliked
-                FROM images i
-                LEFT JOIN favorites f ON i.id = f.id
-                LEFT JOIN dislikes d ON i.id = d.id
-                WHERE i.id IN ({placeholders})
+                SELECT f.id AS fav_id, f.favorited_at AS favorited_at,
+                       d.id AS dis_id
+                FROM favorites f
+                LEFT JOIN dislikes d ON d.id = f.id
+                WHERE f.id IN ({placeholders})
                 """,  # noqa: S608
                 ids,
             ).fetchall()
-        return [dict(row) for row in rows]
+            favs = {r["fav_id"]: r["favorited_at"] for r in rows if r["fav_id"]}
+            dis_rows = self._conn.execute(
+                f"SELECT id FROM dislikes WHERE id IN ({placeholders})",  # noqa: S608
+                ids,
+            ).fetchall()
+        disliked = {r["id"] for r in dis_rows}
 
-    def pick_unseen(self, n: int, exclude: set[str]) -> list[str]:
-        if n <= 0:
-            return []
-        exclude = set(exclude or set())
-        with self._lock:
-            if not exclude:
-                rows = self._conn.execute(
-                    "SELECT id FROM images ORDER BY RANDOM() LIMIT ?",
-                    (int(n),),
-                ).fetchall()
-            else:
-                placeholders = ",".join("?" for _ in exclude)
-                params: list[Any] = [*exclude, int(n)]
-                rows = self._conn.execute(
-                    f"""
-                    SELECT id FROM images
-                    WHERE id NOT IN ({placeholders})
-                    ORDER BY RANDOM()
-                    LIMIT ?
-                    """,  # noqa: S608
-                    params,
-                ).fetchall()
-        return [str(row["id"]) for row in rows]
+        out: list[dict[str, Any]] = []
+        for point_id, payload in payload_by_id.items():
+            app_id = payload.get("id") or point_id
+            out.append({
+                **payload,
+                "id": app_id,
+                "point_id": point_id,
+                "is_favorite": app_id in favs,
+                "favorited_at": favs.get(app_id),
+                "is_disliked": app_id in disliked,
+            })
+        return out
 
     def favorite_id_set(self, point_ids: list[str]) -> set[str]:
         """Subset of `point_ids` that are currently in the favourites table.
@@ -1003,9 +587,17 @@ class IndexDB:
         return self.get_by_id(point_id) is not None
 
     def count_images(self) -> int:
-        with self._lock:
-            row = self._conn.execute("SELECT COUNT(*) AS n FROM images").fetchone()
-        return int(row["n"] if row else 0)
+        """How many photos the corpus holds.
+
+        Qdrant owns the corpus, so it answers. The `images` mirror
+        used to answer this, which meant the number could disagree
+        with the collection the search actually runs against.
+        """
+        try:
+            return int(self.qdrant_client.count_points())
+        except Exception as e:  # noqa: BLE001
+            logger.warning("count_points failed: %s", e)
+            return 0
 
     def mark_favorite(self, point_id: str) -> None:
         # Photo must exist in the cache before it can be favourited;
@@ -1057,39 +649,115 @@ class IndexDB:
         return [str(r["id"]) for r in rows]
 
     def list_favorites(self, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
+        """The favourites, newest first, with each photo's metadata.
+
+        The favourite ROWS (id + when it was favourited) are
+        authoritative user state and live in SQLite. The photo
+        METADATA (path, shard, collection, size, dimensions,
+        blurhash) belongs to the photo, so it comes from Qdrant,
+        which owns it.
+
+        A favourite whose photo Qdrant no longer holds is an orphan
+        and is omitted — the same shape the old INNER JOIN produced,
+        but decided by the collection rather than by a derived
+        mirror. An orphan is not deleted here; the purge handles
+        that, and it also checks Qdrant.
+        """
         limit = max(0, int(limit))
         offset = max(0, int(offset))
-        # INNER JOIN — a favourite whose photo id is no longer in the
-        # cache (orphan) is excluded. We could expose orphans via a
-        # separate query if the operator wants to clean them up, but
-        # for the UI the JOIN is the right shape.
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT i.id, i.path, i.shard, i.collection, i.mtime,
-                       i.size, i.indexed_at, i.width, i.height, i.blurhash,
-                                              f.favorited_at
-                FROM images i
-                INNER JOIN favorites f ON i.id = f.id
+                SELECT f.id AS id, f.favorited_at AS favorited_at
+                FROM favorites f
                 ORDER BY f.favorited_at DESC
                 LIMIT ? OFFSET ?
                 """,
                 (limit, offset),
             ).fetchall()
-        return [dict(row) for row in rows]
+        if not rows:
+            return []
+
+        payload_by_id = self._payloads_by_id([r["id"] for r in rows])
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            payload = payload_by_id.get(row["id"])
+            if payload is None:
+                # The photo is gone from the collection — an orphan.
+                continue
+            out.append({**payload, "id": row["id"], "favorited_at": row["favorited_at"]})
+        return out
+
+    def list_dislikes(self, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
+        """The dislikes, newest first, with each photo's metadata.
+
+        The dislike ROWS are authoritative user state and live in
+        SQLite. The photo METADATA comes from Qdrant, which owns it.
+        A dislike whose photo Qdrant no longer holds is an orphan and
+        is omitted from the list — but the row is kept, so a
+        re-indexed photo re-attaches the dislike.
+        """
+        limit = max(0, int(limit))
+        offset = max(0, int(offset))
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT d.id AS id, d.disliked_at AS disliked_at, d.source AS source
+                FROM dislikes d
+                ORDER BY d.disliked_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            ).fetchall()
+        if not rows:
+            return []
+
+        payload_by_id = self._payloads_by_id([r["id"] for r in rows])
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            payload = payload_by_id.get(row["id"])
+            if payload is None:
+                continue
+            out.append({
+                **payload,
+                "id": row["id"],
+                "disliked_at": row["disliked_at"],
+                "source": row["source"],
+            })
+        return out
+
+    def count_dislikes(self) -> int:
+        """How many dislikes point at photos the collection still holds.
+
+        A dislike whose photo was pruned is an orphan: it is not
+        shown, and it is not counted. The liveness check is against
+        Qdrant.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT id FROM dislikes WHERE id != ''"
+            ).fetchall()
+        if not rows:
+            return 0
+        live = self._live_point_ids([r["id"] for r in rows])
+        return len(live)
 
     def count_favorites(self) -> int:
-        # Count only favourites whose photo is still in the cache.
-        # Orphan favourites don't appear in /favorites but stay in the
-        # table for potential re-attachment.
+        """How many favourites point at photos the collection still holds.
+
+        A favourite whose photo was pruned is an orphan: it is not
+        shown, and it is not counted. The liveness check is against
+        Qdrant — never against a derived mirror. The row itself
+        stays in the table, so a re-indexed photo re-attaches it.
+        """
         with self._lock:
-            row = self._conn.execute(
-                """
-                SELECT COUNT(*) AS n FROM favorites f
-                INNER JOIN images i ON i.id = f.id
-                """
-            ).fetchone()
-        return int(row["n"] if row else 0)
+            rows = self._conn.execute(
+                "SELECT DISTINCT id FROM favorites WHERE id != ''"
+            ).fetchall()
+        if not rows:
+            return 0
+        live = self._live_point_ids([r["id"] for r in rows])
+        return len(live)
 
     # ----------------------------------------------------------------
     # Dislikes (persistent "do-not-recommend" feedback)
@@ -1158,31 +826,6 @@ class IndexDB:
             ).fetchall()
         return {row["id"] for row in rows}
 
-    def list_dislikes(self, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
-        """Same JOIN shape as `list_favorites` so the dislike gallery
-        page can reuse the result-grid partial without changes."""
-        with self._lock:
-            rows = self._conn.execute(
-                """
-                SELECT i.id, i.path, i.shard, i.collection, i.mtime,
-                       i.size, i.indexed_at, i.width, i.height, i.blurhash,
-                       d.disliked_at, d.source
-                FROM images i
-                INNER JOIN dislikes d ON i.id = d.id
-                ORDER BY d.disliked_at DESC
-                LIMIT ? OFFSET ?
-                """,
-                (limit, offset),
-            ).fetchall()
-        return [dict(row) for row in rows]
-
-    def count_dislikes(self) -> int:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT COUNT(*) AS n FROM dislikes d "
-                "INNER JOIN images i ON i.id = d.id"
-            ).fetchone()
-        return int(row["n"] if row else 0)
 
     # ----------------------------------------------------------------
     # Feedback event log (append-only; power for-you observability)
@@ -1249,9 +892,7 @@ class IndexDB:
         Used by the admin Index rebuild mode BEFORE spawning the
         indexer subprocess, so user data referencing soon-to-be-
         replaced point IDs (favourites, dislikes, albums, saved
-        searches, feedback events) is cleared first. The images
-        cache is also wiped; init_from_qdrant will repopulate it
-        after the indexer finishes.
+        searches, feedback events) is cleared first.
 
         Does NOT touch schema_meta — the schema version persists
         across resets so we don't accidentally trigger a migration
@@ -1266,8 +907,6 @@ class IndexDB:
                 DELETE FROM album_memberships;
                 DELETE FROM albums;
                 DELETE FROM saved_searches;
-                DELETE FROM images;
-                DELETE FROM images_fts;
                 """
             )
             self._conn.commit()
@@ -1509,46 +1148,60 @@ class IndexDB:
     ) -> list[dict[str, Any]]:
         """Return paginated members of `album_id` with photo metadata.
 
-        INNER JOIN against `images` so orphan memberships are
-        hidden from the UI (same shape as `list_favorites`). The
-        orphan rows still exist in `album_memberships` and still
-        feed the album centroid compute — only the UI hides them.
+        The MEMBERSHIP is authoritative user state and lives in
+        SQLite. The photo METADATA comes from Qdrant, which owns it.
+
+        A membership whose photo Qdrant no longer holds is an orphan
+        and is hidden from the UI — the same shape the old INNER
+        JOIN produced, but decided by the collection rather than by
+        a derived mirror. The orphan row still exists in
+        `album_memberships` and still feeds the album centroid
+        compute — only the UI hides it.
         """
         limit = max(0, int(limit))
         offset = max(0, int(offset))
         with self._lock:
             rows = self._conn.execute(
                 """
-                SELECT i.id, i.path, i.shard, i.collection, i.mtime,
-                       i.size, i.indexed_at, i.width, i.height, i.blurhash,
-                       m.added_at
+                SELECT m.favorite_id AS id, m.added_at AS added_at
                 FROM album_memberships m
-                INNER JOIN images i ON i.id = m.favorite_id
                 WHERE m.album_id = ?
                 ORDER BY m.added_at DESC
                 LIMIT ? OFFSET ?
                 """,
                 (album_id, limit, offset),
             ).fetchall()
-        return [dict(r) for r in rows]
+        if not rows:
+            return []
+
+        payload_by_id = self._payloads_by_id([r["id"] for r in rows])
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            payload = payload_by_id.get(row["id"])
+            if payload is None:
+                # The photo is gone from the collection — an orphan.
+                continue
+            out.append({**payload, "id": row["id"], "added_at": row["added_at"]})
+        return out
 
     def count_album_members(self, album_id: int) -> int:
-        """Count members of `album_id` whose photo is in the cache.
+        """How many of the album's members still exist in the collection.
 
-        Matches the JOIN semantics of `list_album_members` (orphan
-        memberships hidden). For the total membership count
-        including orphans, use `len(list_album_member_ids(album_id))`.
+        Liveness is decided by Qdrant, so a membership whose photo
+        was pruned is neither shown nor counted. For the total
+        membership count including orphans, use
+        `len(list_album_member_ids(album_id))`.
         """
         with self._lock:
-            row = self._conn.execute(
-                """
-                SELECT COUNT(*) AS n FROM album_memberships m
-                INNER JOIN images i ON i.id = m.favorite_id
-                WHERE m.album_id = ?
-                """,
+            rows = self._conn.execute(
+                "SELECT DISTINCT favorite_id AS id FROM album_memberships "
+                "WHERE album_id = ?",
                 (album_id,),
-            ).fetchone()
-        return int(row["n"] if row else 0)
+            ).fetchall()
+        if not rows:
+            return 0
+        live = self._live_point_ids([r["id"] for r in rows])
+        return len(live)
 
     def list_albums_for_favorite(
         self, favorite_id: str,
@@ -1703,28 +1356,41 @@ class IndexDB:
         return cur.rowcount > 0
 
     def get_by_id(self, point_id: str) -> dict[str, Any] | None:
-        # LEFT JOIN: photo metadata always returned, favourite info
-        # filled in when present. (f.id IS NOT NULL) becomes the
-        # boolean `is_favorite` field.
+        """The row for one photo: its metadata plus its user flags.
+
+        The metadata comes from Qdrant, the favourite flag from
+        SQLite. Returns None when Qdrant does not hold the photo —
+        the photo is gone, so there is no row.
+        """
+        point_id = str(point_id)
+        payloads = self._payloads_by_id([point_id])
+        payload = payloads.get(point_id)
+        if payload is None:
+            return None
         with self._lock:
-            row = self._conn.execute(
-                """
-                SELECT i.id, i.path, i.shard, i.collection, i.mtime,
-                       i.size, i.indexed_at, i.width, i.height, i.blurhash,
-                       (f.id IS NOT NULL) AS is_favorite,
-                       f.favorited_at
-                FROM images i
-                LEFT JOIN favorites f ON i.id = f.id
-                WHERE i.id = ?
-                """,
+            fav = self._conn.execute(
+                "SELECT favorited_at FROM favorites WHERE id = ?",
                 (point_id,),
             ).fetchone()
-        return dict(row) if row is not None else None
+        return {
+            **payload,
+            "id": point_id,
+            "is_favorite": fav is not None,
+            "favorited_at": fav["favorited_at"] if fav is not None else None,
+        }
 
     def maybe_refresh(self) -> bool:
+        """Run the periodic maintenance if the interval has elapsed.
+
+        The maintenance is the orphan purge: user-state rows whose
+        photo the collection no longer holds are dropped. There is no
+        derived cache to rebuild — the corpus lives in Qdrant and is
+        always current there.
+        """
         if time.time() - self._last_refresh <= self.refresh_interval_seconds:
             return False
-        self.init_from_qdrant(force=True)
+        self.purge_orphaned_user_data()
+        self._last_refresh = time.time()
         return True
 
     def try_acquire_refresh_lock(self, *, blocking: bool = False) -> bool:
@@ -1748,7 +1414,7 @@ class IndexDB:
             self._refresh_lock.release()
 
     def last_refresh_time(self) -> float:
-        """Unix timestamp of the last successful refresh (init_from_qdrant),
+        """Unix timestamp of the last successful maintenance run,
         or 0.0 if never refreshed.
         """
         with self._lock:
@@ -1772,11 +1438,14 @@ class IndexDB:
             self._conn.close()
 
     def _exists_locked(self, point_id: str) -> bool:
-        row = self._conn.execute(
-            "SELECT 1 FROM images WHERE id = ? LIMIT 1",
-            (point_id,),
-        ).fetchone()
-        return row is not None
+        """Does the collection still hold this photo?
+
+        Qdrant is the source of truth for photo existence. The
+        `images` mirror used to answer this, which meant a stale
+        mirror could make a live photo look deleted (or a deleted
+        one look live).
+        """
+        return bool(self._live_point_ids([str(point_id)]))
 
     def _row_from_point(self, point: dict[str, Any]) -> dict[str, Any]:
         payload = point.get("payload") or {}
@@ -1794,202 +1463,6 @@ class IndexDB:
             "indexed_at": payload.get("indexed_at"),
             "blurhash": str(payload.get("blurhash") or ""),
         }
-
-    def upsert_records(self, points: Any) -> int:
-        """Round‑21: insert or replace rows in the local SQLite cache.
-
-        Used by the SyncManager after moving points from
-        `images_pending` → `images` in qdrant. Without this, the
-        frontend endpoints (`/api/random`, `/api/photo/{id}/raw`,
-        etc.) only see the rows from the previous full rebuild —
-        newly indexed photos never reach the random deck or the
-        thumbnail URL resolver.
-
-        Upsert is keyed on `id`. Existing rows are replaced; new rows
-        are inserted. `indexed_at` defaults to the current timestamp
-        if missing from the payload.
-
-        Returns the number of rows written. Best‑effort: if any
-        row fails, the batch is rolled back and the count is 0.
-        """
-        rows = []
-        now = datetime.now(timezone.utc).isoformat()
-        for p in points:
-            try:
-                payload = p.payload if hasattr(p, "payload") else (p.get("payload") or {})
-                point_id = str(
-                    getattr(p, "id", None) if hasattr(p, "id")
-                    else (p.get("id") or payload.get("id") or "")
-                )
-                path = str(payload.get("path") or "")
-                if not point_id or not path:
-                    continue
-                rows.append({
-                    "id": point_id,
-                    "path": path,
-                    "shard": str(payload.get("shard") or ""),
-                    "collection": str(payload.get("collection") or ""),
-                    "mtime": _optional_int(payload.get("mtime")),
-                    "size": _optional_int(payload.get("size")),
-                    "indexed_at": payload.get("indexed_at") or now,
-                    "blurhash": str(payload.get("blurhash") or ""),
-                    # Round‑30: photo-page dimensions. None when the
-                    # source image couldn't be decoded.
-                    "width": _optional_int(payload.get("width")),
-                    "height": _optional_int(payload.get("height")),
-                })
-            except (KeyError, TypeError, ValueError):
-                # Payload schema drift or malformed point from an
-                # older index version. Skip this point rather than
-                # crash the whole hydrate; the rest of the batch is
-                # still useful.
-                continue
-        if not rows:
-            return 0
-        with self._lock:
-            try:
-                self._conn.executemany(
-                    """
-                    INSERT INTO images (id, path, shard, collection, mtime, size, indexed_at, blurhash, width, height)
-                    VALUES (:id, :path, :shard, :collection, :mtime, :size, :indexed_at, :blurhash, :width, :height)
-                    ON CONFLICT(id) DO UPDATE SET
-                        path=excluded.path,
-                        shard=excluded.shard,
-                        collection=excluded.collection,
-                        mtime=excluded.mtime,
-                        size=excluded.size,
-                        indexed_at=excluded.indexed_at,
-                        blurhash=excluded.blurhash,
-                        width=excluded.width,
-                        height=excluded.height
-                    """,
-                    rows,
-                )
-                self._conn.commit()
-            except Exception:
-                self._conn.rollback()
-                logger.exception("IndexDB.upsert_records failed")
-                return 0
-        return len(rows)
-
-    def pick_random_rows(
-        self, n: int, collections: list[str] | None = None
-    ) -> list[dict[str, Any]]:
-        """Sample N rows from the cache, optionally filtered by collection.
-
-        Returns a list of row dicts (id, path, shard, collection, mtime,
-        size, indexed_at, is_favorite, favorited_at, width, height) —
-        everything the random page needs to render without going back
-        to Qdrant.
-
-        Implementation: random rowids in [MIN(rowid), MAX(rowid)] plus
-        WHERE rowid IN (...) + ORDER BY id + LIMIT n. Each rowid
-        lookup is an O(log N) index seek, so the whole sample is O(n)
-        instead of `ORDER BY RANDOM()`'s O(N log N) full-table sort.
-        Some random rowids won't match the collection filter (over-
-        fetch handles that), so the returned set is approximately
-        uniform but biased toward collections with denser rowids.
-        """
-        if n <= 0:
-            return []
-        collections = [c for c in (collections or []) if c]
-        select_cols = (
-            "i.id, i.path, i.shard, i.collection, i.mtime, i.size, "
-            "i.indexed_at, i.width, i.height, i.blurhash, "
-            "(f.id IS NOT NULL) AS is_favorite, f.favorited_at, "
-            "(d.id IS NOT NULL) AS is_disliked"
-        )
-        join_sql = (
-            "FROM images i "
-            "LEFT JOIN favorites f ON i.id = f.id "
-            "LEFT JOIN dislikes d ON i.id = d.id"
-        )
-        with self._lock:
-            # Get the rowid range for the filtered set. With no filter
-            # this is the whole table.
-            if collections:
-                placeholders = ",".join("?" for _ in collections)
-                bounds = self._conn.execute(
-                    f"SELECT MIN(rowid), MAX(rowid) FROM images "  # noqa: S608
-                    f"WHERE collection IN ({placeholders})",
-                    collections,
-                ).fetchone()
-            else:
-                bounds = self._conn.execute(
-                    "SELECT MIN(rowid), MAX(rowid) FROM images"
-                ).fetchone()
-            min_rid, max_rid = bounds[0], bounds[1]
-            if min_rid is None or max_rid is None:
-                return []
-            # Pick n random rowids in [min_rid, max_rid]. Some won't
-            # exist (gaps from deletes) or won't match the collection
-            # filter, so over-fetch significantly to amortise that.
-            # With a 1.85M-row prod collection that has rowid gaps,
-            # `max(n * 3, n + 8)` under-fetches ~5% of the time
-            # (returns 19 of 20). Bumped to `n * 10` with a +50 floor
-            # to handle small n, plus a 3-attempt retry that picks
-            # another `n * 5` rowids each pass. Total worst-case
-            # budget is `n * 25` picks — still O(n log N) for the
-            # rowid lookups, still much cheaper than ORDER BY RANDOM().
-            import random
-            results: list[dict[str, Any]] = []
-            seen_ids: set[str] = set()
-            attempts = 0
-            while len(results) < n and attempts < 3:
-                attempts += 1
-                target_count = max(n * 10, n + 50) if attempts == 1 else n * 5
-                picked = {
-                    random.randint(min_rid, max_rid) for _ in range(target_count)  # noqa: S311
-                }
-                if not picked:
-                    continue
-                rid_placeholders = ",".join("?" for _ in picked)
-                where_parts = [f"i.rowid IN ({rid_placeholders})"]
-                params: list[Any] = [*picked]
-                if collections:
-                    coll_placeholders = ",".join("?" for _ in collections)
-                    where_parts.append(f"i.collection IN ({coll_placeholders})")
-                    params.extend(collections)
-                # Over-fetch at SQL level by 10x to give the caller
-                # buffer for _random_rows_to_results' lazy-liveness
-                # filter. With prod's lazy-liveness cache mis-categorising
-                # some alive files as dead (NAS mounts sometimes report
-                # non-existent for reachable paths), the effective dead
-                # rate on first-call is much higher than the underlying
-                # true rate — empirical testing on the prod collection
-                # showed ~5-10% of fetched rows being dropped post-filter
-                # even with 3x over-fetch. 10x is the buffer that
-                # actually saturates at 20/20 for the 5-column grid.
-                #
-                # NO ORDER BY: the random rowid selection already gives
-                # us randomness. ORDER BY i.id would sort the sample by
-                # ID, which means the lexicographically smallest IDs
-                # (which are tiny in number and thus always in any
-                # large random sample) always end up at the front of
-                # the result set. The frontend dedupes against what's
-                # on screen, so a stable prefix of IDs means the same
-                # photos keep getting filtered out, and the scroll
-                # stops after a few batches instead of exploring the
-                # full library.
-                sql = f"""
-                    SELECT {select_cols}
-                    {join_sql}
-                    WHERE {' AND '.join(where_parts)}
-                    LIMIT ?
-                """
-                params.append(int(n) * 10)
-                rows = self._conn.execute(sql, params).fetchall()
-                for row in rows:
-                    row_dict = dict(row)
-                    row_id = row_dict["id"]
-                    if row_id in seen_ids:
-                        continue
-                    seen_ids.add(row_id)
-                    results.append(row_dict)
-                    if len(results) >= n:
-                        break
-        return results
-
 
 def _optional_int(value: Any) -> int | None:
     if value is None or value == "":
