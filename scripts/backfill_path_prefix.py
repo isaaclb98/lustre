@@ -102,6 +102,11 @@ def main(argv: list[str] | None = None) -> int:
     counters = {"scanned": 0, "written": 0, "already": 0, "failed": 0}
     started = time.time()
     limit = args.limit or total
+    # Points handed to the worker pool. The limit is applied to this
+    # counter, not to the completion counter: the workers run
+    # asynchronously, so a completion-based limit lets the scan race
+    # ahead of the writes.
+    submitted = 0
 
     def write_back(point: dict[str, Any]) -> None:
         payload = dict(point.get("payload") or {})
@@ -137,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
 
     offset: Any = None
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        while counters["scanned"] < limit:
+        while submitted < limit:
             body: dict[str, Any] = {
                 "limit": 2000,
                 "with_payload": True,
@@ -150,6 +155,9 @@ def main(argv: list[str] | None = None) -> int:
             if not points:
                 break
             for point in points:
+                if submitted >= limit:
+                    break
+                submitted += 1
                 pool.submit(write_back, point)
 
             offset = page.get("next_page_offset")
@@ -176,22 +184,32 @@ def main(argv: list[str] | None = None) -> int:
     print("\nwaiting for the payload to be applied...", flush=True)
     time.sleep(5)
     print("creating the prefix text index...", flush=True)
-    _request(
-        f"{base}/index?wait=true",
-        {
-            "field_name": TARGET_FIELD,
-            "field_schema": {
-                "type": "text",
-                "tokenizer": "prefix",
-                "min_token_len": 1,
-                "lowercase": True,
-                "ascii_folding": True,
-                "phrase_matching": False,
-                "on_disk": True,
+    try:
+        _request(
+            f"{base}/index?wait=true",
+            {
+                "field_name": TARGET_FIELD,
+                "field_schema": {
+                    "type": "text",
+                    "tokenizer": "prefix",
+                    "min_token_len": 1,
+                    "lowercase": True,
+                    "ascii_folding": True,
+                    "phrase_matching": False,
+                    "on_disk": True,
+                },
             },
-        },
-        method="PUT",
-    )
+            method="PUT",
+        )
+    except urllib.error.HTTPError as e:
+        # An index with this exact schema already exists — that is the
+        # desired end state, so this is not a failure. A DIFFERENT
+        # schema is: the index has to be rebuilt, which
+        # `scripts/build_text_indexes.py` does.
+        if e.code == 400:
+            print("  the prefix text index already exists — left as it is")
+        else:
+            raise
     print("prefix text index ready", flush=True)
     return 0
 
