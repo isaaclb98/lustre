@@ -1386,6 +1386,12 @@ class IndexDB:
         photo the collection no longer holds are dropped. There is no
         derived cache to rebuild — the corpus lives in Qdrant and is
         always current there.
+
+        This is the single entry point for the periodic work, so the
+        timestamp the status endpoint reports is the timestamp of the
+        last real run rather than a separate bookkeeping value.
+
+        Returns True when the purge ran, False when it was not due.
         """
         if time.time() - self._last_refresh <= self.refresh_interval_seconds:
             return False
