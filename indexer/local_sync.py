@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import signal
-import sqlite3
 import sys
 import threading
 import time
@@ -150,72 +149,6 @@ def make_client(args):
     if args.qdrant_in_memory:
         return QdrantClient(location=":memory:")
     return QdrantClient(**_qdrant_client_kwargs(url=args.qdrant_url, api_key=args.qdrant_api_key, timeout=30))
-
-
-def open_search_images_db():
-    """Open the search-side `images.db` for write.
-
-    The indexer subprocess and the search app share the same SQLite
-    file (default `/app/data/images.db` inside the container,
-    overridden via the INDEX_DB_PATH env var the search app uses).
-
-    Round-35: the indexer writes one row per upserted point so the
-    search-side browse cache stays in sync with Qdrant during
-    indexing. The search app enables WAL mode (search/index_db.py)
-    which allows this write to happen concurrently with reads.
-
-    Returns None if INDEX_DB_PATH is unset / unresolvable — the
-    indexer then runs in Qdrant-only mode (used by tests and
-    standalone callers that don't share a search app).
-    """
-    # Mirror search/config.py's fallback logic so the indexer
-    # subprocess opens the same file the search app opens when
-    # INDEX_DB_PATH isn't explicitly set in the compose env. The
-    # fallback is `./data/images.db` (relative) — inside the
-    # container the cwd is /app, so this resolves to /app/data/.
-    db_path = os.environ.get("INDEX_DB_PATH") or "./data/images.db"
-    if db_path == ":memory:":
-        return None
-    p = Path(db_path)
-    if not p.parent.exists():
-        # The search app normally creates the parent dir on first
-        # boot. If the indexer is started before the app has ever
-        # run (very unusual), bail out and let the search app's
-        # own init handle it. The next /api/cache/refresh picks up
-        # the freshly-indexed points.
-        logger.warning(
-            "INDEX_DB_PATH=%s parent does not exist yet; skipping SQLite writes",
-            db_path,
-        )
-        return None
-    try:
-        conn = sqlite3.connect(str(p), check_same_thread=False)
-        # Ensure the schema exists. The search app's _init_schema
-        # creates the `images` table on first connect, but if this
-        # subprocess is the very first writer (e.g. fresh
-        # container, search app hasn't started yet), we need the
-        # table to exist before our INSERTs run.
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS images (
-              id            TEXT PRIMARY KEY,
-              path          TEXT NOT NULL,
-              shard         TEXT DEFAULT '',
-              collection    TEXT DEFAULT '',
-              mtime         INTEGER,
-              size          INTEGER,
-              indexed_at    TEXT,
-              width         INTEGER,
-              height         INTEGER,
-              blurhash       TEXT DEFAULT ''
-            );
-            """
-        )
-        conn.commit()
-        return conn
-    except sqlite3.DatabaseError as exc:
-        logger.warning("could not open images.db at %s: %s", db_path, exc)
-        return None
 
 
 def _active_variant() -> str | None:
@@ -421,25 +354,12 @@ def main(argv=None):
     client = make_client(args)
     # Round-35: search-side images.db mirror. None when dry-run or
     # when INDEX_DB_PATH isn't set (tests, standalone indexer runs).
-    sqlite_conn = None
     if not args.dry_run:
         # Resolve the collection's vector dim from the chosen model so a
         # non-default --model (e.g. ViT-L-16-SigLIP2-256) gets a
         # 1024-dim collection instead of upsert.ensure_collection's
         # hardcoded 1536 (the gopt default).
         model_dim = _registry_get(args.model).dim
-
-        # Round-35: open the search-side images.db so every upsert
-        # also writes a row to the search-side browse cache. None if
-        # INDEX_DB_PATH isn't set or its parent doesn't exist — the
-        # indexer then runs in Qdrant-only mode and the search app
-        # catches up via its periodic /api/cache/refresh.
-        sqlite_conn = open_search_images_db()
-        if sqlite_conn is not None:
-            logger.info(
-                "writing search-side images cache to %s",
-                os.environ.get("INDEX_DB_PATH"),
-            )
 
         if args.rebuild:
             # Wipe-and-rebuild: drop the collection, then recreate via
@@ -450,14 +370,6 @@ def main(argv=None):
                 logger.info("rebuild: deleted existing collection %r", args.qdrant_collection)
             except Exception as exc:  # noqa: BLE001 — first run, collection may not exist
                 logger.info("rebuild: no existing collection to delete (%s)", exc)
-
-            # Round-35: also wipe the search-side cache on rebuild so
-            # it doesn't accumulate orphans. The search app's
-            # `init_from_qdrant` does the same on /api/cache/refresh
-            # force=True, but by then we've already written new rows.
-            if sqlite_conn is not None:
-                with sqlite_conn:
-                    sqlite_conn.execute("DELETE FROM images")
 
         upsert.ensure_collection(client, args.qdrant_collection, dim=model_dim)
         upsert.ensure_payload_index(client, args.qdrant_collection, "collection", "keyword")
@@ -541,7 +453,6 @@ def main(argv=None):
             client, args.qdrant_collection,
             source_dirs=args.source,
             source_names=source_names,
-            sqlite_conn=sqlite_conn,  # round-35: mirror to images.db
         )
         logger.info("prune removed %d point(s)", removed)
 
@@ -929,7 +840,6 @@ def main(argv=None):
                             args.qdrant_collection,
                             [(pid, v, pl) for pid, v, pl in items],
                             wait=False,
-                            sqlite_conn=sqlite_conn,  # round-35: mirror to images.db
                         ),
                         max_attempts=3,
                         base_delay_s=2.0,
@@ -1075,8 +985,6 @@ def main(argv=None):
         "duration_s": dt,
     })
     # Round-35: close the search-side images.db mirror.
-    if sqlite_conn is not None:
-        sqlite_conn.close()
     return 0
 
 

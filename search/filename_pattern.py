@@ -12,7 +12,8 @@ backends consume them:
 
 * Qdrant's native text index (`MatchText` / `MatchPhrase`) — the
   primary implementation.
-* SQLite FTS5 (`images_fts`) — kept as a fallback and as the oracle
+* SQLite FTS5 (`images_fts`) — the pre-migration oracle; the parity
+  harness in scripts/parity_harness.py compared against it
   the two are diffed against.
 
 Both must agree on what a valid pattern *is*; if they disagreed, the

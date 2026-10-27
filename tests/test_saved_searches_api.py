@@ -27,8 +27,7 @@ from search.config import Config
 
 # A single Qdrant collection with one fake photo. The saved-searches
 # endpoints don't read Qdrant, but the fixture wires one up so the
-# app's startup path runs cleanly (IndexDB.init_from_qdrant is called
-# on first request).
+# app's startup path runs cleanly.
 CAT_ID = "11111111-1111-1111-1111-111111111111"
 
 

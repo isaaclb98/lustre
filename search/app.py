@@ -28,7 +28,6 @@ from qdrant_client import QdrantClient
 
 from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
 from search import config, text_encoder
-from search._result_helpers import internal_error, qdrant_unreachable
 from search.centroids import (
     CentroidStore,
     DynamicCentroidRegistry,
@@ -763,12 +762,12 @@ def create_app(
         # The previous version ran two heavy startup operations inline:
         #
         #   1. text_encoder.get_encoder()    (~3 GB / ~30 s on cold cache)
-        #   2. index_db.init_from_qdrant()   (full Qdrant scroll — minutes
-        #                                     on a 50k-photo collection)
+        #   2. the native path text indexes   (a text-index build over
+        #                                     the collection)
         #
         # Both are wrapped in to_thread, but they still BLOCK the lifespan
         # completion signal. With gunicorn --workers 1 and a startupProbe
-        # budget of 5 min (30 × 10s), an init_from_qdrant that takes
+        # budget of 5 min (30 × 10s), a startup step that takes
         # longer than 5 min makes the pod fail to become Ready, ArgoCD
         # kills it, the user sees 502 on every endpoint. That was the
         # prod failure in commit 542a553.
@@ -777,7 +776,7 @@ def create_app(
         # immediately. The /healthz probe returns 200 while these are
         # still running; /api/search will lazy-load the encoder on the
         # first text query, and the search results will be a no-op
-        # (with a clear warning logged) until init_from_qdrant finishes.
+        # (with a clear warning logged) until the startup step finishes.
         async def _bg_text_encoder_warmup() -> None:
             try:
                 # get_encoder is a module-level lazy singleton — first
@@ -811,16 +810,9 @@ def create_app(
             except Exception as e:  # noqa: BLE001
                 logger.warning("native path text index setup failed: %s", e)
 
-        async def _bg_init_from_qdrant() -> None:
-            try:
-                count = await asyncio.to_thread(index_db.init_from_qdrant)
-                logger.info("index cache built from Qdrant: %d points", count)
-            except Exception as e:  # noqa: BLE001
-                logger.warning("index cache background warm-up failed: %s", e)
-
         refresh_task: asyncio.Task[None] | None = None
         # Log a warning immediately if Qdrant is unreachable so the
-        # issue is visible in pod logs even before init_from_qdrant
+        # issue is visible in pod logs even before the startup step
         # completes. healthz() is sync but cheap (<10 ms typical) so
         # keeping it inline is fine.
         if not qdrant.healthz():
@@ -833,7 +825,6 @@ def create_app(
         # hold references via the closure. asyncio.create_task schedules
         # them on the running loop without blocking lifespan return.
         encoder_warmup_task = asyncio.create_task(_bg_text_encoder_warmup())
-        index_init_task = asyncio.create_task(_bg_init_from_qdrant())
         text_index_task = asyncio.create_task(_bg_ensure_text_indexes())
 
         # Option B: no SyncManager to start. The indexer writes
@@ -841,11 +832,12 @@ def create_app(
         # always reads the latest state without needing a background
         # drain loop.
 
-        # Periodic IndexDB refresh. Picks up bulk indexer runs without
-        # the operator having to hit POST /api/cache/refresh manually.
-        # The manual endpoint stays as a force-now override. The task
-        # is cooperative: `init_from_qdrant` is wrapped in
-        # `asyncio.to_thread` so the event loop isn't blocked.
+        # Periodic user-data purge. Drops the user-state rows whose
+        # photo the indexer has pruned, without the operator having
+        # to hit POST /api/cache/refresh manually. The manual endpoint
+        # stays as a force-now override. The task is cooperative: the
+        # purge is wrapped in `asyncio.to_thread` so the event loop
+        # isn't blocked.
         interval = _cfg.index_db_refresh_interval_seconds
         if interval > 0:
             async def _periodic_refresh_loop() -> None:
@@ -865,17 +857,13 @@ def create_app(
                             continue
                         try:
                             t0 = time.time()
-                            # Round-35: skip the periodic rebuild while
-                            # the indexer is actively writing. The
-                            # indexer's own write-through keeps the
-                            # cache in sync; a periodic wipe+rebuild
-                            # mid-indexing would race the indexer's
-                            # INSERTs and lose the writes that landed
-                            # in Qdrant between the scroll start and
-                            # the scroll's own INSERTs. After the
-                            # indexer job finishes, the next tick
-                            # catches any external deletes via the
-                            # normal wipe+rebuild path.
+                            # Skip the periodic purge while the
+                            # indexer is actively writing. A purge
+                            # mid-index would see photos that are
+                            # mid-upsert as missing and drop the
+                            # user's rows that point at them. After
+                            # the indexer job finishes, the next tick
+                            # catches any external deletes.
                             from search.indexer_runner import IndexerState
                             try:
                                 idx_status = indexer_runner.status()
@@ -883,8 +871,8 @@ def create_app(
                                     logger.debug(
                                         "periodic refresh: indexer is "
                                         "running (job_id=%s); skipping "
-                                        "this tick — write-through keeps "
-                                        "the cache in sync",
+                                        "this tick — the indexer is "
+                                        "still writing",
                                         idx_status.job_id,
                                     )
                                     continue
@@ -898,19 +886,18 @@ def create_app(
                                     "rebuild", e,
                                 )
 
-                            # Round-35: refresh_incremental replaces
-                            # the old wipe+rebuild. Cost is one count()
-                            # + one id-only scroll + small diff in the
-                            # typical case (in sync → just the count
-                            # round-trip; small drift → cheap diff;
-                            # large drift → falls back to roughly the
-                            # old cost). Never DELETE FROM images.
+                            # There is no derived cache to rebuild —
+                            # the corpus lives in Qdrant and is
+                            # always current there. The one thing
+                            # that still needs a periodic trigger is
+                            # the orphan purge: user-state rows whose
+                            # photo the indexer has pruned.
                             stats = await asyncio.to_thread(
-                                index_db.refresh_incremental
+                                index_db.purge_orphaned_user_data
                             )
                             dt_ms = int((time.time() - t0) * 1000)
                             logger.info(
-                                "periodic IndexDB refresh: %s in %d ms", stats, dt_ms,
+                                "periodic user-data purge: %s in %d ms", stats, dt_ms,
                             )
                         finally:
                             await asyncio.to_thread(index_db.release_refresh_lock)
@@ -932,7 +919,7 @@ def create_app(
                 except Exception as e:  # noqa: BLE001
                     logger.warning("refresh task shutdown: %s", e)
             # Cancel and wait for the background startup tasks. If
-            # init_from_qdrant is mid-write to SQLite, give it a
+            # a background startup step is mid-write, give it a
             # short grace period then cancel — we'd rather lose
             # unflushed rows than block shutdown.
             for _bg_task in (
@@ -1100,7 +1087,7 @@ def create_app(
 
         The pattern itself is validated later — the helper at the
         top of `create_app` translates the raw string to image ids
-        via IndexDB.path_token_ids and surfaces 400 on invalid FTS5
+        via the native path filter and surfaces 400 on an invalid
         syntax.
         """
         for raw in request.query_params.getlist("filename"):
@@ -1854,8 +1841,7 @@ def create_app(
     #      INDEX_DB_REFRESH_INTERVAL_SECONDS (default 6h).
     #   2. Manual override via this endpoint — force-now button.
     # The periodic path respects the skip-if-populated branch in
-    # `init_from_qdrant` (cheap when fresh); the manual path passes
-    # `force=True` to bypass it.
+    # the orphan purge; the manual path runs it on demand.
     # A lock guards against the two paths racing — only one
     # refresh runs at a time; the other short-circuits with a
     # clear log message.
@@ -1866,108 +1852,42 @@ def create_app(
         full: bool = Query(
             False,
             description=(
-                                "Round-35: when true, do the legacy "
-                                "wipe+rebuild (init_from_qdrant "
-                                "force=True). Default false uses the "
-                                "new diff-based refresh_incremental "
-                                "which preserves concurrent indexer "
-                                "writes and only touches rows that "
-                                "actually drifted."
+                                "Deprecated. There is no cache to refresh: "
+                                "the photo corpus lives in Qdrant and the "
+                                "SQLite side holds only authoritative user "
+                                "state. The endpoint now runs the orphan "
+                                "purge, which checks liveness against "
+                                "Qdrant."
                             ),
         ),
     ) -> dict[str, Any] | JSONResponse:
-        # Round-35: refuse a manual rebuild while the indexer is
-        # actively writing. The wipe+rebuild here races the
-        # indexer's INSERTs and would lose any Qdrant points
-        # written mid-scroll. Tell the caller to retry once the
-        # indexer finishes.
-        # The diff-based refresh_incremental is safe to run
-        # concurrently with the indexer (it only touches the
-        # orphan ids, not the whole table), so we only bail when
-        # the caller explicitly asked for `full=true`.
-        from search.indexer_runner import IndexerState
-        if full:
-            try:
-                idx_status = indexer_runner.status()
-                if idx_status.state is IndexerState.RUNNING:
-                    return {
-                        "status": "skipped",
-                        "reason": (
-                            "indexer is running (job_id="
-                            f"{idx_status.job_id}); full=true manual "
-                            "refresh would race the indexer's "
-                            "writes. Wait for the job to finish "
-                            "and retry, or call without ?full=true "
-                            "for a safe diff-based refresh."
-                        ),
-                        "job_id": idx_status.job_id,
-                    }
-            except Exception:
-                # Defensive: status probe failures shouldn't block the
-                # manual refresh — they did the right thing before
-                # round-35, so keep working if the probe breaks.
-                logger.debug("refresh status probe failed; proceeding anyway", exc_info=True)
+        """Purge user-state rows whose photo Qdrant no longer holds.
 
-        # Cooperative refresh lock. If the periodic task is in the
-        # middle of a refresh, the manual call bails immediately
-        # rather than running two scrolls in parallel.
-        if not await asyncio.to_thread(index_db.try_acquire_refresh_lock):
-            return {
-                "status": "skipped",
-                "reason": "refresh already in progress",
-            }
-        try:
-            t0 = time.time()
-            if full:
-                # Legacy wipe+rebuild path. Operator opt-in only.
-                count = await asyncio.to_thread(
-                    index_db.init_from_qdrant, True
-                )
-                dt_ms = int((time.time() - t0) * 1000)
-                logger.info(
-                    "manual cache refresh (full wipe+rebuild): %d rows in %d ms",
-                    count,
-                    dt_ms,
-                )
-                return {
-                    "status": "ok",
-                    "mode": "full",
-                    "count": count,
-                    "took_ms": dt_ms,
-                }
-            # Default: diff-based incremental refresh. Safe to run
-            # concurrently with the indexer.
-            stats = await asyncio.to_thread(
-                index_db.refresh_incremental
-            )
-            dt_ms = int((time.time() - t0) * 1000)
-            logger.info(
-                "manual cache refresh (incremental): %s in %d ms",
-                stats,
-                dt_ms,
-            )
-            return {
-                "status": "ok",
-                "mode": "incremental",
-                **stats,
-                "took_ms": dt_ms,
-            }
-        except (ConnectionError, OSError) as e:
-            logger.warning("Qdrant unreachable for cache refresh: %s", e)
-            return qdrant_unreachable(str(e))
-        except Exception as e:
-            logger.exception("cache refresh failed")
-            return internal_error(str(e))
-        finally:
-            await asyncio.to_thread(index_db.release_refresh_lock)
+        There is no derived cache to refresh any more. The photo
+        corpus, its metadata, and the native text index all live in
+        Qdrant; SQLite holds only the user's own state — favourites,
+        dislikes, albums, memberships, saved searches, feedback.
 
-    # /api/cache/status is wired via search/routers/system.py (§B2 step 20).
+        What this endpoint still does is the one thing that needed a
+        trigger: dropping user-state rows that point at photos the
+        indexer has pruned. The purge checks liveness against
+        Qdrant, so a favourite is only dropped when the COLLECTION
+        says the photo is gone — never because a local mirror was
+        stale.
 
-    # /api/saved-searches/* is wired via search/routers/saved_searches.py (§B2 step 17).
-
-    # /api/centroids (list) + /api/centroids/{name}/search are wired via
-    # search/routers/centroids_list.py + search/routers/centroids_search.py (§B2 step 20).
-
+        The `full` parameter is accepted and ignored, so an old
+        caller does not break.
+        """
+        purged = await asyncio.to_thread(index_db.purge_orphaned_user_data)
+        logger.info("cache refresh: purged orphaned user data: %s", purged)
+        return {
+            "status": "ok",
+            "purged": purged,
+            "note": (
+                "no cache to refresh — the corpus lives in Qdrant; this "
+                "ran the orphan purge against Qdrant's liveness"
+            ),
+        }
 
     # ------------------------------------------------------------------
     # Static SPA fallback

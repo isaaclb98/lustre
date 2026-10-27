@@ -115,15 +115,20 @@ class LazyIndexCache:
     async def refresh(self) -> int:
         """Block until a fresh hydrate completes.
 
-        Returns the number of rows in the cache after refresh.
-        Raises whatever `index_db.init_from_qdrant` raises.
+        Returns the number of photos the collection holds.
+
+        There is no derived cache to hydrate any more — the corpus
+        lives in Qdrant, so a "hydrate" is just the collection
+        becoming readable. The count comes from Qdrant, and a failure
+        to reach it propagates (the caller falls back to a live
+        query).
         """
         async with self._hydrate_lock:
             self._refresh_in_progress = True
             self._hydrate_started_at = time.time()
             try:
-                # Off-thread: init_from_qdrant is sync and CPU+IO bound.
-                count = await asyncio.to_thread(self._index_db.init_from_qdrant, True)
+                # Off-thread: the count call is a network round-trip.
+                count = await asyncio.to_thread(self._index_db.count_images)
             finally:
                 self._refresh_in_progress = False
                 self._hydrate_finished_at = time.time()

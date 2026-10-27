@@ -499,13 +499,13 @@ class Config:
     default_view: str = "grid"
     # FTS filter cardinality guard (see app.py:_resolve_filename_filter).
     filename_cardinality_guard: float = 0.5
-    # ----- Dual-store sync (Qdrant ↔ SQLite IndexDB) -----
-    # How often the search container re-runs `IndexDB.init_from_qdrant`
-    # in the background so the browse cache (SQLite) catches up with
-    # bulk indexer runs without an operator hitting
+    # ----- Periodic maintenance -----
+    # How often the search container runs the orphan purge in the
+    # background, dropping the user-state rows whose photo the
+    # indexer has pruned, without an operator hitting
     # POST /api/cache/refresh. Manual refresh still works as a
     # force-now override. Default 6h is a sweet spot: long enough to
-    # not waste Qdrant scroll bandwidth, short enough that /random
+    # not waste Qdrant round-trips, short enough that /random
     # and /albums are rarely more than 6h stale.
     index_db_refresh_interval_seconds: int = 21600
     # TTL for the lazy path-liveness cache (see `app.py:_is_path_alive`).

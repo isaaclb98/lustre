@@ -196,10 +196,15 @@ def build_random_router(
                         code="internal_error",
                     ).model_dump(),
                 )
-            # The rows come back in arbitrary order from the IN(...)
-            # query. Re-order them to match the deck order — that's
-            # the order the user is walking through.
-            by_id = {str(r["id"]): r for r in rows}
+            # The rows come back in arbitrary order from the lookup.
+            # Re-order them to match the deck order — that's the
+            # order the user is walking through.
+            #
+            # The deck holds Qdrant POINT ids; the row's `id` is the
+            # app-level photo id (the payload's own `id` field). The
+            # two are the same value in production, but the join
+            # uses `point_id` so it holds either way.
+            by_id = {str(r.get("point_id") or r["id"]): r for r in rows}
             rows = [by_id[i] for i in batch_ids if i in by_id]
 
         results = _random_rows_to_results(rows, web_ui_url=cfg.web_ui_url)

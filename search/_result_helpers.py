@@ -39,9 +39,8 @@ def parse_filename(request: Request) -> str:
     "if not raw: skip" check.
 
     The pattern itself is validated later — `resolve_filename_filter`
-    in `_indexed_helpers.py` translates the raw string to image
-    ids via `IndexDB.path_token_ids` and surfaces 400 on
-    invalid FTS5 syntax.
+    in `_indexed_helpers.py` turns the raw string into a native
+    Qdrant path filter and surfaces 400 on invalid syntax.
     """
     for raw in request.query_params.getlist("filename"):
         value = raw.strip()

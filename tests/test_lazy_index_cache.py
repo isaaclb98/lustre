@@ -24,19 +24,23 @@ from unittest.mock import MagicMock
 
 
 def _make_index_db(initial_count: int = 0) -> MagicMock:
-    """A stub IndexDB with a sync init_from_qdrant that just sets
-    the count. The LazyIndexCache only needs `init_from_qdrant`
-    and `get_by_id` for these tests."""
+    """A stub IndexDB. The LazyIndexCache only needs `count_images`
+    and `get_by_id` for these tests.
+
+    There is no derived cache to hydrate any more — the corpus lives
+    in Qdrant — so a "hydrate" is just the collection becoming
+    readable, and the count comes from Qdrant.
+    """
     db = MagicMock()
     db._rows = {}
     db._refresh_count = initial_count
 
-    def fake_init(force: bool = False) -> int:
+    def fake_count() -> int:
         db._refresh_count = 100
         db._rows = {f"id_{i}": {"id": f"id_{i}"} for i in range(100)}
         return 100
 
-    db.init_from_qdrant.side_effect = fake_init
+    db.count_images.side_effect = fake_count
 
     def fake_get_by_id(point_id: str):
         return db._rows.get(point_id)
@@ -55,8 +59,8 @@ def test_lazy_cache_startup_does_not_hydrate():
 
     cache = LazyIndexCache(db)
     assert not cache.is_hydrated
-    # init_from_qdrant is NOT called at construction time.
-    db.init_from_qdrant.assert_not_called()
+    # The count is NOT taken at construction time.
+    db.count_images.assert_not_called()
 
 
 def test_lazy_cache_first_read_triggers_hydrate():
@@ -132,9 +136,9 @@ def test_refresh_idempotent_when_already_hydrated():
 
     cache = LazyIndexCache(db)
     asyncio.run(cache.refresh())  # first hydrate
-    init_calls_before = db.init_from_qdrant.call_count
+    init_calls_before = db.count_images.call_count
     asyncio.run(cache.ensure_hydrated())  # no-op
-    init_calls_after = db.init_from_qdrant.call_count
+    init_calls_after = db.count_images.call_count
     assert init_calls_before == init_calls_after
 
 
@@ -161,7 +165,7 @@ def test_hydrate_failure_does_not_crash_event_loop():
     """A failed hydrate logs a warning but doesn't surface to the
     event loop's unhandled-exception handler."""
     db = MagicMock()
-    db.init_from_qdrant.side_effect = RuntimeError("Qdrant is down")
+    db.count_images.side_effect = RuntimeError("Qdrant is down")
     from search.lazy_index_cache import LazyIndexCache
 
     async def scenario():

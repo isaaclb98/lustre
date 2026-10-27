@@ -260,12 +260,9 @@ def fav_app(tmp_path):
     app.state.test_seed_ids = seed_ids
     app.state.qdrant_client = client
     app.state.qdrant_collection = cfg.qdrant_collection
-    # Eagerly init the cache from Qdrant so tests don't race with
-    # the lifespan handler. TestClient runs lifespan asynchronously;
-    # the init_from_qdrant call may not have finished by the time
-    # the first test request arrives.
-    import search.app as _app_mod
-    _app_mod._index_db.init_from_qdrant()
+    # There is no derived cache to warm up any more — the corpus
+    # lives in Qdrant and is always current there — so the app is
+    # ready as soon as it is constructed.
     return TestClient(app)
 
 

@@ -358,16 +358,11 @@ def test_surprise_composes_with_favorites_filter(app_with_qdrant_big):
         test_mode=True,
     )
     # Use the same IndexDB the app wired up so the favorite
-    # write hits the cache the search reads from.
+    # write hits the store the search reads from.
     db = app_with_qdrant_big.app.state.index_db
-    # Force-sync the cache before mark_favorite so the id
-    # exists. The lifespan starts init_from_qdrant as a
-    # background task that may not have finished by the time
-    # this test runs (especially under -n auto on CI), so a
-    # direct call with force=True deterministically rebuilds
-    # the cache from the 50 fixture points before we touch
-    # the favorites table.
-    db.init_from_qdrant(force=True)
+    # No cache to sync: mark_favorite checks the photo's existence
+    # against Qdrant directly, and the id below is a real point in
+    # the fixture collection.
     fav_id = "00000005-0000-0000-0000-000000000000"  # a real id in the fixture
     db.mark_favorite(fav_id)
     try:

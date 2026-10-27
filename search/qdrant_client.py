@@ -73,7 +73,7 @@ class QdrantSearch:
         query — no over-fetch, no Python post-filtering.
 
         `allowed_ids` is an optional whitelist of point ids, intended
-        for the filename/path filter (see IndexDB.path_token_ids).
+        for the filename/path filter (see search/path_filter.py).
         When non-empty, only points whose id is in the list are
         returned. Like `collections`, this is a server-side
         `HasIdCondition` filter — O(log N) per query, no
@@ -309,6 +309,83 @@ class QdrantSearch:
             )
             for p in points
         ]
+
+    def scroll_ids(self, collections: list[str] | None = None) -> list[SearchHit]:
+        """Every point id in the collection, optionally filtered by collection.
+
+        Used to build the /random session deck — a full permutation
+        of the corpus's ids. The ids are fetched with
+        `with_payload=False`, so only the ids cross the wire: on the
+        2.2M-point corpus a full id scroll is 2.9s, against the
+        23.9s a payload-carrying scroll takes.
+
+        The collection filter is applied SERVER-SIDE as a `MatchAny`
+        against the keyword index on `collection`, so the filtered
+        case transfers no payload and reads only the matching
+        points — measured 1.4s for one collection.
+
+        The result is in Qdrant's storage order; the caller shuffles
+        it if it needs a random permutation.
+        """
+        from qdrant_client.http import models as qmodels
+
+        must_conditions: list[Any] = []
+        if collections:
+            must_conditions.append(
+                qmodels.FieldCondition(
+                    key="collection",
+                    match=qmodels.MatchAny(any=list(collections)),
+                )
+            )
+        query_filter = (
+            qmodels.Filter(must=must_conditions) if must_conditions else None
+        )
+
+        ids: list[SearchHit] = []
+        offset: Any = None
+        while True:
+            # The client method calls the filter `scroll_filter`; the
+            # REST endpoint calls it `query_filter`. Using the wrong
+            # name raises "Unknown arguments" — the client validates
+            # its kwargs against the local and remote signatures.
+            response = self.client.scroll(
+                collection_name=self.collection,
+                limit=20000,
+                offset=offset,
+                scroll_filter=query_filter,
+                with_payload=False,
+                with_vectors=False,
+                timeout=self.timeout_ms // 1000,
+            )
+            points, next_offset = response
+            if not points:
+                break
+            ids.extend(
+                SearchHit(
+                    id=str(p.id),
+                    path=(getattr(p, "payload", None) or {}).get("path", ""),
+                    score=0.0,
+                    payload=None,
+                )
+                for p in points
+            )
+            # The remote client pages by point id and reports the
+            # last id it returned; the local client reports None once
+            # it has reached the end. A None offset with points
+            # returned means "that was everything" — otherwise the
+            # loop would re-fetch the same first page forever.
+            if next_offset is None:
+                break
+            if next_offset == offset:
+                # The offset did not advance — refuse to spin.
+                logger.warning(
+                    "scroll_ids: offset did not advance (%s) — stopping to "
+                    "avoid an infinite loop",
+                    next_offset,
+                )
+                break
+            offset = next_offset
+        return ids
 
     def count_points(self) -> int:
         """
