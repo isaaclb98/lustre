@@ -424,7 +424,13 @@ class QdrantSearch:
                 min_token_len=1,
                 lowercase=True,
                 ascii_folding=True,
-                phrase_matching=False,
+                # Phrase matching ON is what preserves FTS5's
+                # adjacency for a multi-token prefix: `twice_sana*`
+                # means "the token `twice`, immediately followed by
+                # a token starting with `sana`". With it off, the
+                # prefix index loses the phrase and the pattern
+                # matches 8.7x more paths than FTS5.
+                phrase_matching=True,
                 on_disk=True,
             ),
         )

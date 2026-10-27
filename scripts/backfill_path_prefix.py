@@ -195,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
                     "min_token_len": 1,
                     "lowercase": True,
                     "ascii_folding": True,
-                    "phrase_matching": False,
+                    "phrase_matching": True,
                     "on_disk": True,
                 },
             },

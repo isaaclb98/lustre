@@ -56,13 +56,18 @@ WORD_PHRASE = {
     "on_disk": True,
 }
 
+# The prefix index serves the PREFIX pattern shape. Phrase matching
+# is ON: FTS5's `twice_sana*` means "the token `twice`, immediately
+# followed by a token starting with `sana`", and only a phrase match
+# preserves that adjacency. With it off, `twice_sana*` matched 8.7x
+# more paths than FTS5 and returned matches where FTS5 returned none.
 PREFIX = {
     "type": "text",
     "tokenizer": "prefix",
     "min_token_len": 1,
     "lowercase": True,
     "ascii_folding": True,
-    "phrase_matching": False,
+    "phrase_matching": True,
     "on_disk": True,
 }
 

@@ -58,6 +58,19 @@ _FTS5_OPERATORS = frozenset("\"':()+-^,")
 # backend supports.
 _GLOB_RE = re.compile(r"[*?\[\]]")
 
+# The path tokens inside a pattern body. FTS5's `unicode61` treats
+# `_` as a separator in the indexed text, so `img_2024` is the two
+# tokens `img` and `2024` — and a query for it is a PHRASE of those
+# two tokens, so they must be adjacent in the path.
+#
+# This matters for the prefix form. FTS5's `img_2024*` means "the
+# token `img`, immediately followed by a token starting with
+# `2024`". The native prefix index alone cannot express that (it
+# ANDs the prefixes with no adjacency), so the leading tokens are
+# matched exactly-and-adjacently on the word index and only the
+# trailing one is matched as a prefix.
+_BODY_TOKEN_RE = re.compile(r"[0-9A-Za-zÀ-ɏ]+")
+
 
 @dataclass(frozen=True)
 class FilenamePattern:
@@ -75,6 +88,34 @@ class FilenamePattern:
     def fts5_query(self) -> str:
         """The FTS5 `MATCH` expression for this pattern."""
         return f"{self.body}*" if self.prefix else self.body
+
+    @property
+    def tokens(self) -> list[str]:
+        """The path tokens inside `body`.
+
+        `_` separates tokens in FTS5's tokenizer, so `img_2024` is
+        two tokens. A body with one token is a single-term pattern;
+        a body with several is a phrase.
+        """
+        return _BODY_TOKEN_RE.findall(self.body)
+
+    @property
+    def phrase_body(self) -> str:
+        """The body as a phrase — its tokens separated by spaces.
+
+        Qdrant's `MatchPhrase` takes the phrase as a single string
+        and tokenises it with the index's tokenizer. The `word`
+        tokenizer splits on `_` as well as on whitespace, but the
+        `prefix` tokenizer does NOT — it treats `img_2024` as one
+        token. So the tokens have to be separated explicitly for the
+        prefix index to see them as a phrase.
+
+        `twice_sana` → `twice sana`, which the prefix tokenizer
+        reads as a two-token phrase: the token `twice` immediately
+        followed by a token starting with `sana`. That is exactly
+        FTS5's `twice_sana*`.
+        """
+        return " ".join(self.tokens)
 
     def __str__(self) -> str:  # pragma: no cover - debugging aid
         return f"{self.body}*" if self.prefix else self.body

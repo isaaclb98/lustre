@@ -129,22 +129,57 @@ def test_exact_pattern_builds_a_phrase_match_on_path():
     assert not hasattr(condition.match, "text")
 
 
-def test_prefix_pattern_builds_a_text_match_on_path_prefix():
+def test_prefix_pattern_builds_a_phrase_match_on_path_prefix():
+    """The prefix shape needs a PHRASE match, not a plain text match.
+
+    FTS5's `twice_sana*` means "the token `twice`, immediately
+    followed by a token starting with `sana`". A plain `MatchText`
+    over the prefix index is an AND over the prefixes with no
+    adjacency — it matched 8.7x more paths than FTS5 and returned
+    matches where FTS5 returned none.
+    """
     from search.filename_pattern import parse_filename_pattern
     from search.path_filter import PATH_PREFIX_FIELD, build_path_filter
 
     condition = build_path_filter(parse_filename_pattern("chaewon*"))
     assert condition.key == PATH_PREFIX_FIELD
-    assert condition.match.text == "chaewon"
+    assert condition.match.phrase == "chaewon"
+
+
+def test_multi_token_bodies_are_phrases_in_both_shapes():
+    """`img_2024` is two tokens — the phrase form keeps them adjacent."""
+    from search.filename_pattern import parse_filename_pattern
+    from search.path_filter import build_path_filter
+
+    exact = build_path_filter(parse_filename_pattern("img_2024"))
+    assert exact.match.phrase == "img 2024"
+    prefix = build_path_filter(parse_filename_pattern("img_2024*"))
+    assert prefix.match.phrase == "img 2024"
 
 
 def test_the_two_pattern_shapes_use_different_fields():
+    """Each shape goes to the index that reproduces FTS5 for it.
+
+    The `word` tokenizer is exact but cannot express a prefix; the
+    `prefix` tokenizer can express a prefix but is too loose for an
+    exact match (its `MatchPhrase('exact')` also matches
+    `exactly.jpg`, which FTS5 does not).
+    """
     from search.filename_pattern import parse_filename_pattern
     from search.path_filter import build_path_filter
 
     exact = build_path_filter(parse_filename_pattern("chaewon"))
     prefix = build_path_filter(parse_filename_pattern("chaewon*"))
     assert exact.key != prefix.key
+
+
+def test_phrase_body_separates_the_tokens():
+    from search.filename_pattern import parse_filename_pattern
+
+    assert parse_filename_pattern("twice_sana").phrase_body == "twice sana"
+    assert parse_filename_pattern("twice_sana*").phrase_body == "twice sana"
+    assert parse_filename_pattern("chaewon").phrase_body == "chaewon"
+    assert parse_filename_pattern("img_2024").tokens == ["img", "2024"]
 
 
 # ============================================================
