@@ -84,6 +84,7 @@ class DriftingQdrant:
         collections=None,
         allowed_ids=None,
         exclude_ids=None,
+        path_filter=None,
     ):
         excluded = set(exclude_ids or ())
         self.search_calls.append((limit, offset, len(excluded)))

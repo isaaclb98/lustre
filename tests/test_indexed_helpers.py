@@ -122,76 +122,91 @@ async def test_results_from_hits_score_str_is_3dp():
 
 # --- resolve_filename_filter ---
 
+def _fake_qdrant(total: int = 1000, matches: int = 0):
+    """A Qdrant stand-in for the native filename filter.
+
+    The filter is evaluated server-side against the native text index,
+    so the resolver asks Qdrant for a count rather than asking the
+    SQLite FTS5 index for a list of ids.
+    """
+    qdrant = MagicMock()
+    qdrant.count_points.return_value = total
+    qdrant.count_filtered.return_value = matches
+    return qdrant
+
+
 @pytest.mark.asyncio
 async def test_resolve_filename_filter_empty_pattern_returns_none_none():
     from search._indexed_helpers import resolve_filename_filter
-    db = MagicMock()
+    qdrant = _fake_qdrant()
     cfg = _fake_cfg()
-    assert await resolve_filename_filter(db, cfg=cfg, pattern="") == (None, None)
-    assert await resolve_filename_filter(db, cfg=cfg, pattern="   ") == (None, None)
-    db.path_token_ids.assert_not_called()
+    assert await resolve_filename_filter(qdrant, cfg=cfg, pattern="") == (None, None)
+    assert await resolve_filename_filter(qdrant, cfg=cfg, pattern="   ") == (None, None)
+    qdrant.count_filtered.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_resolve_filename_filter_zero_matches_returns_empty_list():
+async def test_resolve_filename_filter_zero_matches_keeps_the_filter():
+    """A pattern that matches nothing is a *narrow* pattern.
+
+    The filter must still be applied — it is what makes the search
+    return no results. The old id-list path needed a separate
+    zero-match branch because an empty `HasIdCondition` is not the
+    same as no filter; the native filter has no such distinction.
+    """
     from search._indexed_helpers import resolve_filename_filter
-    db = MagicMock()
-    db.path_token_ids.return_value = []
+    qdrant = _fake_qdrant(total=1000, matches=0)
     cfg = _fake_cfg()
-    allowed, err = await resolve_filename_filter(db, cfg=cfg, pattern="xyz")
-    assert allowed == []
+    cfg.filename_cardinality_guard = 0.5
+    condition, err = await resolve_filename_filter(qdrant, cfg=cfg, pattern="xyz")
+    assert condition is not None
     assert err is None
 
 
 @pytest.mark.asyncio
 async def test_resolve_filename_filter_high_coverage_skips_filter():
-    """Cardinality guard: pattern matches >50% of cache → no filter."""
+    """Cardinality guard: pattern matches >50% of the corpus → no filter."""
     from search._indexed_helpers import resolve_filename_filter
-    db = MagicMock()
-    db.path_token_ids.return_value = ["a", "b", "c", "d", "e", "f"]
-    db.count_images.return_value = 10
+    qdrant = _fake_qdrant(total=10, matches=6)
     cfg = _fake_cfg()
     cfg.filename_cardinality_guard = 0.5
-    allowed, err = await resolve_filename_filter(db, cfg=cfg, pattern="common")
-    assert allowed is None
+    condition, err = await resolve_filename_filter(qdrant, cfg=cfg, pattern="common")
+    assert condition is None
     assert err is None
 
 
 @pytest.mark.asyncio
-async def test_resolve_filename_filter_low_coverage_returns_ids():
+async def test_resolve_filename_filter_low_coverage_returns_a_condition():
     from search._indexed_helpers import resolve_filename_filter
-    db = MagicMock()
-    db.path_token_ids.return_value = ["a", "b"]
-    db.count_images.return_value = 1000
+    qdrant = _fake_qdrant(total=1000, matches=2)
     cfg = _fake_cfg()
     cfg.filename_cardinality_guard = 0.5
-    allowed, err = await resolve_filename_filter(db, cfg=cfg, pattern="specific")
-    assert allowed == ["a", "b"]
+    condition, err = await resolve_filename_filter(qdrant, cfg=cfg, pattern="specific")
+    assert condition is not None
     assert err is None
 
 
 @pytest.mark.asyncio
 async def test_resolve_filename_filter_invalid_pattern_returns_bad_request():
     from search._indexed_helpers import resolve_filename_filter
-    db = MagicMock()
-    db.path_token_ids.side_effect = ValueError("bad FTS5 syntax")
+    qdrant = _fake_qdrant()
     cfg = _fake_cfg()
-    allowed, err = await resolve_filename_filter(db, cfg=cfg, pattern="*garbage*")
-    assert allowed is None
+    condition, err = await resolve_filename_filter(qdrant, cfg=cfg, pattern="*garbage*")
+    assert condition is None
     assert err == "bad_request"
 
 
 @pytest.mark.asyncio
-async def test_resolve_filename_filter_none_ids_from_db_returns_none_none():
-    """The path_token_ids returning None means "sanitised empty"."""
+async def test_resolve_filename_filter_empty_pattern_never_counts():
+    """The empty pattern short-circuits before any count is asked for."""
     from search._indexed_helpers import resolve_filename_filter
-    db = MagicMock()
-    db.path_token_ids.return_value = None
+    qdrant = _fake_qdrant()
     cfg = _fake_cfg()
-    allowed, err = await resolve_filename_filter(db, cfg=cfg, pattern="")
-    # Empty pattern short-circuits before path_token_ids is called.
-    assert allowed is None
+    condition, err = await resolve_filename_filter(qdrant, cfg=cfg, pattern="")
+    assert condition is None
     assert err is None
+    qdrant.count_points.assert_not_called()
+    qdrant.count_filtered.assert_not_called()
 
 
 def test_surprise_search_returns_shuffled_subset():

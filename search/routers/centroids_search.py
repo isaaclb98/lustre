@@ -120,7 +120,6 @@ from search.diversity import (
     resolve_mode,
 )
 from search.models import DiversityMetadata, SearchResponse, SearchResult
-from search.qdrant_client import SearchHit
 from search.surprise_deck import (
     DEFAULT_POOL_SIZE,
     DEFAULT_TEMPERATURE,
@@ -488,8 +487,8 @@ def build_centroids_search_router(
         effective_limit = min(limit, cfg.max_results_total - offset)
         collections = parse_collections(request)
         filename_pattern = parse_filename(request)
-        allowed_ids, fname_err = await resolve_filename_filter(
-            index_db, cfg=cfg, pattern=filename_pattern,
+        path_filter, fname_err = await resolve_filename_filter(
+            qdrant, cfg=cfg, pattern=filename_pattern,
         )
         if fname_err == "bad_request":
             return bad_request(
@@ -547,11 +546,7 @@ def build_centroids_search_router(
         # default branch leaves it empty since it's only meaningful
         # for the surprise path.
         deck_ids: list[str] = []
-        if allowed_ids is not None and not allowed_ids:
-            hits: list[SearchHit] = []
-            has_more = False
-            diversity_meta = None
-        elif diversity_active:
+        if diversity_active:
             # MMR diversity ranking over the centroid's candidate
             # pool, with the same two-layer seed exclusion (Layer 1
             # exclude_ids + Layer 2 near-dup post-pass) applied
@@ -565,12 +560,13 @@ def build_centroids_search_router(
                     effective_limit=effective_limit,
                     offset=offset,
                     collections=collections,
-                    allowed_ids=allowed_ids,
+                    allowed_ids=None,
                     seed_ids=seed_ids or [],
                     mode=diversity_mode,
                     strength=diversity_strength,
                     depth=diversity_depth_mode,
                     pool_depth=diversity_pool_depth,
+                    path_filter=path_filter,
                 )
             except (ConnectionError, OSError) as e:
                 log_qdrant_error(
@@ -606,7 +602,8 @@ def build_centroids_search_router(
                     qdrant=qdrant,
                     vec=vector,
                     collections=collections,
-                    surprise_allowed_ids=allowed_ids,
+                    surprise_allowed_ids=None,
+                    path_filter=path_filter,
                     surprise_pool=surprise_pool_parsed,
                     surprise_temperature=surprise_temperature_parsed,
                     surprise_seed=(
@@ -655,8 +652,9 @@ def build_centroids_search_router(
                     pairs, _ = qdrant.search_with_vectors(
                         vector, limit=over_fetch_limit, offset=offset,
                         collections=collections or None,
-                        allowed_ids=allowed_ids,
+                        allowed_ids=None,
                         exclude_ids=seed_ids,
+                        path_filter=path_filter,
                     )
                     # Fetch the seed vectors themselves for the
                     # calibration + post-pass. Orphans (ids whose
@@ -715,7 +713,8 @@ def build_centroids_search_router(
                     hits, has_more = qdrant.search(
                         vector, limit=effective_limit, offset=offset,
                         collections=collections or None,
-                        allowed_ids=allowed_ids,
+                        allowed_ids=None,
+                        path_filter=path_filter,
                     )
             except (ConnectionError, OSError) as e:
                 log_qdrant_error(
