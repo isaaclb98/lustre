@@ -670,7 +670,13 @@ def create_app(
         db_path = _cfg.index_db_path
         if _cfg.test_mode and db_path == DEFAULT_INDEX_DB_PATH:
             db_path = ":memory:"
-        index_db = IndexDB(db_path=db_path, qdrant_client=qdrant)
+        index_db = IndexDB(
+            db_path=db_path,
+            qdrant_client=qdrant,
+            id_cache_ttl_seconds=getattr(
+                cfg, "index_id_cache_ttl_seconds", 900
+            ),
+        )
     _index_db = index_db
     random_picker = RandomPicker(index_db)
 
@@ -790,6 +796,34 @@ def create_app(
             except Exception as e:  # noqa: BLE001
                 logger.warning("text encoder background warm-up failed: %s", e)
 
+        async def _bg_warm_id_cache() -> None:
+            """Warm the /random session deck's id cache.
+
+            The deck is the corpus's point ids, shuffled per session.
+            Fetching them is a full Qdrant id scroll — ~25s on the
+            2.2M corpus, because Qdrant has to read every point
+            record and the REST API has no id-only scroll mode.
+
+            That is paid ONCE here rather than on the user's first
+            click, and refreshed on a timer so the cache does not go
+            stale against a re-indexed corpus. The scroll runs in a
+            thread so the event loop is never blocked.
+            """
+            ttl = max(60.0, float(getattr(_cfg, "index_id_cache_ttl_seconds", 900)))
+            while True:
+                try:
+                    count = await asyncio.to_thread(
+                        index_db.refresh_id_cache, ()
+                    )
+                    logger.info(
+                        "random deck id cache ready: %d ids", len(count)
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("random deck id cache warm-up failed: %s", e)
+                await asyncio.sleep(ttl)
+
         async def _bg_ensure_text_indexes() -> None:
             """Create the native text indexes the filename filter needs.
 
@@ -826,6 +860,9 @@ def create_app(
         # them on the running loop without blocking lifespan return.
         encoder_warmup_task = asyncio.create_task(_bg_text_encoder_warmup())
         text_index_task = asyncio.create_task(_bg_ensure_text_indexes())
+        id_cache_task: asyncio.Task[None] | None = None
+        if not getattr(cfg, "test_mode", False):
+            id_cache_task = asyncio.create_task(_bg_warm_id_cache())
 
         # Option B: no SyncManager to start. The indexer writes
         # directly to the canonical collection, so the search side
@@ -937,6 +974,7 @@ def create_app(
             for _bg_task in (
                 locals().get("encoder_warmup_task"),
                 locals().get("index_init_task"),
+                locals().get("id_cache_task"),
             ):
                 if _bg_task is None:
                     continue
