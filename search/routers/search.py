@@ -36,6 +36,7 @@ import secrets
 import time
 from typing import Any
 
+import numpy as np
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
@@ -266,12 +267,36 @@ def build_search_router(
 
         collections = parse_collections(request)
 
+        # The seed is needed before the vector is built: the empty
+        # prompt's random direction is derived from it, so the same
+        # session always samples the same neighbourhood.
+        if surprise and surprise_seed_parsed is None:
+            surprise_seed_parsed = secrets.randbelow(2**31)
+
         fav_task: asyncio.Task[set[str]] | None = None
         if surprise and not prompt_state.positives and not active_centroids:
-            # Surprise with no query: use zero vector so Qdrant
+            # Surprise with no query: a random UNIT vector, so Qdrant
             # returns results from the whole collection.
+            #
+            # This used to be the zero vector. A zero vector has no
+            # direction, so Qdrant cannot use the HNSW graph and
+            # falls back to a near-exact scan of the whole collection
+            # — measured 8-12x slower (20,000 candidates: 60.0s with
+            # a zero vector, 4.8s with a random unit vector), which
+            # is what made the deep pools time out. It also returned
+            # 20,000 photos all with the score 0.0, so the Gumbel
+            # draw had nothing to work with.
+            #
+            # A random unit vector is an unbiased direction in a
+            # 1152-dimension space, where the corpus is spread out
+            # enough that its nearest neighbours are scattered
+            # rather than clustered: the same random sample, drawn
+            # from the index instead of from a full scan.
             dim = cfg.centroid_expected_feature_dim
-            vec = [0.0] * dim
+            rng = np.random.default_rng(surprise_seed_parsed)
+            unit = rng.normal(size=dim).astype(np.float32)
+            norm = float(np.linalg.norm(unit))
+            vec = (unit / norm).tolist() if norm > 0 else [0.0] * dim
         else:
             # Kick off vec resolution + (conditional) favorites fetch in
             # parallel — both touch different systems (SigLIP2 model vs
@@ -293,15 +318,6 @@ def build_search_router(
                 return bad_request(vec_detail or "at least one positive prompt is required")
 
         t0 = time.time()
-        # If the client didn't pass a seed, generate a fresh random
-        # one for this request so each new search gives a new deck.
-        # The seed flows into both the Gumbel RNG and the cache key
-        # (which is the session id), so the same session reuses the
-        # same deck but different sessions are different. Materialise
-        # the seed here — before the cache key is computed — so the
-        # type narrows to int and downstream callers see a real int.
-        if surprise and surprise_seed_parsed is None:
-            surprise_seed_parsed = secrets.randbelow(2**31)
         # At this point, if `surprise` is True, `surprise_seed_parsed`
         # is guaranteed non-None (either user-supplied or generated).
         # Materialise the narrowed-typed values so downstream callers
