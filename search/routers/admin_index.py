@@ -93,12 +93,13 @@ def build_admin_index_router(
     def _live_points_count() -> int | None:
         """Return the current count of indexed images.
 
-        Reads from the IndexDB cache (source of truth for the UI),
-        not from Qdrant directly — the cache is refreshed from
-        Qdrant on a timer and on POST /api/cache/refresh, so a
-        live cache read is a reliable proxy for "how many photos
-        are indexed right now" without adding another Qdrant
-        round-trip per status poll.
+        Reads through the IndexDB, which caches the corpus size for
+        a few seconds. It used to be a local SQLite read of the
+        `images` mirror; since that mirror was dropped it is a live
+        Qdrant count, and an exact one walks every point. The
+        settings page polls the index status every second, so the
+        cache is what keeps a poll from counting 2.2M points once a
+        second.
 
         Returns None on any error (DB not initialised, lock
         contention, etc.) so the runner's own snapshot is used
