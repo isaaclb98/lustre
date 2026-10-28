@@ -62,6 +62,7 @@ class QdrantSearch:
         exclude_ids: list[str] | None = None,
         path_filter: Any | None = None,
         with_payload: bool = True,
+        search_params: Any | None = None,
     ) -> tuple[list[SearchHit], bool]:
         """
         Top-K search with optional offset and collection filter.
@@ -103,6 +104,9 @@ class QdrantSearch:
         SQLite FTS5 index and passing it as `allowed_ids` — the
         text index is evaluated server-side, so no id list is
         serialised per request.
+
+        `search_params` is passed through to Qdrant unchanged — it
+        carries the HNSW tuning (`SearchParams(hnsw_ef=...)`).
 
         `with_payload=False` drops the payload from the response
         and leaves only the id and the score. Use it when the
@@ -160,6 +164,7 @@ class QdrantSearch:
             offset=offset,
             query_filter=query_filter,
             with_payload=with_payload,
+            search_params=search_params,
             with_vectors=False,
             timeout=self.timeout_ms // 1000,
         )
