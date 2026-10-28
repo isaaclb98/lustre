@@ -56,11 +56,42 @@ def _row(id: str, **kwargs):
     return base
 
 
+def _simple_deck(ids: list[str]):
+    """A deck that serves `ids` in order, one page at a time."""
+    from search.random_session import CursorDeck
+
+    state = {"pos": 0}
+
+    def fetch(cursor, limit):
+        out = ids[state["pos"] : state["pos"] + limit]
+        state["pos"] += len(out)
+        return out, ("cursor", state["pos"])
+
+    return CursorDeck(fetch, start="start", total=len(ids))
+
+
 def _mock_index_db(deck_ids: list[str], rows_by_id: dict[str, dict] | None = None):
-    """Mock IndexDB that returns `deck_ids` from shuffled_id_deck and
+    """Mock IndexDB that hands out a cursor deck of `deck_ids` and
     looks up rows from rows_by_ids."""
+    from search.random_session import CursorDeck
+
     index_db = MagicMock()
-    index_db.shuffled_id_deck.return_value = list(deck_ids)
+    index_db.count_images.return_value = len(deck_ids)
+
+    def make_deck(collections=()):
+        """A deck over `deck_ids` that serves them in order."""
+        state = {"pos": 0}
+
+        def fetch(cursor, limit):
+            # The cursor is an opaque position; the fake ignores it
+            # and serves the next slice.
+            ids = deck_ids[state["pos"] : state["pos"] + limit]
+            state["pos"] += len(ids)
+            return ids, ("cursor", state["pos"])
+
+        return CursorDeck(fetch, start="start", total=len(deck_ids))
+
+    index_db.new_cursor_deck.side_effect = make_deck
     if rows_by_id is None:
         rows_by_id = {i: _row(i) for i in deck_ids}
     index_db.rows_by_ids.side_effect = lambda ids: [rows_by_id[i] for i in ids if i in rows_by_id]
@@ -180,9 +211,9 @@ def test_random_negative_offset_returns_400():
 
 
 def test_random_returns_500_on_internal_error():
-    """When shuffled_id_deck raises, the route returns a 500."""
+    """When the deck cannot be created, the route returns a 500."""
     index_db = MagicMock()
-    index_db.shuffled_id_deck.side_effect = RuntimeError("db locked")
+    index_db.new_cursor_deck.side_effect = RuntimeError("db locked")
     app = _build(index_db, _fake_cfg())
     with TestClient(app) as client:
         resp = client.get("/api/random?limit=5")
@@ -209,16 +240,16 @@ def test_random_invalid_view_falls_back_to_grid():
 
 
 def test_random_collection_filter_restricts_deck():
-    """The collection filter is passed through to shuffled_id_deck."""
+    """The collection filter is passed through to the deck."""
     index_db = MagicMock()
-    index_db.shuffled_id_deck.return_value = ["a", "b"]
+    index_db.new_cursor_deck.return_value = _simple_deck(["a", "b"])
     index_db.rows_by_ids.return_value = [_row("a"), _row("b")]
     app = _build(index_db, _fake_cfg())
     with TestClient(app) as client:
         resp = client.get("/api/random?limit=10&collections=kpop")
     assert resp.status_code == 200
     # The deck was filtered to the kpop collection.
-    args, _ = index_db.shuffled_id_deck.call_args
+    args, _ = index_db.new_cursor_deck.call_args
     assert args[0] == ("kpop",)
 
 

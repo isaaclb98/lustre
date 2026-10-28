@@ -156,24 +156,34 @@ def test_the_corpus_count_is_cached() -> None:
     assert "_count_cache" in src, "the count is not cached"
 
 
-def test_the_id_cache_refreshes_only_when_the_corpus_changed() -> None:
-    """The id scroll must not run on a timer.
+def test_nothing_scrolls_the_whole_collection_on_a_request_path() -> None:
+    """No route may enumerate every point id.
 
-    The scroll reads every point record in the collection, and that
-    traffic evicts Qdrant's hot collection from the page cache — the
-    deep candidate pools then take tens of seconds instead of a
-    fraction of one. The corpus size barely changes, so the scroll
-    should only run when it has.
+    A full id scroll is 25s over 2.2M points, and its traffic
+    evicts Qdrant's hot collection from the page cache — the deep
+    candidate pools then take tens of seconds instead of a fraction
+    of one.
+
+    The /random deck is a cursor into the id space now: it starts at
+    a random uuid and reads a page at a time.
     """
     import inspect
 
     from search import app as app_mod
+    from search.routers import random as random_router
 
-    src = inspect.getsource(app_mod)
-    i = src.index("async def _bg_warm_id_cache")
-    j = src.find("async def ", i + 20)
-    body = src[i:j if j > 0 else len(src)]
-    assert "count_images" in body, (
-        "the warmer does not check whether the corpus changed"
+    app_src = inspect.getsource(app_mod)
+    for gone in ("refresh_id_cache", "_bg_warm_id_cache", "_id_cache"):
+        assert gone not in app_src, f"{gone} is back in the app"
+
+    router_src = inspect.getsource(random_router)
+    assert "shuffled_id_deck" not in router_src
+    assert "new_cursor_deck" in router_src
+
+    from search import index_db
+
+    db_src = inspect.getsource(index_db)
+    assert "def refresh_id_cache" not in db_src, (
+        "the id cache is back — it scrolls the whole collection"
     )
-    assert "refresh_id_cache" in body
+    assert "def shuffled_id_deck" not in db_src

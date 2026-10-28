@@ -330,83 +330,6 @@ class QdrantSearch:
             for p in points
         ]
 
-    def scroll_ids(self, collections: list[str] | None = None) -> list[SearchHit]:
-        """Every point id in the collection, optionally filtered by collection.
-
-        Used to build the /random session deck — a full permutation
-        of the corpus's ids. The ids are fetched with
-        `with_payload=False`, so only the ids cross the wire: on the
-        2.2M-point corpus a full id scroll is 2.9s, against the
-        23.9s a payload-carrying scroll takes.
-
-        The collection filter is applied SERVER-SIDE as a `MatchAny`
-        against the keyword index on `collection`, so the filtered
-        case transfers no payload and reads only the matching
-        points — measured 1.4s for one collection.
-
-        The result is in Qdrant's storage order; the caller shuffles
-        it if it needs a random permutation.
-        """
-        from qdrant_client.http import models as qmodels
-
-        must_conditions: list[Any] = []
-        if collections:
-            must_conditions.append(
-                qmodels.FieldCondition(
-                    key="collection",
-                    match=qmodels.MatchAny(any=list(collections)),
-                )
-            )
-        query_filter = (
-            qmodels.Filter(must=must_conditions) if must_conditions else None
-        )
-
-        ids: list[SearchHit] = []
-        offset: Any = None
-        while True:
-            # The client method calls the filter `scroll_filter`; the
-            # REST endpoint calls it `query_filter`. Using the wrong
-            # name raises "Unknown arguments" — the client validates
-            # its kwargs against the local and remote signatures.
-            response = self.client.scroll(
-                collection_name=self.collection,
-                limit=20000,
-                offset=offset,
-                scroll_filter=query_filter,
-                with_payload=False,
-                with_vectors=False,
-                timeout=self.timeout_ms // 1000,
-            )
-            points, next_offset = response
-            if not points:
-                break
-            ids.extend(
-                SearchHit(
-                    id=str(p.id),
-                    path=(getattr(p, "payload", None) or {}).get("path", ""),
-                    score=0.0,
-                    payload=None,
-                )
-                for p in points
-            )
-            # The remote client pages by point id and reports the
-            # last id it returned; the local client reports None once
-            # it has reached the end. A None offset with points
-            # returned means "that was everything" — otherwise the
-            # loop would re-fetch the same first page forever.
-            if next_offset is None:
-                break
-            if next_offset == offset:
-                # The offset did not advance — refuse to spin.
-                logger.warning(
-                    "scroll_ids: offset did not advance (%s) — stopping to "
-                    "avoid an infinite loop",
-                    next_offset,
-                )
-                break
-            offset = next_offset
-        return ids
-
     def count_points(self, exact: bool = True) -> int:
         """
         Return the total number of points in the collection.
@@ -766,34 +689,81 @@ class QdrantSearch:
                 break
             scroll_offset = next_offset
 
-    def scroll_ids_only(self, batch_size: int = 1000) -> Iterator[list[str]]:
-        """
-        Paginate through every point id in the collection.
+    def collection_counts(
+        self, collections: list[str] | None = None
+    ) -> int:
+        """How many points the collection (or a set of them) holds.
 
-        Yields batches of point id strings. Vectors and payloads
-        are intentionally omitted — this is the cheapest way to
-        enumerate ids for a diff against the SQLite cache (round-35).
+        Read from Qdrant's facet API, which counts the points per
+        value of a payload field: 0.009s for the whole collection,
+        against 0.540s for an exact count with the same filter.
 
-        Note: there's no built-in Qdrant server-side filter that
-        gives us 'only ids newer than X' without a payload index on
-        a timestamp field, so we always scroll the full collection.
-        The id-only scroll is ~10x cheaper than the payload scroll
-        at our scale (2M points) because we skip payload deserialization.
+        A count with a filter cannot use the approximate path — it
+        ignores the filter and is wildly wrong (measured 1,652,079
+        against the true 2,244,659) — so the facet is the cheap exact
+        answer.
         """
-        scroll_offset = None
-        while True:
-            batch, next_offset = self.client.scroll(
+        wanted = set(collections or ())
+        total = 0
+        try:
+            res = self.client.facet(
                 collection_name=self.collection,
-                limit=batch_size,
-                offset=scroll_offset,
-                with_payload=False,
-                with_vectors=False,
-                timeout=self.timeout_ms // 1000,
+                key="collection",
+                limit=1000,
             )
-            yield [str(point.id) for point in batch]
-            if next_offset is None:
-                break
-            scroll_offset = next_offset
+            for hit in res.hits:
+                if wanted and hit.value not in wanted:
+                    continue
+                total += int(hit.count)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("collection facet failed: %s", e)
+        if total:
+            return total
+        # The facet is a server-side feature — the in-memory client
+        # (tests) does not support it. Fall back to the corpus size.
+        return self.count_points(exact=False)
+
+    def scroll_point_ids(
+        self,
+        offset: Any = None,
+        limit: int = 1000,
+        collections: list[str] | None = None,
+    ) -> tuple[list[str], Any]:
+        """One page of point ids, starting from a point-id cursor.
+
+        `offset` is Qdrant's REST scroll cursor: a point id, and it
+        may be ANY uuid — including one that does not exist, in
+        which case the scroll starts at the first point whose id
+        sorts after it. That is what lets the /random deck begin
+        anywhere in the id space with a bare `uuid4()`, instead of
+        scrolling the whole collection to build a list first.
+
+        Returns `(ids, next_cursor)`. The next cursor is None when
+        the collection is exhausted from this position.
+        """
+        from qdrant_client.http import models as qmodels
+
+        must_conditions: list[Any] = []
+        if collections:
+            must_conditions.append(
+                qmodels.FieldCondition(
+                    key="collection",
+                    match=qmodels.MatchAny(any=list(collections)),
+                )
+            )
+        query_filter = (
+            qmodels.Filter(must=must_conditions) if must_conditions else None
+        )
+        points, next_offset = self.client.scroll(
+            collection_name=self.collection,
+            limit=limit,
+            offset=offset,
+            scroll_filter=query_filter,
+            with_payload=False,
+            with_vectors=False,
+            timeout=self.timeout_ms // 1000,
+        )
+        return [str(p.id) for p in points], next_offset
 
     def random_window(self, limit: int = 20) -> list[SearchHit]:
         """

@@ -415,9 +415,15 @@ def test_session_expiry_yields_new_session(random_app):
     import time as _time
     from search.random_session import RandomSession, RandomSessionStore
 
+    from search.random_session import CursorDeck
+
     store = RandomSessionStore()
+
+    def deck():
+        return CursorDeck(lambda cursor, limit: ([], None), start="s")
+
     # Seed a session that's already past its TTL.
-    expired = RandomSession(ids=["a", "b", "c", "d"], ttl_s=60.0)
+    expired = RandomSession(deck=deck(), ttl_s=60.0)
     expired.created_at = _time.monotonic() - 120.0  # 2 minutes ago, TTL is 60s
     store._sessions["stale-id"] = expired
 
@@ -427,7 +433,7 @@ def test_session_expiry_yields_new_session(random_app):
     assert "stale-id" not in store._sessions
 
     # put_new after expiry works as expected.
-    sid, sess = store.put_new(["a", "b", "c", "d"])
+    sid, sess = store.put_new(deck())
     assert sid != "stale-id"
     assert sess.is_alive()
 

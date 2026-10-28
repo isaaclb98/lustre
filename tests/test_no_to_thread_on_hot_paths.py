@@ -40,7 +40,10 @@ BASELINE: dict[str, int] = {
     "dislikes.py": 6,
     "favorites.py": 6,
     "for_you.py": 8,  # round‑14: cold‑start + reset_feedback wrap
-    "random.py": 1,
+    # 3: the deck is a cursor into the corpus's id space, so the
+    # route makes two network calls on the request path — the facet
+    # that sizes the deck, and the scroll that reads the page's ids.
+    "random.py": 3,
     "saved_searches.py": 4,
     "search.py": 5,  # 5: count_points wraps qdrant.count for pool-size clamp
     "similar.py": 4,

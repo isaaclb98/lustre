@@ -514,7 +514,6 @@ class Config:
     # done on a timer in the background and the request path only
     # ever reads the cache. 15 min keeps the deck fresh against a
     # re-index without scrolling often enough to matter.
-    index_id_cache_ttl_seconds: int = 900
     # TTL for the lazy path-liveness cache (see `app.py:_is_path_alive`).
     # Bounds per-request `Path.exists()` cost while keeping the read
     # path fresh. 60s means a freshly-deleted file shows up as dead
@@ -724,7 +723,6 @@ def load() -> Config:
         max_prompts_total=_int("MAX_PROMPTS_TOTAL", 16),
         filename_cardinality_guard=_float("FILENAME_CARDINALITY_GUARD", 0.5),
         index_db_refresh_interval_seconds=_int("INDEX_DB_REFRESH_INTERVAL_SECONDS", 21600),
-        index_id_cache_ttl_seconds=_int("INDEX_ID_CACHE_TTL_SECONDS", 900),
         path_liveness_ttl_seconds=_int("PATH_LIVENESS_TTL_SECONDS", 60),
         # In-app indexer (admin Index button). `INDEXER_SOURCES` is a
         # comma-separated list; defaults to `NAS_IMAGES_PATH` so a
