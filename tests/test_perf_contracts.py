@@ -154,3 +154,26 @@ def test_the_corpus_count_is_cached() -> None:
 
     src = inspect.getsource(index_db.IndexDB.count_images)
     assert "_count_cache" in src, "the count is not cached"
+
+
+def test_the_id_cache_refreshes_only_when_the_corpus_changed() -> None:
+    """The id scroll must not run on a timer.
+
+    The scroll reads every point record in the collection, and that
+    traffic evicts Qdrant's hot collection from the page cache — the
+    deep candidate pools then take tens of seconds instead of a
+    fraction of one. The corpus size barely changes, so the scroll
+    should only run when it has.
+    """
+    import inspect
+
+    from search import app as app_mod
+
+    src = inspect.getsource(app_mod)
+    i = src.index("async def _bg_warm_id_cache")
+    j = src.find("async def ", i + 20)
+    body = src[i:j if j > 0 else len(src)]
+    assert "count_images" in body, (
+        "the warmer does not check whether the corpus changed"
+    )
+    assert "refresh_id_cache" in body
