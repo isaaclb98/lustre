@@ -810,14 +810,31 @@ def create_app(
             thread so the event loop is never blocked.
             """
             ttl = max(60.0, float(getattr(_cfg, "index_id_cache_ttl_seconds", 900)))
+            last_count: int | None = None
             while True:
                 try:
-                    count = await asyncio.to_thread(
-                        index_db.refresh_id_cache, ()
-                    )
-                    logger.info(
-                        "random deck id cache ready: %d ids", len(count)
-                    )
+                    # Only scroll when the corpus has actually changed.
+                    # The scroll reads every point record in the
+                    # collection, and that traffic evicts Qdrant's hot
+                    # collection from the page cache — which is what
+                    # makes the deep candidate pools take tens of
+                    # seconds instead of a fraction of one. The
+                    # corpus size is cached for a few seconds, so
+                    # this check is nearly free.
+                    size = await asyncio.to_thread(index_db.count_images)
+                    if last_count is None or size != last_count:
+                        count = await asyncio.to_thread(
+                            index_db.refresh_id_cache, ()
+                        )
+                        last_count = len(count)
+                        logger.info(
+                            "random deck id cache ready: %d ids", last_count
+                        )
+                    else:
+                        logger.debug(
+                            "random deck id cache still current: %d ids",
+                            last_count,
+                        )
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:  # noqa: BLE001
