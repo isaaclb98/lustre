@@ -30,6 +30,7 @@ from qdrant_client.http import models as qmodels
 
 from indexer.blurhash import compute_blurhash
 from indexer.fingerprints import compute_fingerprints
+from indexer.scan import existing_image_paths
 from lustre_kernel.registry import get_active_model_spec
 
 logger = logging.getLogger(__name__)
@@ -403,14 +404,22 @@ def prune_missing(
                 continue
             logger.info("prune: walking %s ...", src_path)
             t0 = time.monotonic()
-            for walked, p in enumerate(src_path.rglob("*"), start=1):
-                if p.is_file():
-                    existing_paths.add(str(p.resolve()))
+            # `existing_image_paths` uses os.scandir and collects only
+            # image files. The old walk used `Path.rglob("*")` plus a
+            # per-entry `is_file()` — the exact anti-pattern
+            # indexer/scan.py was written to avoid — and put every
+            # file in the tree (thumbnails, sidecars, NFO files) into
+            # the set, when only image paths are ever compared
+            # against it.
+            for walked, image_path in enumerate(
+                existing_image_paths(src_path), start=1
+            ):
+                existing_paths.add(image_path)
                 if walked % 50_000 == 0:
                     elapsed = time.monotonic() - t0
                     rate = walked / elapsed if elapsed > 0 else 0.0
                     logger.info(
-                        "prune: walked %d entries so far (%.0f/s, %dm %02ds elapsed) in %s",
+                        "prune: walked %d image files so far (%.0f/s, %dm %02ds elapsed) in %s",
                         walked, rate, int(elapsed) // 60, int(elapsed) % 60, src_path,
                     )
         logger.info(
