@@ -62,9 +62,15 @@ class _FakeQdrant:
         positive: list[str],
         negative: list[str],
         limit: int,
+        with_payload: bool = True,
     ) -> list[_FakeHit]:
         self.recommend_calls.append(
-            {"positive": list(positive), "negative": list(negative), "limit": limit}
+            {
+                "positive": list(positive),
+                "negative": list(negative),
+                "limit": limit,
+                "with_payload": with_payload,
+            }
         )
         if self.return_empty:
             return []

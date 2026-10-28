@@ -31,6 +31,7 @@ calls, ~tens of ms for n=10000, k=2400.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import time
 from collections.abc import Iterable, Sequence
@@ -292,8 +293,17 @@ async def build_surprise_deck(
         deck_ids = list(entry.point_ids)
         deck_scores = list(entry.scores)
     else:
+        # with_payload=False: the pool is only a source of ids and
+        # scores for the Gumbel draw. The page that is actually
+        # returned is hydrated separately (retrieve_batch below), so
+        # pulling 20k-50k payloads here is pure waste — it costs
+        # time and memory on both sides of the wire for data nobody
+        # reads.
         pool_hits, _ = await asyncio.to_thread(
-            qdrant.search,
+            functools.partial(
+                qdrant.search,
+                with_payload=False,
+            ),
             vec,
             surprise_pool,
             0,
