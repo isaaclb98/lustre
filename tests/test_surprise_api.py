@@ -412,3 +412,74 @@ def test_surprise_offset_past_end_returns_empty(app_with_qdrant_big):
     assert resp["has_more"] is False
     # session_total still echoes the deck size so the client knows.
     assert resp["session_total"] == 50
+
+
+# ---------------- the empty-prompt direction ----------------
+
+
+def test_surprise_without_a_query_uses_a_directional_vector(
+    app_with_qdrant_big, monkeypatch
+):
+    """Surprise Me with no query must not search with a zero vector.
+
+    A zero vector has no direction, so Qdrant cannot use the HNSW
+    graph and falls back to a near-exact scan of the whole
+    collection — measured 8-12x slower (20,000 candidates: 60.0s
+    with a zero vector, 4.8s with a random unit vector), which is
+    what made the deep pools time out. It also gave every candidate
+    the score 0.0, so the Gumbel draw had nothing to work with.
+
+    A random unit vector is an unbiased direction, and in a
+    1152-dimension space the corpus is spread out enough that its
+    nearest neighbours are scattered rather than clustered: the same
+    random sample, drawn from the index instead of from a full scan.
+    """
+    from search.qdrant_client import QdrantSearch
+
+    seen: list[list[float]] = []
+    original = QdrantSearch.search
+
+    def recording_search(self, vec, *args, **kwargs):
+        seen.append(list(vec))
+        return original(self, vec, *args, **kwargs)
+
+    monkeypatch.setattr(QdrantSearch, "search", recording_search)
+    resp = app_with_qdrant_big.get(
+        "/api/search?surprise=true&surprise_pool=200&limit=10"
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert seen, "the search never ran"
+    vec = seen[0]
+    assert len(vec) == VECTOR_DIM
+    assert any(v != 0.0 for v in vec), (
+        "the surprise search used a zero vector — Qdrant falls back "
+        "to a full scan and the pool builds time out"
+    )
+    # A unit vector: same direction, no magnitude change.
+    magnitude = sum(v * v for v in vec) ** 0.5
+    assert abs(magnitude - 1.0) < 1e-3, f"the vector is not a unit vector: |v|={magnitude}"
+
+
+def test_surprise_direction_is_seeded_and_reproducible(app_with_qdrant_big, monkeypatch):
+    """The same seed samples the same direction, so a session is stable."""
+    from search.qdrant_client import QdrantSearch
+
+    seen: list[list[float]] = []
+    original = QdrantSearch.search
+
+    def recording_search(self, vec, *args, **kwargs):
+        seen.append(list(vec))
+        return original(self, vec, *args, **kwargs)
+
+    monkeypatch.setattr(QdrantSearch, "search", recording_search)
+
+    def direction(seed: str) -> list[float]:
+        seen.clear()
+        app_with_qdrant_big.get(
+            f"/api/search?surprise=true&surprise_pool=200&limit=10&surprise_seed={seed}"
+        )
+        return seen[0]
+
+    assert direction("42") == direction("42")
+    assert direction("42") != direction("43")
