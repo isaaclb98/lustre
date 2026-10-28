@@ -29,6 +29,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# How long a corpus-size count is reused. The settings page polls the
+# index status every second; without this the poll asks Qdrant to
+# count every point in the collection on every request.
+_COUNT_CACHE_TTL_S = 10.0
+
 DEFAULT_INDEX_DB_PATH = "./data/images.db"
 
 
@@ -69,6 +74,8 @@ class IndexDB:
         # scroll is done once and the result reused; only the
         # shuffle is per session.
         self._id_cache: dict[tuple[str, ...], tuple[float, list[str]]] = {}
+        self._count_cache: int | None = None
+        self._count_cache_at: float = 0.0
         self._id_cache_ttl_s = float(id_cache_ttl_seconds)
         # Serialises cache BUILDS (the scroll), so a request and the
         # background warmer do not both pay for it.
@@ -674,12 +681,31 @@ class IndexDB:
         Qdrant owns the corpus, so it answers. The `images` mirror
         used to answer this, which meant the number could disagree
         with the collection the search actually runs against.
+
+        The count is cached for a few seconds. This used to be a
+        local SQLite read that the settings page could poll as often
+        as it liked; now it is a live Qdrant count, and an exact one
+        walks every point — 0.277s on the 2.2M-point collection. The
+        settings page polls the index status every second, so
+        without this cache it asks Qdrant to count 2.2M points once
+        a second, exactly while the indexer is busiest.
         """
+        now = time.monotonic()
+        with self._lock:
+            if (
+                self._count_cache is not None
+                and now - self._count_cache_at < _COUNT_CACHE_TTL_S
+            ):
+                return self._count_cache
         try:
-            return int(self.qdrant_client.count_points())
+            count = int(self.qdrant_client.count_points())
         except Exception as e:  # noqa: BLE001
             logger.warning("count_points failed: %s", e)
             return 0
+        with self._lock:
+            self._count_cache = count
+            self._count_cache_at = now
+        return count
 
     def mark_favorite(self, point_id: str) -> None:
         # Photo must exist in the cache before it can be favourited;

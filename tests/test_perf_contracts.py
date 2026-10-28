@@ -137,3 +137,20 @@ def test_the_surprise_route_uses_the_approximate_count() -> None:
         "the surprise route is doing an exact point count on every "
         "request just to cap the pool size"
     )
+
+
+def test_the_corpus_count_is_cached() -> None:
+    """The status poll must not count every point on every request.
+
+    The settings page polls the index status every second, and the
+    corpus size now comes from Qdrant — an exact count walks every
+    point, 0.277s on the 2.2M-point collection. The count is cached
+    for a few seconds so a poll does not do that every second.
+    """
+    from search import index_db
+
+    assert hasattr(index_db, "_COUNT_CACHE_TTL_S")
+    assert index_db._COUNT_CACHE_TTL_S >= 1.0
+
+    src = inspect.getsource(index_db.IndexDB.count_images)
+    assert "_count_cache" in src, "the count is not cached"
