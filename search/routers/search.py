@@ -260,7 +260,14 @@ def build_search_router(
                     return bad_request("surprise_seed must be an integer")
             # Cap pool to actual corpus size when oversized.
             try:
-                corpus_size = await asyncio.to_thread(qdrant.count_points)
+                # The approximate count: this only caps the pool at
+                # the corpus size, so being out by a few hundred
+                # points is irrelevant, and it reads the segment
+                # metadata instead of counting 2.2M points
+                # (0.012s against 0.277s).
+                corpus_size = await asyncio.to_thread(
+                    qdrant.count_points, exact=False
+                )
                 surprise_pool_parsed = min(surprise_pool_parsed, corpus_size)
             except Exception as e:  # noqa: BLE001
                 logger.debug("count_points failed; using requested pool as-is: %s", e)

@@ -407,7 +407,7 @@ class QdrantSearch:
             offset = next_offset
         return ids
 
-    def count_points(self) -> int:
+    def count_points(self, exact: bool = True) -> int:
         """
         Return the total number of points in the collection.
 
@@ -415,6 +415,15 @@ class QdrantSearch:
         size at the actual corpus size — a slider set to "All"
         on a 2M-point corpus should sample from 2M, not error
         out because the requested pool exceeded the corpus.
+        `exact=False` uses Qdrant's approximate count, which reads
+        the segment metadata instead of counting every point: 0.012s
+        against 0.277s for the exact count on the 2.2M-point
+        collection. Use it where the count only caps a request
+        parameter — the Surprise Me pool size — where being out by a
+        few hundred points changes nothing. The filename-filter
+        cardinality guard needs the exact number and uses
+        `count_filtered`, which is always exact.
+
         Returns 0 if the count call fails (the route then uses
         the requested pool as-is, which is the pre-fix
         behaviour).
@@ -422,7 +431,7 @@ class QdrantSearch:
         try:
             result = self.client.count(
                 collection_name=self.collection,
-                exact=True,
+                exact=exact,
                 timeout=self.timeout_ms // 1000,
             )
             return int(result.count)

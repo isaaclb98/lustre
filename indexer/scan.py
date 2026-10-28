@@ -220,6 +220,66 @@ def _walk_into(
         pass
 
 
+def existing_image_paths(
+    source: Path,
+    should_cancel: Callable[[], bool] | None = None,
+    cancel_check_every: int = 5_000,
+) -> set[str]:
+    """The set of resolved image paths under `source`.
+
+    The prune compares this set against the `path` payload of every
+    point in the collection, and that payload is always an image path
+    (`str(path.resolve())` in upsert.py) — so only image files need
+    to be in the set. Collecting every file under the tree (the
+    thumbnails, sidecars and NFO files that sit next to the photos)
+    is pure waste, and on the NAS it is most of the walk.
+
+    Uses `os.scandir` and the DirEntry attributes, the same way
+    `snapshot()` does: `Path.rglob("*")` plus a per-entry `is_file()`
+    costs an extra stat syscall per entry, and `resolve()` on an SMB
+    mount can cost a round trip per path component.
+    """
+    found: set[str] = set()
+    count = 0
+    next_cancel = cancel_check_every
+
+    def walk(directory: Path) -> None:
+        nonlocal count, next_cancel
+        try:
+            with os.scandir(directory) as it:
+                for entry in it:
+                    try:
+                        if entry.is_file():
+                            name = entry.name
+                            if should_skip_name(name):
+                                continue
+                            if not is_image_suffix(Path(name).suffix):
+                                continue
+                            found.add(str(Path(entry.path).resolve()))
+                            count += 1
+                            if (
+                                should_cancel is not None
+                                and count >= next_cancel
+                            ):
+                                next_cancel += cancel_check_every
+                                if should_cancel():
+                                    raise _ScanAbort()
+                        elif entry.is_dir(follow_symlinks=False):
+                            walk(Path(entry.path))
+                    except OSError:
+                        continue
+                    except _ScanAbort:
+                        raise
+        except OSError:
+            pass
+
+    try:
+        walk(source)
+    except _ScanAbort:
+        raise ScanCancelled(f"cancelled while walking {source}") from None
+    return found
+
+
 def _log_scan_progress(state: dict, source: Path, expected_total: int | None) -> None:
     """Emit one heartbeat line: count, rate, and ETA (if known) or elapsed."""
     elapsed = time.monotonic() - state["t0"]
