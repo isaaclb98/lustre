@@ -31,12 +31,76 @@ Two non-obvious shapes this module owns:
 
 from __future__ import annotations
 
+import math
 import secrets
 import time
+from collections.abc import Sequence
+from typing import Any
 
 # Default session lifetime. After this many seconds the shuffled
 # deck is discarded and the next call gets a fresh shuffle.
 RANDOM_SESSION_TTL_S = 30 * 60
+
+
+class StridedDeck(Sequence[str]):
+    """A random order over an id list, without materialising it.
+
+    A random start plus a stride coprime with the list length is a
+    permutation of the range: every index is visited exactly once, so
+    the deck keeps the property the /random route promises — every
+    photo served exactly once per session, forward only, no repeats.
+
+    Materialising that permutation cost a pointer array per session:
+    18.5 MB for the 2.2M-point production corpus, held for the
+    session's 30-minute TTL, with no cap on the number of sessions.
+    This view costs two integers.
+
+    The underlying id list is in Qdrant's scroll order, which is
+    point-id order — the ids are uuid5 hashes of the path, so the
+    list is already uncorrelated with the photos. Any stride over it
+    is therefore an uncorrelated order, which is why a stride is
+    enough and a full shuffle is not needed.
+    """
+
+    __slots__ = ("_ids", "_n", "_start", "_stride")
+
+    def __init__(self, ids: Sequence[str], start: int, stride: int) -> None:
+        self._ids = ids
+        self._start = start
+        self._stride = stride
+        self._n = len(ids)
+
+    def __len__(self) -> int:
+        return self._n
+
+    def __getitem__(self, index: Any) -> Any:
+        if isinstance(index, slice):
+            lo, hi, _ = index.indices(self._n)
+            if hi <= lo:
+                return []
+            n, start, stride = self._n, self._start, self._stride
+            pos = (start + stride * lo) % n
+            ids = self._ids
+            return [ids[(pos + stride * j) % n] for j in range(hi - lo)]
+        i = index if index >= 0 else index + self._n
+        if i < 0 or i >= self._n:
+            raise IndexError(index)
+        return self._ids[(self._start + self._stride * i) % self._n]
+
+
+def random_stride(length: int, rng: Any) -> int:
+    """A random stride coprime with `length`.
+
+    Coprimality is what makes the stride a permutation: with
+    `gcd(stride, length) == 1` the walk visits every index exactly
+    once before it returns to the start.
+    """
+    if length <= 2:
+        return 1
+    while True:
+        s = int(rng.integers(1, length))
+        if math.gcd(s, length) == 1:
+            return s
 
 
 class RandomSession:
@@ -49,7 +113,7 @@ class RandomSession:
 
     __slots__ = ("created_at", "ids", "ttl_s")
 
-    def __init__(self, ids: list[str], ttl_s: float):
+    def __init__(self, ids: Sequence[str], ttl_s: float):
         self.ids = ids
         self.created_at = time.monotonic()
         self.ttl_s = ttl_s
@@ -105,4 +169,10 @@ class RandomSessionStore:
         return len(self._sessions)
 
 
-__all__ = ["RANDOM_SESSION_TTL_S", "RandomSession", "RandomSessionStore"]
+__all__ = [
+    "RANDOM_SESSION_TTL_S",
+    "RandomSession",
+    "RandomSessionStore",
+    "StridedDeck",
+    "random_stride",
+]

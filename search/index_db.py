@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from search.random_session import StridedDeck, random_stride
+
 if TYPE_CHECKING:
     from search.qdrant_client import QdrantSearch
 
@@ -523,11 +525,22 @@ class IndexDB:
         ids = self._cached_point_ids(collections)
         if len(ids) < 2:
             return list(ids)
-        # Qdrant returns ids in storage order; the deck must be a
-        # random permutation, so shuffle locally. This is the same
-        # distribution SQLite's ORDER BY RANDOM() produced.
-        order = np.random.default_rng().permutation(len(ids))
-        return [ids[i] for i in order]
+        # Qdrant returns ids in storage order, and the ids are uuid5
+        # hashes of the path, so that order is already uncorrelated
+        # with the photos. The deck therefore only needs to be a
+        # permutation of it, not a full shuffle: a random start plus
+        # a stride coprime with the length visits every index exactly
+        # once and costs two integers.
+        #
+        # The alternative — a numpy permutation — cost a pointer
+        # array per session: 18.5 MB for the 2.2M-point corpus, held
+        # for the session's 30-minute TTL with no cap on the number
+        # of live sessions.
+        rng = np.random.default_rng()
+        n = len(ids)
+        start = int(rng.integers(0, n))
+        stride = random_stride(n, rng)
+        return StridedDeck(ids, start, stride)
 
     def _cached_point_ids(
         self, collections: tuple[str, ...]

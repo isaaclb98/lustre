@@ -15,6 +15,9 @@ had: a session covers the corpus, every photo exactly once.
 """
 from __future__ import annotations
 
+import math
+
+import numpy as np
 from typing import Any
 
 
@@ -167,3 +170,78 @@ def test_the_shuffle_is_actually_random() -> None:
     random.shuffle(b)
     assert a != ids
     assert a != b
+
+
+def test_the_strided_deck_covers_every_id_exactly_once() -> None:
+    """The lazy deck must be a permutation, like a shuffle was.
+
+    The deck is what guarantees the /random route serves every photo
+    exactly once per session. A stride that is coprime with the list
+    length visits every index exactly once; one that is not would
+    repeat some and skip others.
+    """
+    from search.random_session import StridedDeck, random_stride
+
+    ids = [f"id-{i}" for i in range(1000)]
+    rng = np.random.default_rng(7)
+    stride = random_stride(len(ids), rng)
+    assert math.gcd(stride, len(ids)) == 1
+
+    deck = StridedDeck(ids, start=13, stride=stride)
+    walked = list(deck)
+    assert len(walked) == len(ids)
+    assert sorted(walked) == sorted(ids), "the deck is not a permutation"
+
+
+def test_random_stride_is_always_coprime() -> None:
+    from search.random_session import random_stride
+
+    for n in (1, 2, 3, 7, 100, 999, 1024, 2_244_659):
+        stride = random_stride(n, np.random.default_rng(n))
+        assert math.gcd(stride, n) == 1, (n, stride)
+
+
+def test_the_strided_deck_slices_like_a_list() -> None:
+    from search.random_session import StridedDeck
+
+    ids = [f"id-{i}" for i in range(100)]
+    deck = StridedDeck(ids, start=5, stride=37)
+    assert deck[0] == ids[5]
+    assert deck[10] == ids[(5 + 37 * 10) % 100]
+    assert deck[0:10] == [ids[(5 + 37 * i) % 100] for i in range(10)]
+    assert deck[95:105] == [ids[(5 + 37 * i) % 100] for i in range(95, 100)]
+    assert deck[10:10] == []
+    assert len(deck) == 100
+
+
+def test_two_sessions_get_different_orders() -> None:
+    """A fresh session must not repeat the previous one's order."""
+    from search.random_session import StridedDeck, random_stride
+
+    ids = [f"id-{i}" for i in range(500)]
+    orders = set()
+    for seed in range(10):
+        rng = np.random.default_rng(seed)
+        deck = StridedDeck(
+            ids, start=int(rng.integers(0, len(ids))),
+            stride=random_stride(len(ids), rng),
+        )
+        orders.add(tuple(deck[:20]))
+    assert len(orders) == 10, "two sessions shared an order"
+
+
+def test_the_deck_costs_no_per_session_memory() -> None:
+    """The deck must be a view, not a materialised copy.
+
+    A materialised permutation was 18.5 MB for the 2.2M-point
+    corpus, held for each session's 30-minute TTL with no cap on the
+    number of live sessions.
+    """
+    from search.random_session import StridedDeck
+
+    ids = [f"id-{i}" for i in range(2_244_659)]
+    deck = StridedDeck(ids, start=1, stride=3)
+    assert len(deck) == len(ids)
+    # The view holds a reference to the list and two integers.
+    assert not hasattr(deck, "_permutation")
+    assert set(deck.__slots__) == {"_ids", "_start", "_stride", "_n"}
