@@ -454,12 +454,21 @@ def main(argv=None):
     # means only genuinely-missing files under the managed sources are
     # removed — points from unmanaged sources are never touched.
     if args.prune and not args.dry_run:
-        removed = upsert.prune_missing(
-            client, args.qdrant_collection,
-            source_dirs=args.source,
-            source_names=source_names,
-        )
-        logger.info("prune removed %d point(s)", removed)
+        try:
+            removed = upsert.prune_missing(
+                client, args.qdrant_collection,
+                source_dirs=args.source,
+                source_names=source_names,
+            )
+        except upsert.PruneScopeError as exc:
+            # The prune could not be scoped safely — abort it, but keep
+            # indexing. Skipping the prune is the safe failure: the
+            # alternative is deleting points whose files are merely
+            # unreachable.
+            logger.error("prune aborted: %s", exc)
+            removed = 0
+        else:
+            logger.info("prune removed %d point(s)", removed)
 
     for src_path, src_name in zip(args.source, source_names, strict=True):
         logger.info("=== %s -> %s ===", src_path, src_name)
