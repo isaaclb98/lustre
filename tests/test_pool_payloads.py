@@ -119,3 +119,47 @@ def test_the_deck_needs_only_ids_and_scores() -> None:
         assert ".score" in src
         # ...and the payload is never read off a pool hit.
         assert ".payload" not in src
+
+
+def test_the_pool_search_uses_a_narrow_hnsw_beam() -> None:
+    """The pool search must not widen the HNSW beam to the pool size.
+
+    Qdrant's effective `hnsw_ef` grows with `limit`, so a
+    20,000-candidate search becomes an exhaustive traversal: 43.6s on
+    the production corpus, 11.3s on a cold page cache. The pool
+    feeds a Gumbel draw, not a precise top-k, so it uses a fixed
+    narrow beam — 0.29s, with identical scores.
+    """
+    import asyncio
+
+    from search.surprise_deck import (
+        POOL_HNSW_EF,
+        SurpriseDeckCache,
+        build_surprise_deck,
+    )
+
+    qdrant = _FakeQdrant()
+    asyncio.run(
+        build_surprise_deck(
+            qdrant=qdrant,
+            vec=[0.0] * 8,
+            collections=[],
+            surprise_allowed_ids=None,
+            surprise_pool=20000,
+            surprise_temperature=0.5,
+            surprise_seed=1,
+            surprise_session=None,
+            surprise_cache_key="k",
+            surprise_deck_cache=SurpriseDeckCache(),
+            effective_limit=10,
+            offset=0,
+        )
+    )
+    assert qdrant.search_calls, "the pool search never ran"
+    params = qdrant.search_calls[0].get("search_params")
+    assert params is not None, "the pool search did not set hnsw_ef"
+    assert params.hnsw_ef == POOL_HNSW_EF
+    assert params.hnsw_ef < 20000, (
+        "the beam must stay narrow — a wide beam is what made the "
+        "deep pools time out"
+    )
