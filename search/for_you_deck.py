@@ -191,10 +191,14 @@ def build_for_you_deck(
             f"{TEMPERATURE_MAX}]; got {temperature}"
         )
 
+    # with_payload=False: the pool is a source of ids and scores for
+    # the Gumbel draw. The page that is actually returned is
+    # hydrated separately, so pulling 20k-50k payloads here is waste.
     hits = qdrant.recommend(
         positive=list(fav_ids),
         negative=list(dis_ids),
         limit=pool_size,
+        with_payload=False,
     )
     if not hits:
         raise RuntimeError("recommend returned no candidates")

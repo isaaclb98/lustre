@@ -61,6 +61,7 @@ class QdrantSearch:
         allowed_ids: list[str] | None = None,
         exclude_ids: list[str] | None = None,
         path_filter: Any | None = None,
+        with_payload: bool = True,
     ) -> tuple[list[SearchHit], bool]:
         """
         Top-K search with optional offset and collection filter.
@@ -102,6 +103,14 @@ class QdrantSearch:
         SQLite FTS5 index and passing it as `allowed_ids` — the
         text index is evaluated server-side, so no id list is
         serialised per request.
+
+        `with_payload=False` drops the payload from the response
+        and leaves only the id and the score. Use it when the
+        caller only needs ids + scores — a CANDIDATE POOL build,
+        for example, which draws a deck out of tens of thousands
+        of hits and hydrates only the page it returns. Fetching
+        50,000 payloads costs real time and real memory on both
+        sides of the wire for data the caller throws away.
 
         Pass None or an empty list to skip filtering (search all
         collections / all points, which is the default behavior).
@@ -150,7 +159,7 @@ class QdrantSearch:
             limit=limit,
             offset=offset,
             query_filter=query_filter,
-            with_payload=True,
+            with_payload=with_payload,
             with_vectors=False,
             timeout=self.timeout_ms // 1000,
         )
@@ -179,6 +188,7 @@ class QdrantSearch:
         with_vector: bool = False,
         score_threshold: float | None = None,
         offset: int = 0,
+        with_payload: bool = True,
     ) -> list[SearchHit]:
         """
         Qdrant Recommend API: return the points nearest to
@@ -199,6 +209,11 @@ class QdrantSearch:
         `allowed_ids` mirrors the `search()` param: AND a `HasId`
         condition into the existing filter so the recommend path
         honours the filename filter too. Empty / None skips.
+
+        `with_payload=False` returns ids and scores only. A
+        candidate-pool build reads nothing but the id and the
+        score, so fetching the payload of every one of 20k-50k
+        candidates is wasted time and memory on both sides.
 
         Implementation note: qdrant-client 1.18 removed the
         direct `client.recommend(...)` method in favor of the
@@ -245,7 +260,7 @@ class QdrantSearch:
                 offset=offset,
                 score_threshold=score_threshold,
                 query_filter=query_filter,
-                with_payload=True,
+                with_payload=with_payload,
                 with_vectors=with_vector,
                 # Use the dedicated, more generous timeout — the
                 # recommend path needs more headroom than the
