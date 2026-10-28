@@ -150,17 +150,19 @@ def build_random_router(
                 clean_collections.append(c)
 
         try:
-            # Return existing live session, or None if we need to
-            # materialize a new one. The materialize runs in a thread
-            # so the SQL `ORDER BY RANDOM()` doesn't block the event
-            # loop. At 182 photos this is microseconds; at 2M it's
-            # ~5s but paid once per session, then cached.
+            # Return the existing live session, or make a new one. A
+            # new session's deck is a CURSOR into the corpus's id
+            # space, not a list: Qdrant's scroll takes a point-id
+            # cursor and accepts any uuid, so the session can start
+            # anywhere and read forward a page at a time. Nothing is
+            # materialized up front, so the event loop is never
+            # blocked and no full id scroll ever happens.
             existing = store.get(session)
             if existing is None:
-                ids = await asyncio.to_thread(
-                    index_db.shuffled_id_deck, tuple(clean_collections)
+                deck = await asyncio.to_thread(
+                    index_db.new_cursor_deck, tuple(clean_collections)
                 )
-                session_id, sess = store.put_new(ids)
+                session_id, sess = store.put_new(deck)
             else:
                 session_id, sess = existing
         except Exception:
@@ -174,12 +176,18 @@ def build_random_router(
                 ).model_dump(),
             )
 
-        total = len(sess.ids)
+        # The deck's length: how many ids the walk will produce. The
+        # deck reads them from the collection as the session walks it.
+        total = sess.deck.total
         # Clamp offset to the deck length. An offset past the end
         # means the caller has walked the whole session; return
         # empty results with has_more=False.
         effective_offset = min(max(offset, 0), total)
-        batch_ids = sess.ids[effective_offset : effective_offset + limit]
+        # The deck reads the ids for this page on demand. The scroll
+        # that backs it runs in a thread — it is a network call.
+        batch_ids = await asyncio.to_thread(
+            sess.deck.take, effective_offset, limit
+        )
 
         # Materialize full SearchResults from the deck ids.
         rows: list[dict[str, Any]] = []

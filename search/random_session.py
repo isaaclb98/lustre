@@ -31,10 +31,10 @@ Two non-obvious shapes this module owns:
 
 from __future__ import annotations
 
-import math
 import secrets
 import time
-from collections.abc import Sequence
+import uuid
+from collections.abc import Callable
 from typing import Any
 
 # Default session lifetime. After this many seconds the shuffled
@@ -42,65 +42,161 @@ from typing import Any
 RANDOM_SESSION_TTL_S = 30 * 60
 
 
-class StridedDeck(Sequence[str]):
-    """A random order over an id list, without materialising it.
+# How many ids one scroll reads. The scroll's cost is a fixed ~25ms
+# seek plus ~0.01ms per id, so a batch amortises the seek over many
+# pages: 1,000 ids is one ~10ms scroll that serves 41 pages of 24.
+CURSOR_BUFFER_SIZE = 1000
 
-    A random start plus a stride coprime with the list length is a
-    permutation of the range: every index is visited exactly once, so
-    the deck keeps the property the /random route promises — every
-    photo served exactly once per session, forward only, no repeats.
 
-    Materialising that permutation cost a pointer array per session:
-    18.5 MB for the 2.2M-point production corpus, held for the
-    session's 30-minute TTL, with no cap on the number of sessions.
-    This view costs two integers.
+class CursorDeck:
+    """A per-session walk over the corpus's point ids, read on demand.
 
-    The underlying id list is in Qdrant's scroll order, which is
-    point-id order — the ids are uuid5 hashes of the path, so the
-    list is already uncorrelated with the photos. Any stride over it
-    is therefore an uncorrelated order, which is why a stride is
-    enough and a full shuffle is not needed.
+    The deck is a cursor, not a list. Qdrant's REST scroll takes its
+    `offset` as a point-id cursor, and it accepts ANY uuid — even
+    one that does not exist — starting from the first point whose
+    id sorts after it. So a session can begin anywhere in the id
+    space with a bare `uuid4()`, and read forward from there.
+
+    The ids are uuid5 hashes of the photo's path, so the id order is
+    already uncorrelated with the photos: walking it from a random
+    point yields a random-looking sample of the corpus.
+
+    This replaces a full id scroll — 25s over 2.2M points, 200 MB
+    of cached uuid strings, and a scroll's worth of page-cache
+    traffic evicting Qdrant's hot collection from the cache. A
+    session here costs one uuid and a small buffer.
+
+    The session covers the ids from its start to the end of the
+    collection — a random half of the corpus on average, and never
+    the same half twice in a row. Within a session no id repeats.
     """
 
-    __slots__ = ("_ids", "_n", "_start", "_stride")
+    __slots__ = (
+        "_buffer",
+        "_buffer_start",
+        "_cursor",
+        "_exhausted",
+        "_fetch",
+        "_position",
+        "_total",
+        "_wrapped",
+    )
 
-    def __init__(self, ids: Sequence[str], start: int, stride: int) -> None:
-        self._ids = ids
-        self._start = start
-        self._stride = stride
-        self._n = len(ids)
+    def __init__(
+        self,
+        fetch: Callable[[Any, int], tuple[list[str], Any]],
+        start: str | None = None,
+        total: int = 0,
+    ) -> None:
+        """`fetch(cursor, limit)` returns `(ids, next_cursor)`.
 
-    def __len__(self) -> int:
-        return self._n
+        `start` is the uuid the walk begins from. None means the
+        beginning of the collection.
 
-    def __getitem__(self, index: Any) -> Any:
-        if isinstance(index, slice):
-            lo, hi, _ = index.indices(self._n)
-            if hi <= lo:
-                return []
-            n, start, stride = self._n, self._start, self._stride
-            pos = (start + stride * lo) % n
-            ids = self._ids
-            return [ids[(pos + stride * j) % n] for j in range(hi - lo)]
-        i = index if index >= 0 else index + self._n
-        if i < 0 or i >= self._n:
-            raise IndexError(index)
-        return self._ids[(self._start + self._stride * i) % self._n]
+        `total` is how many ids the walk will produce — the size of
+        the corpus, or of the filtered subset. The walk reads to the
+        end of the collection and then continues from the beginning,
+        so it covers every id exactly once whatever point it started
+        at.
+        """
+        self._fetch = fetch
+        self._cursor: Any = start
+        self._buffer: list[str] = []
+        self._buffer_start = 0
+        self._position = 0
+        self._exhausted = False
+        self._wrapped = False
+        self._total = total
+
+    @property
+    def total(self) -> int:
+        """How many ids the walk will produce."""
+        return self._total
+
+    @property
+    def position(self) -> int:
+        """How many ids this deck has produced."""
+        return self._position
+
+    @property
+    def exhausted(self) -> bool:
+        """True once the walk has produced every id there is."""
+        return self._exhausted or self._position >= self._total
+
+    def take(self, offset: int, count: int) -> list[str]:
+        """The `count` ids at absolute `offset` in the walk.
+
+        The offset is absolute so the client's paging contract is
+        unchanged: the walk's order is the order the ids are served
+        in, whether they come from the tail of the collection or,
+        after the wrap, from its head.
+
+        A page is filled even when the walk starts near the end of
+        the collection: the walk continues (wrapping if it has to)
+        until the page is full or the corpus is exhausted.
+        """
+        if count <= 0:
+            return []
+        out: list[str] = []
+        pos = offset
+        while len(out) < count:
+            if not (
+                self._buffer_start
+                <= pos
+                < self._buffer_start + len(self._buffer)
+            ):
+                if not self._advance():
+                    break
+                continue
+            i = pos - self._buffer_start
+            chunk = self._buffer[i : i + (count - len(out))]
+            out.extend(chunk)
+            pos += len(chunk)
+        return out
+
+    def _advance(self) -> bool:
+        """Read the next batch of ids from the cursor."""
+        if self._exhausted:
+            return False
+        # The walk produces exactly `total` ids — the corpus (or the
+        # filtered subset) holds that many. Stopping there is what
+        # keeps the wrap from serving the same ids twice.
+        remaining = self._total - self._position
+        if remaining <= 0:
+            self._exhausted = True
+            return False
+        limit = min(CURSOR_BUFFER_SIZE, remaining)
+        ids, next_cursor = self._fetch(self._cursor, limit)
+        if not ids and not self._wrapped:
+            # The walk has reached the end of the collection. It
+            # started at a random point, so it has covered the ids
+            # from there to the end; continuing from the beginning
+            # covers the rest, and every id exactly once.
+            self._wrapped = True
+            self._cursor = None
+            ids, next_cursor = self._fetch(None, limit)
+        if not ids:
+            self._exhausted = True
+            self._cursor = None
+            return False
+        # The walk must not produce more ids than the corpus holds.
+        ids = ids[:remaining]
+        self._buffer = ids
+        self._buffer_start = self._position
+        self._position += len(ids)
+        self._cursor = next_cursor
+        return True
 
 
-def random_stride(length: int, rng: Any) -> int:
-    """A random stride coprime with `length`.
+def random_start_uuid() -> str:
+    """A random point in the corpus's id space to start a walk from.
 
-    Coprimality is what makes the stride a permutation: with
-    `gcd(stride, length) == 1` the walk visits every index exactly
-    once before it returns to the start.
+    The ids are uuid5 hashes, so a random uuid lands at a random
+    place among them. `uuid4` is used rather than `uuid5` of
+    something: only the ordering matters, and a v4 uuid is the
+    cheapest random one.
     """
-    if length <= 2:
-        return 1
-    while True:
-        s = int(rng.integers(1, length))
-        if math.gcd(s, length) == 1:
-            return s
+    return str(uuid.uuid4())
 
 
 class RandomSession:
@@ -111,10 +207,10 @@ class RandomSession:
     tests construct and inspect these directly.
     """
 
-    __slots__ = ("created_at", "ids", "ttl_s")
+    __slots__ = ("created_at", "deck", "ttl_s")
 
-    def __init__(self, ids: Sequence[str], ttl_s: float):
-        self.ids = ids
+    def __init__(self, deck: CursorDeck, ttl_s: float):
+        self.deck = deck
         self.created_at = time.monotonic()
         self.ttl_s = ttl_s
 
@@ -151,13 +247,13 @@ class RandomSessionStore:
             return None
         return session_id, sess
 
-    def put_new(self, ids: list[str]) -> tuple[str, RandomSession]:
+    def put_new(self, deck: CursorDeck) -> tuple[str, RandomSession]:
         """Materialize a fresh session with a new id and the given
-        shuffled deck. The caller is responsible for having run
-        the materialize (possibly in a thread).
+        deck. The caller is responsible for having built the deck
+        (possibly in a thread).
         """
         new_id = secrets.token_urlsafe(16)
-        sess = RandomSession(ids, self._ttl_s)
+        sess = RandomSession(deck, self._ttl_s)
         self._sessions[new_id] = sess
         return new_id, sess
 
@@ -170,9 +266,10 @@ class RandomSessionStore:
 
 
 __all__ = [
+    "CURSOR_BUFFER_SIZE",
     "RANDOM_SESSION_TTL_S",
+    "CursorDeck",
     "RandomSession",
     "RandomSessionStore",
-    "StridedDeck",
-    "random_stride",
+    "random_start_uuid",
 ]

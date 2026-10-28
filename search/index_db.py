@@ -20,9 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
-from search.random_session import StridedDeck, random_stride
+from search.random_session import CursorDeck, random_start_uuid
 
 if TYPE_CHECKING:
     from search.qdrant_client import QdrantSearch
@@ -59,7 +57,6 @@ class IndexDB:
         db_path: str,
         qdrant_client: QdrantSearch,
         refresh_interval_seconds: int = 21600,
-        id_cache_ttl_seconds: int = 900,
     ):
         self.db_path = db_path
         self.qdrant_client = qdrant_client
@@ -73,13 +70,10 @@ class IndexDB:
         # full Qdrant id scroll is ~25s on the 2.2M corpus, so the
         # scroll is done once and the result reused; only the
         # shuffle is per session.
-        self._id_cache: dict[tuple[str, ...], tuple[float, list[str]]] = {}
         self._count_cache: int | None = None
         self._count_cache_at: float = 0.0
-        self._id_cache_ttl_s = float(id_cache_ttl_seconds)
         # Serialises cache BUILDS (the scroll), so a request and the
         # background warmer do not both pay for it.
-        self._id_cache_lock = threading.Lock()
         # Refresh lock — non-reentrant guard against the periodic
         # background task and the manual /api/cache/refresh endpoint
         # racing. Acquired before the maintenance runs, released
@@ -488,118 +482,34 @@ class IndexDB:
             logger.info("purged orphaned user data: %s", purged)
         return purged
 
-    def shuffled_id_deck(
+    def new_cursor_deck(
         self, collections: tuple[str, ...] | list[str] = ()
-    ) -> list[str]:
-        """Materialize a full shuffled permutation of all point ids.
+    ) -> Any:
+        """A fresh /random deck: a cursor into the corpus's id space.
 
-        This is what backs the /random session-cursor shape: one
-        full shuffle per session, then sequential reads via
-        `rows_by_ids`.
+        The deck is read on demand, one page at a time. Qdrant's
+        REST scroll takes its `offset` as a point-id cursor and
+        accepts ANY uuid — including one that does not exist —
+        starting from the first point whose id sorts after it. So a
+        session can begin anywhere in the id space with a bare
+        `uuid4()`, and read forward from there.
 
-        The ids come from Qdrant, which owns the corpus. The
-        collection filter is applied SERVER-SIDE against the
-        `collection` keyword index, so the filtered case does not
-        have to fetch any payload.
-
-        **The id list is cached; the shuffle is per session.**
-
-        A full id scroll over the 2.2M-point production corpus
-        takes ~25s — Qdrant has to read every point record, and the
-        REST API has no id-only scroll mode. That was cheap when
-        the deck came from a local SQLite table (2.26s for the
-        whole thing, scroll and shuffle together); over the network
-        it is not, and a session that pays 25s to open is a session
-        the user does not use.
-
-        So the scroll result is cached per collection filter and
-        reused, and only the SHUFFLE is done per session — which is
-        what makes each session's order different, and what the
-        /random UX actually promises ("a fresh shuffle per call").
-
-        The shuffle is a numpy permutation over the cached list:
-        ~0.4s for 2.2M ids, against ~1.7s for `random.shuffle`'s
-        Python-level loop. The returned list shares the cached
-        list's string objects, so a session costs a pointer array
-        (~17 MB for 2.2M ids) rather than a second copy of every
-        id (~180 MB).
-
-        Returns ALL ids matching the collection filter (or all ids
-        if `collections` is empty), in a random order. The caller
-        uses this as the deck; offsets slice into it.
+        This replaces a full id scroll: 25s over 2.2M points, 200 MB
+        of cached uuid strings, and a scroll's worth of page-cache
+        traffic evicting Qdrant's hot collection from the cache.
         """
-        collections = tuple(c for c in (collections or ()) if c)
-        ids = self._cached_point_ids(collections)
-        if len(ids) < 2:
-            return list(ids)
-        # Qdrant returns ids in storage order, and the ids are uuid5
-        # hashes of the path, so that order is already uncorrelated
-        # with the photos. The deck therefore only needs to be a
-        # permutation of it, not a full shuffle: a random start plus
-        # a stride coprime with the length visits every index exactly
-        # once and costs two integers.
-        #
-        # The alternative — a numpy permutation — cost a pointer
-        # array per session: 18.5 MB for the 2.2M-point corpus, held
-        # for the session's 30-minute TTL with no cap on the number
-        # of live sessions.
-        rng = np.random.default_rng()
-        n = len(ids)
-        start = int(rng.integers(0, n))
-        stride = random_stride(n, rng)
-        return StridedDeck(ids, start, stride)
+        clean = tuple(c for c in (collections or ()) if c)
 
-    def _cached_point_ids(
-        self, collections: tuple[str, ...]
-    ) -> list[str]:
-        """The corpus's point ids, cached per collection filter.
+        def fetch(cursor: Any, limit: int) -> tuple[list[str], Any]:
+            return self.qdrant_client.scroll_point_ids(
+                cursor, limit, list(clean) or None
+            )
 
-        The cache holds the id LIST (shared, immutable). Callers that
-        want a random order make their own permuted copy — see
-        `shuffled_id_deck`.
-        """
-        with self._lock:
-            entry = self._id_cache.get(collections)
-            if entry is not None:
-                return entry[1]
-
-        return self.refresh_id_cache(collections)
-
-    def refresh_id_cache(
-        self, collections: tuple[str, ...] = ()
-    ) -> list[str]:
-        """Rebuild the cached id list for a collection filter.
-
-        Called on a miss, and by the background warmer. A stale
-        entry is served rather than rebuilt on the request path —
-        the ids do not change unless the corpus is re-indexed, and a
-        request should never wait ~25s for a fresh scroll.
-        """
-        collections = tuple(c for c in (collections or ()) if c)
-        with self._id_cache_lock:
-            with self._lock:
-                entry = self._id_cache.get(collections)
-                if entry is not None and (time.time() - entry[0]) < self._id_cache_ttl_s:
-                    return entry[1]
-            ids = self._all_point_ids(collections)
-            with self._lock:
-                self._id_cache[collections] = (time.time(), ids)
-        return ids
-
-    def _all_point_ids(self, collections: tuple[str, ...] = ()) -> list[str]:
-        """Every point id in the collection, optionally filtered by collection.
-
-        Scrolls the collection with `with_payload=False` so only the
-        ids cross the wire. The collection filter is a server-side
-        `MatchAny` against the keyword index on `collection`, so the
-        filtered case transfers no payload at all.
-        """
-        try:
-            hits = self.qdrant_client.scroll_ids(collections)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("id scroll failed (%s) — empty deck", e)
-            return []
-        return [hit.id for hit in hits]
+        # How many ids the walk will produce. The facet counts the
+        # points per collection in 0.009s; an exact count with the
+        # same filter takes 0.540s.
+        total = self.qdrant_client.collection_counts(list(clean) or None)
+        return CursorDeck(fetch, start=random_start_uuid(), total=total)
 
     def rows_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
         """Look up full row dicts for a list of point ids.
