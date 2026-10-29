@@ -406,12 +406,32 @@ def prune_missing(
     existing_paths: set[str] | None = None
     if source_dirs:
         existing_paths = set()
-        missing_dirs: list[str] = []
+        # Validate EVERY managed dir BEFORE walking any of them. The
+        # walk over the prod sources takes ~56 minutes over NFS, so a
+        # check placed after it would let a missing dir burn that
+        # hour before finally aborting — and the abort would arrive
+        # after the operator had already waited for nothing. Validate
+        # first; it is a stat() per dir, milliseconds.
+        missing_dirs = [
+            src for src in source_dirs
+            if not Path(src).exists() or not Path(src).is_dir()
+        ]
+        if missing_dirs:
+            # A managed source dir is missing. Its points are IN the
+            # delete scope (source_names covers them), but they are not
+            # in the alive-set (the dir could not be walked), so every
+            # one of them would look dead and be deleted. A missing
+            # dir is far more often a dropped NFS mount or a typo than
+            # a genuine mass deletion — so ABORT the prune instead of
+            # deleting on that assumption.
+            raise PruneScopeError(
+                "refusing to prune: managed source dir(s) missing or not a "
+                f"directory: {', '.join(missing_dirs)}. Their points would "
+                "all be treated as deleted files. Fix the mount or the path "
+                "and re-run."
+            )
         for src in source_dirs:
             src_path = Path(src)
-            if not src_path.exists() or not src_path.is_dir():
-                missing_dirs.append(src)
-                continue
             logger.info("prune: walking %s ...", src_path)
             t0 = time.monotonic()
             # `existing_image_paths` uses os.scandir and collects only
@@ -432,20 +452,6 @@ def prune_missing(
                         "prune: walked %d image files so far (%.0f/s, %dm %02ds elapsed) in %s",
                         walked, rate, int(elapsed) // 60, int(elapsed) % 60, src_path,
                     )
-        if missing_dirs:
-            # A managed source dir is missing. Its points are IN the
-            # delete scope (source_names covers them), but they are not
-            # in the alive-set (the dir could not be walked), so every
-            # one of them would look dead and be deleted. A missing
-            # dir is far more often a dropped NFS mount or a typo than
-            # a genuine mass deletion — so ABORT the prune instead of
-            # deleting on that assumption.
-            raise PruneScopeError(
-                "refusing to prune: managed source dir(s) missing or not a "
-                f"directory: {', '.join(missing_dirs)}. Their points would "
-                "all be treated as deleted files. Fix the mount or the path "
-                "and re-run."
-            )
         logger.info(
             "prune: pre-walked %d files under %d source dir(s)",
             len(existing_paths), len(source_dirs),

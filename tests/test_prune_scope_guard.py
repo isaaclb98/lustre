@@ -82,6 +82,33 @@ def test_missing_source_dir_aborts_the_prune(qdrant_with_points, source_dirs) ->
     assert qdrant_with_points.count(collection_name="images", exact=True).count == 8
 
 
+def test_missing_source_dir_aborts_before_walking_any_dir(qdrant_with_points, source_dirs) -> None:
+    """The abort must not wait for the walk.
+
+    The prod source dirs hold 2.3M files over NFS and the walk takes
+    ~56 minutes. A guard that checked for a missing dir AFTER the walk
+    would let the operator wait an hour to be told the prune could not
+    run. The check is a stat() per dir and must come first.
+    """
+    present = source_dirs["present"]
+
+    def _explode(*args, **kwargs):
+        raise AssertionError("the walk must not start before the scope check")
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr("indexer.upsert.existing_image_paths", _explode)
+    try:
+        with pytest.raises(PruneScopeError):
+            prune_missing(
+                qdrant_with_points,
+                "images",
+                source_dirs=[str(present), str(source_dirs["vanished"])],
+                source_names=["present", "vanished"],
+            )
+    finally:
+        monkey.undo()
+
+
 def test_all_source_dirs_present_still_prunes(qdrant_with_points, source_dirs) -> None:
     """The guard does not disable normal pruning.
 
