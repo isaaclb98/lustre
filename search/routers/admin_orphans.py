@@ -62,6 +62,15 @@ class OrphanListResponse(BaseModel):
     sample: list[OrphanSample] = Field(default_factory=list)
     """A sample of the orphans, for review."""
 
+    orphaned_user_data: dict[str, int] = Field(default_factory=dict)
+    """How many user-state rows a purge would remove.
+
+    This is the SQLite half of the orphan count, and it is counted
+    independently of the Qdrant half: a favourite whose photo was
+    deleted from disk is an orphan even if its Qdrant point was
+    never marked (the indexer may not have run since the deletion).
+    """
+
 
 class OrphanPurgeRequest(BaseModel):
     """Body for POST /api/admin/orphans/purge."""
@@ -76,6 +85,14 @@ class OrphanPurgeRequest(BaseModel):
     """Must be True. The purge is irreversible, so the caller has to
     say so explicitly — there is no default-true path into it."""
 
+    include_user_data: bool = True
+    """Also purge the orphaned user-state rows.
+
+    True by default: the point of a purge is to leave nothing
+    behind, and a favourite pointing at a deleted photo is exactly
+    the leftover the purge exists to clear.
+    """
+
 
 class OrphanPurgeResponse(BaseModel):
     """Body for POST /api/admin/orphans/purge."""
@@ -88,6 +105,11 @@ class OrphanPurgeResponse(BaseModel):
 
     user_state: dict[str, int] = Field(default_factory=dict)
     """Per-table counts of the SQLite rows that were removed."""
+
+    user_data_purged: dict[str, int] = Field(default_factory=dict)
+    """Per-table counts of the orphaned user-state rows the purge
+    removed by the file-based rule — the ones whose photo is gone
+    from disk, whether or not its Qdrant point was marked."""
 
     source: str | None = None
 
@@ -130,10 +152,19 @@ def build_admin_orphans_router(
             )
             for item in qdrant.list_orphans(limit=sample_size)
         ]
+        orphaned_user_data: dict[str, int] = {}
+        if index_db is not None:
+            try:
+                orphaned_user_data = index_db.count_orphaned_user_data()
+            except Exception:
+                # The count is informational. Failing to compute it
+                # must not break the review view.
+                logger.warning("orphan count: user-data count failed", exc_info=True)
         return OrphanListResponse(
             count=count,
             by_source=by_source,
             sample=sample,
+            orphaned_user_data=orphaned_user_data,
         )
 
     @router.post("/purge", response_model=OrphanPurgeResponse)
@@ -146,8 +177,21 @@ def build_admin_orphans_router(
 
         The Qdrant delete runs first, and it is scoped by the orphan
         marker: only points carrying `orphan_since` are in scope, so
-        a purge can never reach a live photo. The SQLite cleanup runs
-        after, for exactly the ids that were deleted.
+        a purge can never reach a live photo.
+
+        The SQLite cleanup runs after, in two parts:
+
+        - the ids that were just deleted from Qdrant (their
+          favourites, dislikes and album entries go with them);
+        - the rows whose photo is gone from DISK, whether or not its
+          Qdrant point was ever marked. The indexer may not have run
+          since the file was deleted, so its point is still unmarked
+          and the first part would miss it.
+
+        The second part is the file-based rule — liveness decided by
+        the filesystem, never by "is it in Qdrant". A photo that is
+        on disk but not currently indexed keeps its favourite, and
+        re-attaches when the photo comes back.
         """
         if not req.confirm:
             raise HTTPException(
@@ -172,26 +216,37 @@ def build_admin_orphans_router(
 
         deleted_ids: list[str] = result.get("ids", [])
         user_state: dict[str, int] = {}
-        if deleted_ids and index_db is not None:
-            try:
-                user_state = index_db.delete_user_state_for_ids(deleted_ids)
-            except Exception:
-                # The Qdrant delete already happened. Failing to clean
-                # up SQLite leaves rows pointing at deleted photos —
-                # which the orphan purge will catch on its next run.
-                # Reporting it is better than hiding it.
-                logger.exception("orphan purge: SQLite cleanup failed")
-                user_state = {"error": 1}
+        user_data_purged: dict[str, int] = {}
+        if index_db is not None:
+            if deleted_ids:
+                try:
+                    user_state = index_db.delete_user_state_for_ids(deleted_ids)
+                except Exception:
+                    # The Qdrant delete already happened. Failing to
+                    # clean up SQLite leaves rows pointing at deleted
+                    # photos — which the orphan purge will catch on
+                    # its next run. Reporting it is better than
+                    # hiding it.
+                    logger.exception("orphan purge: SQLite cleanup failed")
+                    user_state = {"error": 1}
+            if req.include_user_data:
+                try:
+                    user_data_purged = index_db.purge_orphaned_user_data()
+                except Exception:
+                    logger.exception("orphan purge: user-data purge failed")
+                    user_data_purged = {"error": 1}
 
         remaining = qdrant.count_orphans()
         logger.info(
-            "confirmed orphan purge: deleted=%d remaining=%d source=%s",
-            result.get("deleted", 0), remaining, req.source,
+            "confirmed orphan purge: deleted=%d remaining=%d source=%s "
+            "user_data=%s",
+            result.get("deleted", 0), remaining, req.source, user_data_purged,
         )
         return OrphanPurgeResponse(
             deleted=int(result.get("deleted", 0)),
             remaining=remaining,
             user_state=user_state,
+            user_data_purged=user_data_purged,
             source=req.source,
         )
 

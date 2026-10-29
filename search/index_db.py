@@ -546,8 +546,14 @@ class IndexDB:
         # Relative: it is relative to the photos root by definition.
         return Path(self.photos_root) / p
 
-    def purge_orphaned_user_data(self) -> dict[str, int]:
-        """Delete user-state rows whose photo is gone from DISK.
+    def find_orphaned_user_ids(self) -> list[str]:
+        """The user-state ids whose photo is gone from DISK.
+
+        Analysis only — nothing is deleted. This is the decision
+        half of the purge; `purge_orphaned_user_data` applies it.
+        `count_orphaned_user_data` reports on it without applying
+        it, so the UI can show what a purge would remove before the
+        operator asks for one.
 
         Orphans accumulate when the indexer prunes Qdrant points
         (files deleted from disk): the favourite/dislike/album rows
@@ -620,12 +626,7 @@ class IndexDB:
                 candidate_ids.update(r["v"] for r in rows)
 
             if not candidate_ids:
-                return {
-                    "favorites": 0,
-                    "dislikes": 0,
-                    "album_memberships": 0,
-                    "album_covers_reset": 0,
-                }
+                return []
 
             recorded_paths = {
                 r["id"]: r["path"]
@@ -687,16 +688,86 @@ class IndexDB:
                 orphan_set.update(pid for pid in no_path if pid not in live_ids)
 
         # SQLite binds parameters from a sequence, not a set.
-        orphans = sorted(orphan_set)
+        return sorted(orphan_set)
 
+    def count_orphaned_user_data(self) -> dict[str, int]:
+        """How many user-state rows a purge would remove.
+
+        Reports what `purge_orphaned_user_data` would delete without
+        deleting any of it, so the operator can see the scope before
+        asking for the purge.
+
+        Returns the same per-table keys the purge reports, so the
+        UI can show "12 favourites, 3 album entries" without the
+        operator having to run it to find out.
+        """
+        orphans = self.find_orphaned_user_ids()
+        if not orphans:
+            return {
+                "favorites": 0,
+                "dislikes": 0,
+                "album_memberships": 0,
+                "album_covers_reset": 0,
+            }
         with self._lock:
-            if not orphans:
-                return {
-                    "favorites": 0,
-                    "dislikes": 0,
-                    "album_memberships": 0,
-                    "album_covers_reset": 0,
-                }
+            placeholders = ",".join("?" * len(orphans))
+            counts = {
+                "favorites": self._conn.execute(
+                    f"SELECT COUNT(*) AS c FROM favorites "  # noqa: S608
+                    f"WHERE id IN ({placeholders})",
+                    orphans,
+                ).fetchone()["c"],
+                "dislikes": self._conn.execute(
+                    f"SELECT COUNT(*) AS c FROM dislikes "  # noqa: S608
+                    f"WHERE id IN ({placeholders})",
+                    orphans,
+                ).fetchone()["c"],
+                "album_memberships": self._conn.execute(
+                    f"SELECT COUNT(*) AS c FROM album_memberships "  # noqa: S608
+                    f"WHERE favorite_id IN ({placeholders})",
+                    orphans,
+                ).fetchone()["c"],
+                "album_covers_reset": self._conn.execute(
+                    f"SELECT COUNT(*) AS c FROM albums "  # noqa: S608
+                    f"WHERE cover_favorite_id IN ({placeholders})",
+                    orphans,
+                ).fetchone()["c"],
+            }
+        return counts
+
+    def purge_orphaned_user_data(self) -> dict[str, int]:
+        """Delete user-state rows whose photo is gone from DISK.
+
+        The delete half of `find_orphaned_user_ids`. See that method
+        for why liveness is decided against the filesystem rather
+        than against Qdrant.
+
+        Purges:
+          - favorites / dislikes rows whose file is gone from disk
+          - album_memberships whose photo's file is gone (a
+            membership of a deleted photo renders as a dead
+            thumbnail; note memberships do NOT require the photo
+            to be a favourite — add_album_member allows any id —
+            so liveness is checked against the file alone)
+          - albums.cover_favorite_id refs pointing at photos whose
+            file is gone (reset to '' so the UI falls back to the
+            first member)
+
+        Keeps: feedback_events (append-only history log, not state —
+        nothing feeds it back into recommend) and saved_searches
+        (prompt text only, no point ids).
+
+        Returns per-table deletion counts for logging/API response.
+        """
+        orphans = self.find_orphaned_user_ids()
+        if not orphans:
+            return {
+                "favorites": 0,
+                "dislikes": 0,
+                "album_memberships": 0,
+                "album_covers_reset": 0,
+            }
+        with self._lock:
             placeholders = ",".join("?" * len(orphans))
             cur_memberships = self._conn.execute(
                 f"""
