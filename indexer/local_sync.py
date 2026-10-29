@@ -25,7 +25,9 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -46,6 +48,81 @@ from lustre_kernel.registry import get as _registry_get
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+
+# --- CUDA OOM detection --------------------------------------------------
+# A VRAM OOM used to be indistinguishable from a corrupt JPEG: the embed
+# call sat inside a bare `except Exception` that logged "embed failed",
+# counted the batch as errors, and continued. The run then limped to
+# completion reporting a corpus with holes in it, and the only evidence
+# was one log line per batch.
+#
+# An OOM is not a per-file error — it is a run-level failure. Every
+# subsequent batch will fail the same way, so continuing wastes hours
+# and produces a partially-embedded corpus that LOOKS like it succeeded.
+# The run must stop and say so.
+#
+# torch is imported lazily and defensively: the indexer also runs on
+# CPU-only hosts (oracle-a1), where torch may be absent entirely and
+# an OOM would be a host-RAM MemoryError rather than a VRAM one.
+
+def _is_cuda_oom(exc: BaseException) -> bool:
+    """True if `exc` is a CUDA out-of-memory error.
+
+    Matches on the exception's type name and message rather than
+    importing torch at module scope, so this works whether or not
+    torch is installed and without pulling in CUDA context at import
+    time.
+    """
+    # torch.cuda.OutOfMemoryError is a RuntimeError subclass whose
+    # class name is "OutOfMemoryError".
+    if type(exc).__name__ == "OutOfMemoryError":
+        return True
+    # Some CUDA paths raise a plain RuntimeError with the OOM text.
+    msg = str(exc).lower()
+    return "out of memory" in msg and ("cuda" in msg or "gpu" in msg)
+
+
+def _vram_free_mib() -> int | None:
+    """Free VRAM in MiB, or None if it cannot be determined.
+
+    Uses `nvidia-smi` rather than torch: this module must not import
+    an ML runtime (the kernel is the only place allowed to), and
+    `nvidia-smi` is present in the search container via the NVIDIA
+    runtime. Best-effort diagnostic only — the caller must not depend
+    on this returning a value.
+    """
+    try:
+        nvidia_smi = shutil.which("nvidia-smi")
+        if nvidia_smi is None:
+            return None
+        proc = subprocess.run(  # noqa: S603 — argv is a fixed literal, resolved via shutil.which
+            [
+                nvidia_smi,
+                "--query-gpu=memory.free",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        return int(proc.stdout.strip().splitlines()[0])
+    except Exception:  # noqa: BLE001 — diagnostic only, never fatal
+        return None
+
+
+def _describe_oom(exc: BaseException) -> str:
+    """Build the operator-facing description of an OOM."""
+    free = _vram_free_mib()
+    parts = [f"{type(exc).__name__}: {exc}"]
+    if free is not None:
+        parts.append(f"free VRAM now: {free} MiB")
+    parts.append(
+        "the batch does not fit in VRAM — lower INDEXER_BATCH_SIZE "
+        "(and EMBED_BATCH_SIZE) or free VRAM, then re-run"
+    )
+    return " | ".join(parts)
 
 
 # --- Cancellation support ------------------------------------------------
@@ -807,7 +884,27 @@ def main(argv=None):
                         encoder = VisionEncoder(arch=args.model, device=args.device)
 
                     vecs = encoder.embed_batch([letterbox_resize(img) for (_, img, _sw, _sh) in loaded])
-                except Exception:
+                except Exception as exc:
+                    if _is_cuda_oom(exc):
+                        # An OOM is a run-level failure, not a per-file
+                        # error. Every remaining batch would fail the
+                        # same way, so continuing would spend hours to
+                        # produce a corpus with holes in it and report
+                        # success. Stop, and make the reason explicit.
+                        desc = _describe_oom(exc)
+                        logger.error("CUDA OOM during embed: %s", desc)
+                        _emit_progress({
+                            "event": "failed",
+                            "stage": "embed",
+                            "error": f"CUDA out of memory: {desc}",
+                            "indexed": total_indexed,
+                            "reembedded": total_reembedded,
+                            "skipped": total_skipped,
+                            "errors": total_errors,
+                            "thumb_regens": total_thumb_regens,
+                            "duration_s": time.time() - t0,
+                        })
+                        return 1
                     logger.exception("embed failed")
                     total_errors += len(loaded)
                     continue

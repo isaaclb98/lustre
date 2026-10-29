@@ -404,6 +404,15 @@ class IndexerRunner:
                 thumb_regens=int(event.get("thumb_regens", 0)),
             )
             self._phase = None
+            if kind == "failed":
+                # Capture the child's reason. Without this the status
+                # API reports only "indexer exited with code 1" and
+                # the operator has to dig through the log buffer to
+                # find out why — which is exactly the gap that let a
+                # CUDA OOM hide behind a generic failure.
+                error = event.get("error")
+                if error:
+                    self._last_error = str(error)
 
     def _wait_loop(self) -> None:
         """Block on proc.wait(); update terminal state when it exits."""
