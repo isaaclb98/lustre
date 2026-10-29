@@ -176,7 +176,7 @@ class TestScrollExistingMeta:
         client = in_memory_qdrant
         points = [(f"a_{i}", float(i * 1000), i * 100) for i in range(5)]
         self._seed(client, "lib_a", points)
-        meta = local_sync._scroll_existing_meta(client, "images", "lib_a")
+        meta, _marked = local_sync._scroll_existing_meta(client, "images", "lib_a")
         assert len(meta) == 5
         for _label, mtime, size in points:
             pid = id_for(Path(f"/tmp/{_label}.jpg"), "lib_a")  # noqa: S108 — id_for() hash input
@@ -203,7 +203,7 @@ class TestScrollExistingMeta:
                 ),
             ],
         )
-        meta = local_sync._scroll_existing_meta(client, "images", "lib_a")
+        meta, _marked = local_sync._scroll_existing_meta(client, "images", "lib_a")
         assert meta[str(legacy_pid)] is None
         assert meta[str(modern_pid)] == (1234.0, 5678)
 
@@ -215,8 +215,8 @@ class TestScrollExistingMeta:
         # lib_b: 2 points (should NOT appear in lib_a's scroll)
         self._seed(client, "lib_b", [("b1", 4.0, 4), ("b2", 5.0, 5)])
 
-        meta_a = local_sync._scroll_existing_meta(client, "images", "lib_a")
-        meta_b = local_sync._scroll_existing_meta(client, "images", "lib_b")
+        meta_a, _marked = local_sync._scroll_existing_meta(client, "images", "lib_a")
+        meta_b, _marked = local_sync._scroll_existing_meta(client, "images", "lib_b")
 
         # Compute the expected IDs for lib_a (3) and lib_b (2)
         a_ids = {str(id_for(Path(f"/tmp/a{i}.jpg"), "lib_a")) for i in (1, 2, 3)}  # noqa: S108 — id_for() hash input
@@ -229,7 +229,7 @@ class TestScrollExistingMeta:
 
     def test_handles_empty_collection(self, in_memory_qdrant):
         """Scroll over a source with no points returns an empty dict."""
-        meta = local_sync._scroll_existing_meta(
+        meta, _marked = local_sync._scroll_existing_meta(
             in_memory_qdrant, "images", "nonexistent_source",
         )
         assert meta == {}
@@ -250,7 +250,7 @@ class TestScrollExistingMeta:
                 for i in range(1500)
             ],
         )
-        meta = local_sync._scroll_existing_meta(client, "images", "big_lib")
+        meta, _marked = local_sync._scroll_existing_meta(client, "images", "big_lib")
         assert len(meta) == 1500
         pid_0 = id_for(Path("/tmp/big_0.jpg"), "big_lib")  # noqa: S108 — id_for() hash input
         pid_last = id_for(Path("/tmp/big_1499.jpg"), "big_lib")  # noqa: S108 — id_for() hash input
