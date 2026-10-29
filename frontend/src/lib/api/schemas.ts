@@ -137,23 +137,6 @@ const ForYouState = z.object({
   freshest_feedback_ts: z.union([z.string(), z.null()]).optional()
 }).passthrough();
 
-// ---- misc ----
-const CollectionsList = z.object({
-  collections: z.array(
-    z.object({
-      name: z.string(),
-      count: z.number().int(),
-    }).passthrough()
-  )
-}).passthrough();
-const CentroidList = z.object({
-  centroids: z.array(z.object({
-    name: z.string(),
-    kind: z.string().optional(),
-    member_count: z.number().int().optional()
-  }).passthrough())
-}).passthrough();
-
 // ---- system / admin telemetry (Phase 2) ----
 // Mirror the Pydantic models in search/models.py. Used by the
 // home page (corpus size for the Surprise Me pool label) and
@@ -208,6 +191,46 @@ const DislikesList = z.object({
   has_more: z.boolean().optional()
 }).passthrough();
 
+// ---- orphans ----
+// The orphan review + confirmed purge. The sample is what the
+// operator looks at before confirming the purge.
+const OrphanSample = z.object({
+  id: z.string(),
+  path: z.string().optional(),
+  collection: z.string().optional(),
+  orphan_since: z.number().nullable().optional()
+}).passthrough();
+
+const OrphanListResponse = z.object({
+  count: z.number().int(),
+  by_source: z.record(z.string(), z.number().int()).optional(),
+  sample: z.array(OrphanSample).optional()
+}).passthrough();
+
+const OrphanPurgeResponse = z.object({
+  deleted: z.number().int(),
+  remaining: z.number().int(),
+  user_state: z.record(z.string(), z.number().int()).optional(),
+  source: z.string().nullable().optional()
+}).passthrough();
+
+// ---- misc ----
+const CollectionsList = z.object({
+  collections: z.array(
+    z.object({
+      name: z.string(),
+      count: z.number().int(),
+    }).passthrough()
+  )
+}).passthrough();
+const CentroidList = z.object({
+  centroids: z.array(z.object({
+    name: z.string(),
+    kind: z.string().optional(),
+    member_count: z.number().int().optional()
+  }).passthrough())
+}).passthrough();
+
 // ---- helpers ----
 
 /** Throws a helpful Error if data doesn't match the schema. */
@@ -244,7 +267,11 @@ export const Z = {
   ForYouFeedResponse,
   ForYouState,
   SystemStatus,
+  IndexerProgress,
   IndexerStatus,
   FavoritesList,
-  DislikesList
+  DislikesList,
+  OrphanSample,
+  OrphanListResponse,
+  OrphanPurgeResponse
 };

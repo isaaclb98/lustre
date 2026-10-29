@@ -668,6 +668,141 @@
         "title": "IndexerStatusResponse",
         "type": "object"
       },
+      "OrphanListResponse": {
+        "description": "Body for GET /api/admin/orphans.",
+        "properties": {
+          "by_source": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Source",
+            "type": "object"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "sample": {
+            "items": {
+              "$ref": "#/components/schemas/OrphanSample"
+            },
+            "title": "Sample",
+            "type": "array"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "OrphanListResponse",
+        "type": "object"
+      },
+      "OrphanPurgeRequest": {
+        "description": "Body for POST /api/admin/orphans/purge.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "title": "OrphanPurgeRequest",
+        "type": "object"
+      },
+      "OrphanPurgeResponse": {
+        "description": "Body for POST /api/admin/orphans/purge.",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "remaining": {
+            "title": "Remaining",
+            "type": "integer"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "user_state": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "User State",
+            "type": "object"
+          }
+        },
+        "required": [
+          "deleted",
+          "remaining"
+        ],
+        "title": "OrphanPurgeResponse",
+        "type": "object"
+      },
+      "OrphanSample": {
+        "description": "One marked orphan, as shown to the operator.",
+        "properties": {
+          "collection": {
+            "default": "",
+            "title": "Collection",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "orphan_since": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orphan Since"
+          },
+          "path": {
+            "default": "",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "OrphanSample",
+        "type": "object"
+      },
       "ReloadCentroidsResponse": {
         "description": "POST /api/centroids/reload \u2014 operator-initiated centroid refresh.\n\n`count` is the number of centroids the store successfully\nloaded. `centroids_dir` is the absolute filesystem path\nthe store scanned (or None when the store has no\nconfigured directory \u2014 same shape as a config-disabled\nstore).",
         "properties": {
@@ -1095,7 +1230,7 @@
     "/albums/{album_id}/download.zip": {
       "get": {
         "description": "Stream an album's photos as a zip \u2014 same shape and rules\nas `/favorites/download.zip`. Membership comes from\n`index_db.list_album_members` (INNER JOIN against the cache,\nso orphan rows are hidden from the archive too). Files we\ncan't resolve on disk are skipped and recorded in\n`_missing.txt`. Album id with no row \u2192 404.",
-        "operationId": "album_download_zip_albums__album_id__download_zip_head_1",
+        "operationId": "album_download_zip_albums__album_id__download_zip_get",
         "parameters": [
           {
             "in": "path",
@@ -1126,7 +1261,7 @@
       },
       "head": {
         "description": "Stream an album's photos as a zip \u2014 same shape and rules\nas `/favorites/download.zip`. Membership comes from\n`index_db.list_album_members` (INNER JOIN against the cache,\nso orphan rows are hidden from the archive too). Files we\ncan't resolve on disk are skipped and recorded in\n`_missing.txt`. Album id with no row \u2192 404.",
-        "operationId": "album_download_zip_albums__album_id__download_zip_head",
+        "operationId": "album_download_zip_albums__album_id__download_zip_get_1",
         "parameters": [
           {
             "in": "path",
@@ -1275,6 +1410,90 @@
           }
         },
         "summary": "Get Status"
+      }
+    },
+    "/api/admin/orphans": {
+      "get": {
+        "description": "How many orphans are marked, and which photos are they.\n\nThe review step of the two-step purge. The operator looks at\nthe count and the sample here, and only then confirms.",
+        "operationId": "list_orphans_api_admin_orphans_get",
+        "parameters": [
+          {
+            "description": "How many orphans to include in the sample.",
+            "in": "query",
+            "name": "sample_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "How many orphans to include in the sample.",
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Sample Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrphanListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Orphans"
+      }
+    },
+    "/api/admin/orphans/purge": {
+      "post": {
+        "description": "Delete the confirmed orphans from Qdrant and SQLite.\n\nThis is the irreversible half. It requires `confirm: true` in\nthe request body \u2014 there is no way to reach the delete without\nsaying so explicitly.\n\nThe Qdrant delete runs first, and it is scoped by the orphan\nmarker: only points carrying `orphan_since` are in scope, so\na purge can never reach a live photo. The SQLite cleanup runs\nafter, for exactly the ids that were deleted.",
+        "operationId": "purge_orphans_api_admin_orphans_purge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrphanPurgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrphanPurgeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Purge Orphans"
       }
     },
     "/api/albums": {
@@ -1600,16 +1819,17 @@
     },
     "/api/cache/refresh": {
       "get": {
-        "operationId": "api_cache_refresh_api_cache_refresh_get",
+        "description": "Purge user-state rows whose photo Qdrant no longer holds.\n\nThere is no derived cache to refresh any more. The photo\ncorpus, its metadata, and the native text index all live in\nQdrant; SQLite holds only the user's own state \u2014 favourites,\ndislikes, albums, memberships, saved searches, feedback.\n\nWhat this endpoint still does is the one thing that needed a\ntrigger: dropping user-state rows that point at photos the\nindexer has pruned. The purge checks liveness against\nQdrant, so a favourite is only dropped when the COLLECTION\nsays the photo is gone \u2014 never because a local mirror was\nstale.\n\nThe `full` parameter is accepted and ignored, so an old\ncaller does not break.",
+        "operationId": "api_cache_refresh_api_cache_refresh_post_1",
         "parameters": [
           {
-            "description": "Round-35: when true, do the legacy wipe+rebuild (init_from_qdrant force=True). Default false uses the new diff-based refresh_incremental which preserves concurrent indexer writes and only touches rows that actually drifted.",
+            "description": "Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant.",
             "in": "query",
             "name": "full",
             "required": false,
             "schema": {
               "default": false,
-              "description": "Round-35: when true, do the legacy wipe+rebuild (init_from_qdrant force=True). Default false uses the new diff-based refresh_incremental which preserves concurrent indexer writes and only touches rows that actually drifted.",
+              "description": "Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant.",
               "title": "Full",
               "type": "boolean"
             }
@@ -1638,16 +1858,17 @@
         "summary": "Api Cache Refresh"
       },
       "post": {
-        "operationId": "api_cache_refresh_api_cache_refresh_get_1",
+        "description": "Purge user-state rows whose photo Qdrant no longer holds.\n\nThere is no derived cache to refresh any more. The photo\ncorpus, its metadata, and the native text index all live in\nQdrant; SQLite holds only the user's own state \u2014 favourites,\ndislikes, albums, memberships, saved searches, feedback.\n\nWhat this endpoint still does is the one thing that needed a\ntrigger: dropping user-state rows that point at photos the\nindexer has pruned. The purge checks liveness against\nQdrant, so a favourite is only dropped when the COLLECTION\nsays the photo is gone \u2014 never because a local mirror was\nstale.\n\nThe `full` parameter is accepted and ignored, so an old\ncaller does not break.",
+        "operationId": "api_cache_refresh_api_cache_refresh_post",
         "parameters": [
           {
-            "description": "Round-35: when true, do the legacy wipe+rebuild (init_from_qdrant force=True). Default false uses the new diff-based refresh_incremental which preserves concurrent indexer writes and only touches rows that actually drifted.",
+            "description": "Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant.",
             "in": "query",
             "name": "full",
             "required": false,
             "schema": {
               "default": false,
-              "description": "Round-35: when true, do the legacy wipe+rebuild (init_from_qdrant force=True). Default false uses the new diff-based refresh_incremental which preserves concurrent indexer writes and only touches rows that actually drifted.",
+              "description": "Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant.",
               "title": "Full",
               "type": "boolean"
             }
@@ -1678,7 +1899,7 @@
     },
     "/api/cache/status": {
       "get": {
-        "description": "Operator visibility into the dual-store sync.\n\nReturns last refresh timestamp + duration, point counts in\nboth stores, drift between them, the liveness cache size +\ncap, and the configured refresh interval / TTL. Drift is\n\"unknown\" when Qdrant is unreachable (qdrant_count == -1)\nso operators don't see a misleading negative number.",
+        "description": "Operator visibility into the corpus and the maintenance timer.\n\nReturns the point count, the last maintenance timestamp, the\nconfigured maintenance interval, and the path-liveness cache\nsize + cap.\n\n`index_db_count` and `qdrant_count` are both read from\nQdrant \u2014 there is no second copy of the corpus to drift\nfrom, so `drift` is 0 by construction. The field is kept so\nthe response shape does not change for existing operators.\nDrift is \"unknown\" when Qdrant is unreachable\n(qdrant_count == -1) so operators don't see a misleading\nnegative number.",
         "operationId": "cache_status_api_cache_status_get",
         "responses": {
           "200": {
@@ -2959,7 +3180,7 @@
     },
     "/favorites/download.zip": {
       "get": {
-        "operationId": "favorites_download_zip_favorites_download_zip_head",
+        "operationId": "favorites_download_zip_favorites_download_zip_get",
         "responses": {
           "200": {
             "description": "Successful Response"
@@ -2968,7 +3189,7 @@
         "summary": "Favorites Download Zip"
       },
       "head": {
-        "operationId": "favorites_download_zip_favorites_download_zip_head_1",
+        "operationId": "favorites_download_zip_favorites_download_zip_get_1",
         "responses": {
           "200": {
             "description": "Successful Response"

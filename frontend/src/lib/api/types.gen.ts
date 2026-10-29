@@ -123,6 +123,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/orphans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Orphans
+         * @description How many orphans are marked, and which photos are they.
+         *
+         *     The review step of the two-step purge. The operator looks at
+         *     the count and the sample here, and only then confirms.
+         */
+        get: operations["list_orphans_api_admin_orphans_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/orphans/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Purge Orphans
+         * @description Delete the confirmed orphans from Qdrant and SQLite.
+         *
+         *     This is the irreversible half. It requires `confirm: true` in
+         *     the request body — there is no way to reach the delete without
+         *     saying so explicitly.
+         *
+         *     The Qdrant delete runs first, and it is scoped by the orphan
+         *     marker: only points carrying `orphan_since` are in scope, so
+         *     a purge can never reach a live photo. The SQLite cleanup runs
+         *     after, for exactly the ids that were deleted.
+         */
+        post: operations["purge_orphans_api_admin_orphans_purge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/albums": {
         parameters: {
             query?: never;
@@ -209,11 +261,47 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Api Cache Refresh */
-        get: operations["api_cache_refresh_api_cache_refresh_get"];
+        /**
+         * Api Cache Refresh
+         * @description Purge user-state rows whose photo Qdrant no longer holds.
+         *
+         *     There is no derived cache to refresh any more. The photo
+         *     corpus, its metadata, and the native text index all live in
+         *     Qdrant; SQLite holds only the user's own state — favourites,
+         *     dislikes, albums, memberships, saved searches, feedback.
+         *
+         *     What this endpoint still does is the one thing that needed a
+         *     trigger: dropping user-state rows that point at photos the
+         *     indexer has pruned. The purge checks liveness against
+         *     Qdrant, so a favourite is only dropped when the COLLECTION
+         *     says the photo is gone — never because a local mirror was
+         *     stale.
+         *
+         *     The `full` parameter is accepted and ignored, so an old
+         *     caller does not break.
+         */
+        get: operations["api_cache_refresh_api_cache_refresh_post_1"];
         put?: never;
-        /** Api Cache Refresh */
-        post: operations["api_cache_refresh_api_cache_refresh_get_1"];
+        /**
+         * Api Cache Refresh
+         * @description Purge user-state rows whose photo Qdrant no longer holds.
+         *
+         *     There is no derived cache to refresh any more. The photo
+         *     corpus, its metadata, and the native text index all live in
+         *     Qdrant; SQLite holds only the user's own state — favourites,
+         *     dislikes, albums, memberships, saved searches, feedback.
+         *
+         *     What this endpoint still does is the one thing that needed a
+         *     trigger: dropping user-state rows that point at photos the
+         *     indexer has pruned. The purge checks liveness against
+         *     Qdrant, so a favourite is only dropped when the COLLECTION
+         *     says the photo is gone — never because a local mirror was
+         *     stale.
+         *
+         *     The `full` parameter is accepted and ignored, so an old
+         *     caller does not break.
+         */
+        post: operations["api_cache_refresh_api_cache_refresh_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -229,13 +317,19 @@ export interface paths {
         };
         /**
          * Cache Status
-         * @description Operator visibility into the dual-store sync.
+         * @description Operator visibility into the corpus and the maintenance timer.
          *
-         *     Returns last refresh timestamp + duration, point counts in
-         *     both stores, drift between them, the liveness cache size +
-         *     cap, and the configured refresh interval / TTL. Drift is
-         *     "unknown" when Qdrant is unreachable (qdrant_count == -1)
-         *     so operators don't see a misleading negative number.
+         *     Returns the point count, the last maintenance timestamp, the
+         *     configured maintenance interval, and the path-liveness cache
+         *     size + cap.
+         *
+         *     `index_db_count` and `qdrant_count` are both read from
+         *     Qdrant — there is no second copy of the corpus to drift
+         *     from, so `drift` is 0 by construction. The field is kept so
+         *     the response shape does not change for existing operators.
+         *     Drift is "unknown" when Qdrant is unreachable
+         *     (qdrant_count == -1) so operators don't see a misleading
+         *     negative number.
          */
         get: operations["cache_status_api_cache_status_get"];
         put?: never;
@@ -994,6 +1088,71 @@ export interface components {
             state: "idle" | "running" | "failed";
         };
         /**
+         * OrphanListResponse
+         * @description Body for GET /api/admin/orphans.
+         */
+        OrphanListResponse: {
+            /** By Source */
+            by_source?: {
+                [key: string]: number;
+            };
+            /** Count */
+            count: number;
+            /** Sample */
+            sample?: components["schemas"]["OrphanSample"][];
+        };
+        /**
+         * OrphanPurgeRequest
+         * @description Body for POST /api/admin/orphans/purge.
+         */
+        OrphanPurgeRequest: {
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
+            /** Limit */
+            limit?: number | null;
+            /** Source */
+            source?: string | null;
+        };
+        /**
+         * OrphanPurgeResponse
+         * @description Body for POST /api/admin/orphans/purge.
+         */
+        OrphanPurgeResponse: {
+            /** Deleted */
+            deleted: number;
+            /** Remaining */
+            remaining: number;
+            /** Source */
+            source?: string | null;
+            /** User State */
+            user_state?: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * OrphanSample
+         * @description One marked orphan, as shown to the operator.
+         */
+        OrphanSample: {
+            /**
+             * Collection
+             * @default
+             */
+            collection: string;
+            /** Id */
+            id: string;
+            /** Orphan Since */
+            orphan_since?: number | null;
+            /**
+             * Path
+             * @default
+             */
+            path: string;
+        };
+        /**
          * ReloadCentroidsResponse
          * @description POST /api/centroids/reload — operator-initiated centroid refresh.
          *
@@ -1382,6 +1541,71 @@ export interface operations {
             };
         };
     };
+    list_orphans_api_admin_orphans_get: {
+        parameters: {
+            query?: {
+                /** @description How many orphans to include in the sample. */
+                sample_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrphanListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    purge_orphans_api_admin_orphans_purge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrphanPurgeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrphanPurgeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_albums_api_albums_get: {
         parameters: {
             query?: never;
@@ -1628,10 +1852,10 @@ export interface operations {
             };
         };
     };
-    api_cache_refresh_api_cache_refresh_get: {
+    api_cache_refresh_api_cache_refresh_post_1: {
         parameters: {
             query?: {
-                /** @description Round-35: when true, do the legacy wipe+rebuild (init_from_qdrant force=True). Default false uses the new diff-based refresh_incremental which preserves concurrent indexer writes and only touches rows that actually drifted. */
+                /** @description Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant. */
                 full?: boolean;
             };
             header?: never;
@@ -1660,10 +1884,10 @@ export interface operations {
             };
         };
     };
-    api_cache_refresh_api_cache_refresh_get_1: {
+    api_cache_refresh_api_cache_refresh_post: {
         parameters: {
             query?: {
-                /** @description Round-35: when true, do the legacy wipe+rebuild (init_from_qdrant force=True). Default false uses the new diff-based refresh_incremental which preserves concurrent indexer writes and only touches rows that actually drifted. */
+                /** @description Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant. */
                 full?: boolean;
             };
             header?: never;
