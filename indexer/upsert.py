@@ -35,6 +35,17 @@ from lustre_kernel.registry import get_active_model_spec
 
 logger = logging.getLogger(__name__)
 
+
+class PruneScopeError(RuntimeError):
+    """Raised when a prune cannot be scoped safely.
+
+    The prune deletes points whose files are missing from disk. That
+    inference is only sound when every managed source dir could
+    actually be walked — otherwise the missing dir's points all look
+    dead. Callers should abort the prune rather than delete on that
+    assumption.
+    """
+
 # Vector dim of the active embedding model. Deprecated as a literal
 # constant: pre-migration this was hardcoded to 1536 (gopt's dim);
 # post-migration it tracks whatever model is configured
@@ -395,12 +406,11 @@ def prune_missing(
     existing_paths: set[str] | None = None
     if source_dirs:
         existing_paths = set()
+        missing_dirs: list[str] = []
         for src in source_dirs:
             src_path = Path(src)
             if not src_path.exists() or not src_path.is_dir():
-                logger.warning(
-                    "prune: source dir does not exist or is not a directory: %s", src
-                )
+                missing_dirs.append(src)
                 continue
             logger.info("prune: walking %s ...", src_path)
             t0 = time.monotonic()
@@ -412,7 +422,7 @@ def prune_missing(
             # the set, when only image paths are ever compared
             # against it.
             for walked, image_path in enumerate(
-                existing_image_paths(src_path), start=1
+                existing_image_paths(src_path), start=1,
             ):
                 existing_paths.add(image_path)
                 if walked % 50_000 == 0:
@@ -422,6 +432,20 @@ def prune_missing(
                         "prune: walked %d image files so far (%.0f/s, %dm %02ds elapsed) in %s",
                         walked, rate, int(elapsed) // 60, int(elapsed) % 60, src_path,
                     )
+        if missing_dirs:
+            # A managed source dir is missing. Its points are IN the
+            # delete scope (source_names covers them), but they are not
+            # in the alive-set (the dir could not be walked), so every
+            # one of them would look dead and be deleted. A missing
+            # dir is far more often a dropped NFS mount or a typo than
+            # a genuine mass deletion — so ABORT the prune instead of
+            # deleting on that assumption.
+            raise PruneScopeError(
+                "refusing to prune: managed source dir(s) missing or not a "
+                f"directory: {', '.join(missing_dirs)}. Their points would "
+                "all be treated as deleted files. Fix the mount or the path "
+                "and re-run."
+            )
         logger.info(
             "prune: pre-walked %d files under %d source dir(s)",
             len(existing_paths), len(source_dirs),
