@@ -10,13 +10,20 @@
    *
    * This panel is the second step: it shows how many orphans there
    * are and which photos they are, and lets an operator confirm the
-   * purge that removes the embeddings for good.
+   * purge that removes them for good.
    *
    * The split exists because the two halves have very different
    * consequences. Marking is reversible — a file that comes back, or
    * a source re-added to the source list, clears the marker and the
    * photo returns. Deleting is not. So the irreversible half waits
    * for a human to look at it.
+   *
+   * The purge removes orphans from Qdrant AND from the user-state
+   * tables, in one action. The user-state half is counted
+   * separately because it is a different question: a favourite
+   * whose photo was deleted from disk is an orphan even when its
+   * Qdrant point was never marked (the indexer may not have run
+   * since the deletion).
    */
   import { getOrphans, purgeOrphans } from '$lib/api/endpoints';
   import { ApiError } from '$lib/api/client';
@@ -76,6 +83,42 @@
   function sample(): NonNullable<OrphanListResponse['sample']> {
     return orphans?.sample ?? [];
   }
+
+  /**
+   * The user-state rows a purge would remove, as a flat total.
+   *
+   * Counted independently of the Qdrant half: a favourite whose
+   * photo was deleted from disk is an orphan even when its Qdrant
+   * point was never marked.
+   */
+  function userDataCount(): number {
+    const counts = orphans?.orphaned_user_data ?? {};
+    return Object.values(counts).reduce((sum, n) => sum + n, 0);
+  }
+
+  /**
+   * The user-state rows a purge would remove, broken down.
+   *
+   * The labels name what the user sees, not what the tables are
+   * called: an album cover reset is not a deletion.
+   */
+  function userDataBreakdown(): { label: string; count: number }[] {
+    const counts = orphans?.orphaned_user_data ?? {};
+    const labels: [string, string][] = [
+      ['favorites', 'Favourites'],
+      ['dislikes', 'Dislikes'],
+      ['album_memberships', 'Album entries'],
+      ['album_covers_reset', 'Album covers'],
+    ];
+    return labels
+      .filter(([key]) => (counts[key] ?? 0) > 0)
+      .map(([key, label]) => ({ label, count: counts[key] ?? 0 }));
+  }
+
+  /** Is there anything a purge would actually remove? */
+  function hasWork(): boolean {
+    return (orphans?.count ?? 0) > 0 || userDataCount() > 0;
+  }
 </script>
 
 <section class="card glass">
@@ -91,43 +134,63 @@
 
   {#if loading}
     <div class="state">Loading…</div>
-  {:else if errorMessage}
+  {:else if errorMessage && !orphans}
     <div class="state error">{errorMessage}</div>
-  {:else if orphans && orphans.count === 0}
-    <div class="state">No orphans. The index matches the library.</div>
   {:else if orphans}
-    <div class="counts">
-      <span class="count-value">{orphans.count.toLocaleString()}</span>
-      <span class="count-label">
-        marked orphan{orphans.count === 1 ? '' : 's'}
-      </span>
-    </div>
+    {#if orphans.count === 0 && userDataCount() === 0}
+      <div class="state">No orphans. The index matches the library.</div>
+    {:else}
+      <div class="counts">
+        <span class="count-value">{orphans.count.toLocaleString()}</span>
+        <span class="count-label">
+          marked orphan{orphans.count === 1 ? '' : 's'}
+        </span>
+      </div>
 
-    {#if sourceEntries().length > 0}
-      <ul class="sources">
-        {#each sourceEntries() as [name, count] (name)}
-          <li>
-            <span class="source-name">{name || '(no source)'}</span>
-            <span class="source-count">{count.toLocaleString()}</span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-
-    {#if sample().length > 0}
-      <details class="sample-section">
-        <summary>Sample ({sample().length})</summary>
-        <ul class="sample">
-          {#each sample() as item (item.id)}
+      {#if sourceEntries().length > 0}
+        <ul class="sources">
+          {#each sourceEntries() as [name, count] (name)}
             <li>
-              <span class="sample-path">{item.path || '(no path)'}</span>
-              {#if item.collection}
-                <span class="sample-source">{item.collection}</span>
-              {/if}
+              <span class="source-name">{name || '(no source)'}</span>
+              <span class="source-count">{count.toLocaleString()}</span>
             </li>
           {/each}
         </ul>
-      </details>
+      {/if}
+
+      {#if userDataBreakdown().length > 0}
+        <div class="counts">
+          <span class="count-value">{userDataCount().toLocaleString()}</span>
+          <span class="count-label">
+            orphaned favourite{userDataCount() === 1 ? '' : 's'} and
+            album entries
+          </span>
+        </div>
+        <ul class="sources">
+          {#each userDataBreakdown() as item (item.label)}
+            <li>
+              <span class="source-name">{item.label}</span>
+              <span class="source-count">{item.count.toLocaleString()}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      {#if sample().length > 0}
+        <details class="sample-section">
+          <summary>Sample ({sample().length})</summary>
+          <ul class="sample">
+            {#each sample() as item (item.id)}
+              <li>
+                <span class="sample-path">{item.path || '(no path)'}</span>
+                {#if item.collection}
+                  <span class="sample-source">{item.collection}</span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </details>
+      {/if}
     {/if}
 
     {#if purgeResult}
@@ -137,25 +200,33 @@
       </div>
     {/if}
 
+    {#if errorMessage && orphans}
+      <div class="state error">{errorMessage}</div>
+    {/if}
+
     <div class="actions">
       {#if confirming}
         <Button variant="secondary" onclick={() => (confirming = false)} disabled={busy}>
           Cancel
         </Button>
         <Button variant="primary" danger onclick={purge} disabled={busy}>
-          {busy ? 'Removing…' : `Remove ${orphans.count.toLocaleString()} embedding${orphans.count === 1 ? '' : 's'}`}
+          {busy ? 'Purging…' : 'Purge'}
         </Button>
       {:else}
-        <Button variant="secondary" onclick={() => (confirming = true)} disabled={busy}>
-          Remove orphans…
+        <Button
+          variant="secondary"
+          onclick={() => (confirming = true)}
+          disabled={busy || !hasWork()}
+        >
+          Purge orphans…
         </Button>
       {/if}
     </div>
 
     {#if confirming}
       <p class="confirm-note">
-        This deletes the embeddings and the matching favourites,
-        dislikes and album entries. It cannot be undone.
+        This deletes the marked embeddings and the orphaned
+        favourites, dislikes and album entries. It cannot be undone.
       </p>
     {/if}
   {/if}

@@ -204,13 +204,15 @@ const OrphanSample = z.object({
 const OrphanListResponse = z.object({
   count: z.number().int(),
   by_source: z.record(z.string(), z.number().int()).optional(),
-  sample: z.array(OrphanSample).optional()
+  sample: z.array(OrphanSample).optional(),
+  orphaned_user_data: z.record(z.string(), z.number().int()).optional()
 }).passthrough();
 
 const OrphanPurgeResponse = z.object({
   deleted: z.number().int(),
   remaining: z.number().int(),
   user_state: z.record(z.string(), z.number().int()).optional(),
+  user_data_purged: z.record(z.string(), z.number().int()).optional(),
   source: z.string().nullable().optional()
 }).passthrough();
 

@@ -15,7 +15,7 @@ export interface paths {
          *     can't resolve on disk are skipped and recorded in
          *     `_missing.txt`. Album id with no row → 404.
          */
-        get: operations["album_download_zip_albums__album_id__download_zip_get"];
+        get: operations["album_download_zip_albums__album_id__download_zip_head_1"];
         put?: never;
         post?: never;
         delete?: never;
@@ -29,7 +29,7 @@ export interface paths {
          *     can't resolve on disk are skipped and recorded in
          *     `_missing.txt`. Album id with no row → 404.
          */
-        head: operations["album_download_zip_albums__album_id__download_zip_get_1"];
+        head: operations["album_download_zip_albums__album_id__download_zip_head"];
         patch?: never;
         trace?: never;
     };
@@ -165,8 +165,21 @@ export interface paths {
          *
          *     The Qdrant delete runs first, and it is scoped by the orphan
          *     marker: only points carrying `orphan_since` are in scope, so
-         *     a purge can never reach a live photo. The SQLite cleanup runs
-         *     after, for exactly the ids that were deleted.
+         *     a purge can never reach a live photo.
+         *
+         *     The SQLite cleanup runs after, in two parts:
+         *
+         *     - the ids that were just deleted from Qdrant (their
+         *       favourites, dislikes and album entries go with them);
+         *     - the rows whose photo is gone from DISK, whether or not its
+         *       Qdrant point was ever marked. The indexer may not have run
+         *       since the file was deleted, so its point is still unmarked
+         *       and the first part would miss it.
+         *
+         *     The second part is the file-based rule — liveness decided by
+         *     the filesystem, never by "is it in Qdrant". A photo that is
+         *     on disk but not currently indexed keeps its favourite, and
+         *     re-attaches when the photo comes back.
          */
         post: operations["purge_orphans_api_admin_orphans_purge_post"];
         delete?: never;
@@ -280,7 +293,7 @@ export interface paths {
          *     The `full` parameter is accepted and ignored, so an old
          *     caller does not break.
          */
-        get: operations["api_cache_refresh_api_cache_refresh_post_1"];
+        get: operations["api_cache_refresh_api_cache_refresh_get"];
         put?: never;
         /**
          * Api Cache Refresh
@@ -301,7 +314,7 @@ export interface paths {
          *     The `full` parameter is accepted and ignored, so an old
          *     caller does not break.
          */
-        post: operations["api_cache_refresh_api_cache_refresh_post"];
+        post: operations["api_cache_refresh_api_cache_refresh_get_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -670,13 +683,13 @@ export interface paths {
             cookie?: never;
         };
         /** Favorites Download Zip */
-        get: operations["favorites_download_zip_favorites_download_zip_get"];
+        get: operations["favorites_download_zip_favorites_download_zip_head"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         /** Favorites Download Zip */
-        head: operations["favorites_download_zip_favorites_download_zip_get_1"];
+        head: operations["favorites_download_zip_favorites_download_zip_head_1"];
         patch?: never;
         trace?: never;
     };
@@ -1098,6 +1111,10 @@ export interface components {
             };
             /** Count */
             count: number;
+            /** Orphaned User Data */
+            orphaned_user_data?: {
+                [key: string]: number;
+            };
             /** Sample */
             sample?: components["schemas"]["OrphanSample"][];
         };
@@ -1111,6 +1128,11 @@ export interface components {
              * @default false
              */
             confirm: boolean;
+            /**
+             * Include User Data
+             * @default true
+             */
+            include_user_data: boolean;
             /** Limit */
             limit?: number | null;
             /** Source */
@@ -1127,6 +1149,10 @@ export interface components {
             remaining: number;
             /** Source */
             source?: string | null;
+            /** User Data Purged */
+            user_data_purged?: {
+                [key: string]: number;
+            };
             /** User State */
             user_state?: {
                 [key: string]: number;
@@ -1378,7 +1404,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    album_download_zip_albums__album_id__download_zip_get: {
+    album_download_zip_albums__album_id__download_zip_head_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -1407,7 +1433,7 @@ export interface operations {
             };
         };
     };
-    album_download_zip_albums__album_id__download_zip_get_1: {
+    album_download_zip_albums__album_id__download_zip_head: {
         parameters: {
             query?: never;
             header?: never;
@@ -1852,7 +1878,7 @@ export interface operations {
             };
         };
     };
-    api_cache_refresh_api_cache_refresh_post_1: {
+    api_cache_refresh_api_cache_refresh_get: {
         parameters: {
             query?: {
                 /** @description Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant. */
@@ -1884,7 +1910,7 @@ export interface operations {
             };
         };
     };
-    api_cache_refresh_api_cache_refresh_post: {
+    api_cache_refresh_api_cache_refresh_get_1: {
         parameters: {
             query?: {
                 /** @description Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant. */
@@ -2598,7 +2624,7 @@ export interface operations {
             };
         };
     };
-    favorites_download_zip_favorites_download_zip_get: {
+    favorites_download_zip_favorites_download_zip_head: {
         parameters: {
             query?: never;
             header?: never;
@@ -2616,7 +2642,7 @@ export interface operations {
             };
         };
     };
-    favorites_download_zip_favorites_download_zip_get_1: {
+    favorites_download_zip_favorites_download_zip_head_1: {
         parameters: {
             query?: never;
             header?: never;

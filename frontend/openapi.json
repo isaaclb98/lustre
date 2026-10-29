@@ -682,6 +682,13 @@
             "title": "Count",
             "type": "integer"
           },
+          "orphaned_user_data": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Orphaned User Data",
+            "type": "object"
+          },
           "sample": {
             "items": {
               "$ref": "#/components/schemas/OrphanSample"
@@ -702,6 +709,11 @@
           "confirm": {
             "default": false,
             "title": "Confirm",
+            "type": "boolean"
+          },
+          "include_user_data": {
+            "default": true,
+            "title": "Include User Data",
             "type": "boolean"
           },
           "limit": {
@@ -752,6 +764,13 @@
               }
             ],
             "title": "Source"
+          },
+          "user_data_purged": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "User Data Purged",
+            "type": "object"
           },
           "user_state": {
             "additionalProperties": {
@@ -1230,7 +1249,7 @@
     "/albums/{album_id}/download.zip": {
       "get": {
         "description": "Stream an album's photos as a zip \u2014 same shape and rules\nas `/favorites/download.zip`. Membership comes from\n`index_db.list_album_members` (INNER JOIN against the cache,\nso orphan rows are hidden from the archive too). Files we\ncan't resolve on disk are skipped and recorded in\n`_missing.txt`. Album id with no row \u2192 404.",
-        "operationId": "album_download_zip_albums__album_id__download_zip_get",
+        "operationId": "album_download_zip_albums__album_id__download_zip_head_1",
         "parameters": [
           {
             "in": "path",
@@ -1261,7 +1280,7 @@
       },
       "head": {
         "description": "Stream an album's photos as a zip \u2014 same shape and rules\nas `/favorites/download.zip`. Membership comes from\n`index_db.list_album_members` (INNER JOIN against the cache,\nso orphan rows are hidden from the archive too). Files we\ncan't resolve on disk are skipped and recorded in\n`_missing.txt`. Album id with no row \u2192 404.",
-        "operationId": "album_download_zip_albums__album_id__download_zip_get_1",
+        "operationId": "album_download_zip_albums__album_id__download_zip_head",
         "parameters": [
           {
             "in": "path",
@@ -1459,7 +1478,7 @@
     },
     "/api/admin/orphans/purge": {
       "post": {
-        "description": "Delete the confirmed orphans from Qdrant and SQLite.\n\nThis is the irreversible half. It requires `confirm: true` in\nthe request body \u2014 there is no way to reach the delete without\nsaying so explicitly.\n\nThe Qdrant delete runs first, and it is scoped by the orphan\nmarker: only points carrying `orphan_since` are in scope, so\na purge can never reach a live photo. The SQLite cleanup runs\nafter, for exactly the ids that were deleted.",
+        "description": "Delete the confirmed orphans from Qdrant and SQLite.\n\nThis is the irreversible half. It requires `confirm: true` in\nthe request body \u2014 there is no way to reach the delete without\nsaying so explicitly.\n\nThe Qdrant delete runs first, and it is scoped by the orphan\nmarker: only points carrying `orphan_since` are in scope, so\na purge can never reach a live photo.\n\nThe SQLite cleanup runs after, in two parts:\n\n- the ids that were just deleted from Qdrant (their\n  favourites, dislikes and album entries go with them);\n- the rows whose photo is gone from DISK, whether or not its\n  Qdrant point was ever marked. The indexer may not have run\n  since the file was deleted, so its point is still unmarked\n  and the first part would miss it.\n\nThe second part is the file-based rule \u2014 liveness decided by\nthe filesystem, never by \"is it in Qdrant\". A photo that is\non disk but not currently indexed keeps its favourite, and\nre-attaches when the photo comes back.",
         "operationId": "purge_orphans_api_admin_orphans_purge_post",
         "requestBody": {
           "content": {
@@ -1820,7 +1839,7 @@
     "/api/cache/refresh": {
       "get": {
         "description": "Purge user-state rows whose photo Qdrant no longer holds.\n\nThere is no derived cache to refresh any more. The photo\ncorpus, its metadata, and the native text index all live in\nQdrant; SQLite holds only the user's own state \u2014 favourites,\ndislikes, albums, memberships, saved searches, feedback.\n\nWhat this endpoint still does is the one thing that needed a\ntrigger: dropping user-state rows that point at photos the\nindexer has pruned. The purge checks liveness against\nQdrant, so a favourite is only dropped when the COLLECTION\nsays the photo is gone \u2014 never because a local mirror was\nstale.\n\nThe `full` parameter is accepted and ignored, so an old\ncaller does not break.",
-        "operationId": "api_cache_refresh_api_cache_refresh_post_1",
+        "operationId": "api_cache_refresh_api_cache_refresh_get",
         "parameters": [
           {
             "description": "Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant.",
@@ -1859,7 +1878,7 @@
       },
       "post": {
         "description": "Purge user-state rows whose photo Qdrant no longer holds.\n\nThere is no derived cache to refresh any more. The photo\ncorpus, its metadata, and the native text index all live in\nQdrant; SQLite holds only the user's own state \u2014 favourites,\ndislikes, albums, memberships, saved searches, feedback.\n\nWhat this endpoint still does is the one thing that needed a\ntrigger: dropping user-state rows that point at photos the\nindexer has pruned. The purge checks liveness against\nQdrant, so a favourite is only dropped when the COLLECTION\nsays the photo is gone \u2014 never because a local mirror was\nstale.\n\nThe `full` parameter is accepted and ignored, so an old\ncaller does not break.",
-        "operationId": "api_cache_refresh_api_cache_refresh_post",
+        "operationId": "api_cache_refresh_api_cache_refresh_get_1",
         "parameters": [
           {
             "description": "Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant.",
@@ -3180,7 +3199,7 @@
     },
     "/favorites/download.zip": {
       "get": {
-        "operationId": "favorites_download_zip_favorites_download_zip_get",
+        "operationId": "favorites_download_zip_favorites_download_zip_head",
         "responses": {
           "200": {
             "description": "Successful Response"
@@ -3189,7 +3208,7 @@
         "summary": "Favorites Download Zip"
       },
       "head": {
-        "operationId": "favorites_download_zip_favorites_download_zip_get_1",
+        "operationId": "favorites_download_zip_favorites_download_zip_head_1",
         "responses": {
           "200": {
             "description": "Successful Response"
