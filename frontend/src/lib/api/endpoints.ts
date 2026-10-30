@@ -491,6 +491,40 @@ export async function getDislikeCount(signal?: AbortSignal): Promise<number> {
   return data.count;
 }
 
+// ---------- Orphan review + confirmed purge ----------
+// The orphan lifecycle is two-step. The indexer MARKS points whose
+// photo is gone from disk, and points belonging to a source that was
+// removed from the source list. A marked point is excluded from
+// every read path, so it stops being served immediately — but its
+// embedding is still in the collection.
+//
+// These are the second step: review the count, then confirm the
+// purge that removes the embeddings for good. The purge is
+// irreversible, which is why it is a separate, explicit call.
+
+export type OrphanSample = components['schemas']['OrphanSample'];
+export type OrphanListResponse = components['schemas']['OrphanListResponse'];
+export type OrphanPurgeResponse = components['schemas']['OrphanPurgeResponse'];
+
+export function getOrphans(sampleSize = 50, signal?: AbortSignal) {
+  return apiGet<OrphanListResponse>(
+    `/api/admin/orphans?sample_size=${sampleSize}`,
+    {
+      schema: Z.OrphanListResponse,
+      schemaName: 'OrphanListResponse',
+      signal
+    }
+  );
+}
+
+export function purgeOrphans(source?: string, limit?: number) {
+  return apiPost<OrphanPurgeResponse>('/api/admin/orphans/purge', {
+    confirm: true,
+    ...(source ? { source } : {}),
+    ...(limit ? { limit } : {})
+  });
+}
+
 // ---------- Photo URL passthrough ----------
 
 export { photoUrl, thumbUrl };

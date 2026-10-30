@@ -1,16 +1,21 @@
 """
-Tests for the prune scope guard.
+Tests for the orphan-scan scope guard.
 
-`prune_missing` deletes points whose files are missing from disk. That
-inference is only sound when every managed source dir could actually
-be walked. If a managed dir is missing — a dropped NFS mount, a typo,
-a source that was just removed — its points are in the delete scope
-(`source_names` covers them) but absent from the alive-set (the dir
-could not be walked), so every one of them looks dead.
+`find_disk_orphans` finds the points whose files are missing from
+disk. That inference is only sound when every managed source dir
+could actually be walked. If a managed dir is missing — a dropped
+NFS mount, a typo, a source that was just removed — its points are
+in the scan scope (`source_names` covers them) but absent from the
+alive-set (the dir could not be walked), so every one of them looks
+dead.
 
-Before this guard, a missing dir produced a warning and the prune
-carried on, deleting that source's entire point set. The guard aborts
-the prune instead.
+The guard aborts the scan instead. Note the asymmetry with the old
+destructive prune: the scan only MARKS points, it never deletes, so
+a false "dead" verdict hides photos rather than destroying them.
+That is still bad — a photo the user can no longer find is a photo
+they think they lost — so the guard still matters. But the blast
+radius is smaller, and the marked points can be unmarked by
+re-running the index once the mount is back.
 """
 from __future__ import annotations
 
@@ -21,7 +26,7 @@ import pytest
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from indexer.upsert import PruneScopeError, prune_missing
+from indexer.orphan_scan import OrphanScopeError, find_disk_orphans
 
 
 @pytest.fixture
@@ -62,15 +67,15 @@ def qdrant_with_points(source_dirs) -> QdrantClient:
     return client
 
 
-def test_missing_source_dir_aborts_the_prune(qdrant_with_points, source_dirs) -> None:
-    """A managed source dir that does not exist aborts the prune.
+def test_missing_source_dir_aborts_the_scan(qdrant_with_points, source_dirs) -> None:
+    """A managed source dir that does not exist aborts the scan.
 
-    Without the guard this deletes every point of the vanished
-    source, because the dir could not be walked so none of its paths
-    made it into the alive-set.
+    Without the guard this would report every point of the vanished
+    source as dead, because the dir could not be walked so none of
+    its paths made it into the alive-set.
     """
-    with pytest.raises(PruneScopeError) as excinfo:
-        prune_missing(
+    with pytest.raises(OrphanScopeError) as excinfo:
+        find_disk_orphans(
             qdrant_with_points,
             "images",
             source_dirs=[str(source_dirs["present"]), str(source_dirs["vanished"])],
@@ -78,8 +83,6 @@ def test_missing_source_dir_aborts_the_prune(qdrant_with_points, source_dirs) ->
         )
 
     assert "vanished" in str(excinfo.value)
-    # Nothing was deleted — the abort happened before any delete.
-    assert qdrant_with_points.count(collection_name="images", exact=True).count == 8
 
 
 def test_missing_source_dir_aborts_before_walking_any_dir(qdrant_with_points, source_dirs) -> None:
@@ -87,7 +90,7 @@ def test_missing_source_dir_aborts_before_walking_any_dir(qdrant_with_points, so
 
     The prod source dirs hold 2.3M files over NFS and the walk takes
     ~56 minutes. A guard that checked for a missing dir AFTER the walk
-    would let the operator wait an hour to be told the prune could not
+    would let the operator wait an hour to be told the scan could not
     run. The check is a stat() per dir and must come first.
     """
     present = source_dirs["present"]
@@ -96,10 +99,10 @@ def test_missing_source_dir_aborts_before_walking_any_dir(qdrant_with_points, so
         raise AssertionError("the walk must not start before the scope check")
 
     monkey = pytest.MonkeyPatch()
-    monkey.setattr("indexer.upsert.existing_image_paths", _explode)
+    monkey.setattr("indexer.orphan_scan.existing_image_paths", _explode)
     try:
-        with pytest.raises(PruneScopeError):
-            prune_missing(
+        with pytest.raises(OrphanScopeError):
+            find_disk_orphans(
                 qdrant_with_points,
                 "images",
                 source_dirs=[str(present), str(source_dirs["vanished"])],
@@ -109,16 +112,16 @@ def test_missing_source_dir_aborts_before_walking_any_dir(qdrant_with_points, so
         monkey.undo()
 
 
-def test_all_source_dirs_present_still_prunes(qdrant_with_points, source_dirs) -> None:
-    """The guard does not disable normal pruning.
+def test_all_source_dirs_present_still_finds_orphans(qdrant_with_points, source_dirs) -> None:
+    """The guard does not disable normal orphan detection.
 
     `present` has 4 points but only 2 files on disk, so 2 of its
-    points are legitimately prunable. `vanished` is created empty —
+    points are genuinely orphaned. `vanished` is created empty —
     every one of its points is genuinely dead.
     """
     source_dirs["vanished"].mkdir()
 
-    removed = prune_missing(
+    orphans = find_disk_orphans(
         qdrant_with_points,
         "images",
         source_dirs=[str(source_dirs["present"]), str(source_dirs["vanished"])],
@@ -126,27 +129,26 @@ def test_all_source_dirs_present_still_prunes(qdrant_with_points, source_dirs) -
     )
 
     # 2 missing under `present` (files 2,3) + 4 under `vanished` (dir empty)
-    assert removed == 6
-    assert qdrant_with_points.count(collection_name="images", exact=True).count == 2
+    assert len(orphans) == 6
+    # The scan does not delete — it only reports.
+    assert qdrant_with_points.count(collection_name="images", exact=True).count == 8
 
 
-def test_prune_never_touches_unmanaged_sources(qdrant_with_points, source_dirs) -> None:
-    """Points outside the managed source names survive the prune."""
-    removed = prune_missing(
+def test_scan_never_touches_unmanaged_sources(qdrant_with_points, source_dirs) -> None:
+    """Points outside the managed source names are never reported."""
+    orphans = find_disk_orphans(
         qdrant_with_points,
         "images",
         source_dirs=[str(source_dirs["present"])],
         source_names=["present"],
     )
 
-    # 2 of the 4 `present` points have no file -> pruned. The other 2
-    # `present` points have files and survive, as do all 4 `vanished`
-    # points — they are out of scope and must never be touched.
-    assert removed == 2
+    # 2 of the 4 `present` points have no file -> orphaned. The other
+    # 2 `present` points have files and survive, as do all 4 `vanished`
+    # points — they are out of scope and must never be reported.
+    assert len(orphans) == 2
     remaining = qdrant_with_points.scroll(
         collection_name="images", limit=100, with_payload=["collection"],
     )[0]
-    assert len(remaining) == 6
+    assert len(remaining) == 8
     assert {p.payload["collection"] for p in remaining} == {"present", "vanished"}
-    vanished_left = [p for p in remaining if p.payload["collection"] == "vanished"]
-    assert len(vanished_left) == 4

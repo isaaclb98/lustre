@@ -20,7 +20,6 @@ SQLite mirror to keep in sync.
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -30,21 +29,9 @@ from qdrant_client.http import models as qmodels
 
 from indexer.blurhash import compute_blurhash
 from indexer.fingerprints import compute_fingerprints
-from indexer.scan import existing_image_paths
 from lustre_kernel.registry import get_active_model_spec
 
 logger = logging.getLogger(__name__)
-
-
-class PruneScopeError(RuntimeError):
-    """Raised when a prune cannot be scoped safely.
-
-    The prune deletes points whose files are missing from disk. That
-    inference is only sound when every managed source dir could
-    actually be walked — otherwise the missing dir's points all look
-    dead. Callers should abort the prune rather than delete on that
-    assumption.
-    """
 
 # Vector dim of the active embedding model. Deprecated as a literal
 # constant: pre-migration this was hardcoded to 1536 (gopt's dim);
@@ -362,145 +349,3 @@ def existing_ids(
     for p in points:
         found.add(str(p.id))
     return found
-
-
-def prune_missing(
-    client: QdrantClient,
-    name: str,
-    source_dirs: list[str] | None = None,
-    batch_size: int = 1000,
-    source_names: list[str] | None = None,
-) -> int:
-    """
-    Scroll all points in the collection and delete the ones whose
-    stored path doesn't exist on disk.
-
-    When `source_dirs` is provided, the liveness check is a set
-    membership test against a single filesystem walk over those dirs
-    (much faster at 1.5M+ scale than per-point `Path.exists()`).
-    When `source_dirs` is None, the slower per-point check is used —
-    fine for small collections but hours on a slow share at scale.
-
-    Paths are compared verbatim — the indexer stores absolute host
-    paths, the filesystem walk produces the same absolute paths, so
-    the membership check works directly. (Round-17 dropped the old
-    `prefix`/`base` UNC-translation flags; indexer and backfill both
-    run on the same host now.)
-
-    `source_names` scopes the deletion to points whose `source`
-    payload field is in the list. Without it, a partial run (e.g. one
-    source) would delete points belonging to other sources — the
-    scroll covers the whole collection, so an alive-set built from one
-    dir makes every other source look dead. Pass the full set of
-    sources being managed by this run and only those get pruned.
-
-    Returns the number of points deleted.
-    """
-    removed = 0
-
-    # Pre-walk: build a set of every existing absolute path under the
-    # source dirs. One filesystem walk is dramatically faster than
-    # 1.5M individual stat() calls (which is what the no-arg path used
-    # to do). The walk is opt-in: callers that don't know their
-    # source dirs fall back to the per-point check.
-    existing_paths: set[str] | None = None
-    if source_dirs:
-        existing_paths = set()
-        # Validate EVERY managed dir BEFORE walking any of them. The
-        # walk over the prod sources takes ~56 minutes over NFS, so a
-        # check placed after it would let a missing dir burn that
-        # hour before finally aborting — and the abort would arrive
-        # after the operator had already waited for nothing. Validate
-        # first; it is a stat() per dir, milliseconds.
-        missing_dirs = [
-            src for src in source_dirs
-            if not Path(src).exists() or not Path(src).is_dir()
-        ]
-        if missing_dirs:
-            # A managed source dir is missing. Its points are IN the
-            # delete scope (source_names covers them), but they are not
-            # in the alive-set (the dir could not be walked), so every
-            # one of them would look dead and be deleted. A missing
-            # dir is far more often a dropped NFS mount or a typo than
-            # a genuine mass deletion — so ABORT the prune instead of
-            # deleting on that assumption.
-            raise PruneScopeError(
-                "refusing to prune: managed source dir(s) missing or not a "
-                f"directory: {', '.join(missing_dirs)}. Their points would "
-                "all be treated as deleted files. Fix the mount or the path "
-                "and re-run."
-            )
-        for src in source_dirs:
-            src_path = Path(src)
-            logger.info("prune: walking %s ...", src_path)
-            t0 = time.monotonic()
-            # `existing_image_paths` uses os.scandir and collects only
-            # image files. The old walk used `Path.rglob("*")` plus a
-            # per-entry `is_file()` — the exact anti-pattern
-            # indexer/scan.py was written to avoid — and put every
-            # file in the tree (thumbnails, sidecars, NFO files) into
-            # the set, when only image paths are ever compared
-            # against it.
-            for walked, image_path in enumerate(
-                existing_image_paths(src_path), start=1,
-            ):
-                existing_paths.add(image_path)
-                if walked % 50_000 == 0:
-                    elapsed = time.monotonic() - t0
-                    rate = walked / elapsed if elapsed > 0 else 0.0
-                    logger.info(
-                        "prune: walked %d image files so far (%.0f/s, %dm %02ds elapsed) in %s",
-                        walked, rate, int(elapsed) // 60, int(elapsed) % 60, src_path,
-                    )
-        logger.info(
-            "prune: pre-walked %d files under %d source dir(s)",
-            len(existing_paths), len(source_dirs),
-        )
-
-    def _is_alive(path_str: str) -> bool:
-        if not path_str:
-            return False  # no path = orphan
-        if existing_paths is not None:
-            return path_str in existing_paths
-        try:
-            return Path(path_str).exists()
-        except OSError:
-            return False
-
-    next_offset: int | None = None
-    while True:
-        points = client.scroll(
-            collection_name=name,
-            limit=batch_size,
-            offset=next_offset,
-            with_payload=True,
-            with_vectors=False,
-        )
-        batch, next_offset = points
-        if not batch:
-            break
-
-        to_delete: list[str | int] = []
-        for p in batch:
-            payload = p.payload or {}
-            src = payload.get("collection", "")
-            if source_names is not None and src not in source_names:
-                # Out of scope for this run — other sources are
-                # managed by other runs; never touch them.
-                continue
-            path_str = payload.get("path", "")
-            if not _is_alive(path_str):
-                to_delete.append(str(p.id))
-
-        if to_delete:
-            client.delete(
-                collection_name=name,
-                points_selector=to_delete,
-                wait=True,
-            )
-            removed += len(to_delete)
-            logger.info("prune: removed %d points (batch)", len(to_delete))
-        if next_offset is None:
-            break
-
-    return removed

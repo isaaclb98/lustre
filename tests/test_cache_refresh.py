@@ -6,8 +6,13 @@ SQLite database holds only the user's own state. What the endpoint
 still does is the one thing that needed a trigger: dropping
 user-state rows that point at photos the indexer has pruned.
 
-The liveness check is against Qdrant, so a favourite is only ever
-dropped when the COLLECTION says the photo is gone.
+The liveness check is against the FILESYSTEM, not against Qdrant. A
+favourite is dropped only when the photo's file is gone from disk.
+A photo that is merely absent from the collection is NOT an orphan:
+it may be an unindexed photo, or one the collection has not caught
+up with yet, and because the point id is a uuid5 of the path it
+comes back as the SAME id and re-attaches to the favourite that is
+still there.
 """
 from __future__ import annotations
 
@@ -80,12 +85,21 @@ def refresh_app(tmp_path, monkeypatch):
         "c": str(uuid.uuid4()),
         "d": str(uuid.uuid4()),
     }
+    # The payload paths point at REAL files under the photos root.
+    # The orphan purge decides liveness against the filesystem, so
+    # the fixture has to have something on disk for it to decide
+    # about — a path outside the photos root cannot be mapped, and a
+    # path we cannot map is treated as alive.
+    photos_dir = tmp_path / "photos"
+    photos_dir.mkdir()
+    for name in ("a", "b", "c"):
+        (photos_dir / f"{name}.jpg").write_bytes(b"x")
     seed = [
-        (seed_ids["a"], {"id": seed_ids["a"], "path": "/photos/a.jpg",
+        (seed_ids["a"], {"id": seed_ids["a"], "path": str(photos_dir / "a.jpg"),
                           "collection": "kpop", "indexed_at": "2026-01-01T00:00:00Z"}),
-        (seed_ids["b"], {"id": seed_ids["b"], "path": "/photos/b.jpg",
+        (seed_ids["b"], {"id": seed_ids["b"], "path": str(photos_dir / "b.jpg"),
                           "collection": "kpop", "indexed_at": "2026-01-01T00:00:00Z"}),
-        (seed_ids["c"], {"id": seed_ids["c"], "path": "/photos/c.jpg",
+        (seed_ids["c"], {"id": seed_ids["c"], "path": str(photos_dir / "c.jpg"),
                           "collection": "portrait", "indexed_at": "2026-01-01T00:00:00Z"}),
     ]
     from lustre_kernel.registry import MockEmbedder
@@ -106,6 +120,7 @@ def refresh_app(tmp_path, monkeypatch):
     # app.state.qdrant_client; tests that target a UUID reach in via
     # app.state.test_seed_ids.
     app.state.test_seed_ids = seed_ids
+    app.state.test_photos_dir = photos_dir
     app.state.qdrant_client = client
     app.state.qdrant_collection = cfg.qdrant_collection
     return TestClient(app)
@@ -117,6 +132,19 @@ def refresh_app_state(refresh_app):
     target a specific UUID (e.g. to favourite one).
     """
     return {"seed_ids": refresh_app.app.state.test_seed_ids}
+
+
+def _delete_seeded_photo(refresh_app, name: str) -> None:
+    """Delete a seeded photo's FILE from disk.
+
+    The orphan purge decides liveness against the filesystem, so a
+    test that wants a row purged has to remove the file — deleting
+    the point from the collection alone is not enough (and must not
+    be: a photo can be absent from the collection while its file is
+    perfectly alive).
+    """
+    photos_dir = refresh_app.app.state.test_photos_dir
+    (photos_dir / f"{name}.jpg").unlink()
 
 
 def test_api_cache_refresh_reports_ok(refresh_app):
@@ -131,7 +159,11 @@ def test_api_cache_refresh_reports_ok(refresh_app):
 def test_api_cache_refresh_purges_orphaned_favourites(
     refresh_app, refresh_app_state,
 ):
-    """A favourite whose photo left the collection is purged."""
+    """A favourite whose FILE is gone from disk is purged.
+
+    The photo is deleted from the collection AND its file is removed
+    from disk — the case the indexer's prune creates.
+    """
     seed_ids = refresh_app_state["seed_ids"]
 
     # Favourite a photo, then remove it from the collection.
@@ -143,6 +175,9 @@ def test_api_cache_refresh_purges_orphaned_favourites(
         points_selector=[seed_ids["a"]],
         wait=True,
     )
+    # And delete the file — the purge decides liveness against the
+    # filesystem, so the file has to actually be gone.
+    _delete_seeded_photo(refresh_app, "a")
 
     resp = refresh_app.get("/api/cache/refresh")
     assert resp.status_code == 200
@@ -151,6 +186,36 @@ def test_api_cache_refresh_purges_orphaned_favourites(
     # And it is really gone.
     body = refresh_app.get("/api/favorites").json()
     assert seed_ids["a"] not in {f["id"] for f in body.get("favorites", [])}
+
+
+def test_api_cache_refresh_keeps_a_favourite_whose_file_survives(
+    refresh_app, refresh_app_state,
+):
+    """A photo absent from the collection but alive on disk is KEPT.
+
+    This is the case the old rule got wrong. The point is not in
+    Qdrant — it was never indexed, or the collection was restored
+    from an older snapshot — but the file is right there on the NAS.
+    Because the point id is a uuid5 of the path, the photo comes
+    back as the SAME id and re-attaches to the favourite that is
+    still there. Deleting the favourite would destroy it for a photo
+    that was about to return.
+    """
+    seed_ids = refresh_app_state["seed_ids"]
+
+    resp = refresh_app.post(f"/api/favorites/{seed_ids['a']}")
+    assert resp.status_code in (200, 201)
+
+    # Remove the point from the collection, but leave the file alone.
+    refresh_app.app.state.qdrant_client.delete(
+        collection_name=refresh_app.app.state.qdrant_collection,
+        points_selector=[seed_ids["a"]],
+        wait=True,
+    )
+
+    resp = refresh_app.get("/api/cache/refresh")
+    assert resp.status_code == 200
+    assert resp.json()["purged"]["favorites"] == 0
 
 
 def test_api_cache_refresh_preserves_favourites(
@@ -178,12 +243,27 @@ def test_api_cache_refresh_never_deletes_when_qdrant_unreachable(
     If the liveness check cannot be answered, nothing is deleted.
     A user-state row is authoritative; a failed lookup is not
     evidence that the photo is gone.
+
+    The path-based rule is what usually decides now, so this test
+    covers the fallback: a row with no recorded path (one written
+    before the `photo_paths` table existed) falls back to the
+    Qdrant liveness check, and that check fails.
     """
+    from search import app as app_mod
     from search import index_db as index_db_mod
 
     seed_ids = refresh_app_state["seed_ids"]
     resp = refresh_app.post(f"/api/favorites/{seed_ids['a']}")
     assert resp.status_code in (200, 201)
+
+    # Drop the recorded path so the row falls back to the Qdrant
+    # liveness check — that is the path this test is about.
+    index_db = app_mod.get_index_db()
+    with index_db._lock:
+        index_db._conn.execute(
+            "DELETE FROM photo_paths WHERE id = ?", (seed_ids["a"],),
+        )
+        index_db._conn.commit()
 
     def _boom(_self, _ids):
         raise RuntimeError("qdrant unreachable")
@@ -193,8 +273,8 @@ def test_api_cache_refresh_never_deletes_when_qdrant_unreachable(
     # Qdrant for liveness.
     with monkeypatch.context() as mp:
         mp.setattr(index_db_mod.IndexDB, "_live_point_ids", _boom)
-        # The endpoint surfaces the failure rather than pretending the
-        # rows are orphans.
+        # The endpoint surfaces the failure rather than pretending
+        # the rows are orphans.
         with pytest.raises(RuntimeError):
             refresh_app.get("/api/cache/refresh")
 
@@ -216,7 +296,7 @@ def test_api_cache_refresh_accepts_the_legacy_full_flag(refresh_app):
 def test_api_cache_refresh_purges_orphaned_dislikes(
     refresh_app, refresh_app_state,
 ):
-    """A dislike whose photo left the collection is purged too."""
+    """A dislike whose file is gone from disk is purged too."""
     seed_ids = refresh_app_state["seed_ids"]
 
     resp = refresh_app.post(f"/api/dislikes/{seed_ids['b']}")
@@ -227,6 +307,7 @@ def test_api_cache_refresh_purges_orphaned_dislikes(
         points_selector=[seed_ids["b"]],
         wait=True,
     )
+    _delete_seeded_photo(refresh_app, "b")
 
     resp = refresh_app.get("/api/cache/refresh")
     assert resp.status_code == 200

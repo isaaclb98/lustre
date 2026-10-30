@@ -46,8 +46,15 @@ class ScanCancelled(Exception):
     """
 
 # Image extensions we know how to embed.
+#
+# `.avif` needs Pillow >= 11.3 (native AVIF decode) and libvips with
+# HEIF/AV1 support for the thumbnail path. Both are satisfied by the
+# Pillow 12/13 and libvips 8.16 in the search image.
+#
+# `.gif` is deliberately absent: it is an animated format we do not
+# index.
 IMAGE_EXTENSIONS: frozenset[str] = frozenset(
-    {".jpg", ".jpeg", ".jfif", ".png", ".webp", ".heic", ".heif"}
+    {".jpg", ".jpeg", ".jfif", ".png", ".webp", ".heic", ".heif", ".avif"}
 )
 
 # Names that should never be embedded.

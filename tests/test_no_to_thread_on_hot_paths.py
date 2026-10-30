@@ -32,6 +32,11 @@ ROUTERS_DIR = Path("search/routers")
 # review time, not to forbid the pattern outright.
 BASELINE: dict[str, int] = {
     "admin_index.py": 0,
+    # The orphan review + confirmed purge. Zero to_thread: the
+    # endpoints are admin-only and their work (a facet count, a
+    # scroll, a delete) is rare enough that blocking the event loop
+    # for it does not matter.
+    "admin_orphans.py": 0,
     "albums.py": 15,
     "collections.py": 0,
     "centroids.py": 0,

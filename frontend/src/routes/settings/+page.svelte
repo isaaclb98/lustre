@@ -16,6 +16,7 @@
   import { apiGet, apiPost, ApiError } from '$lib/api/client';
   import type { components } from '$lib/api/types.gen';
   import Button from '$lib/components/Button.svelte';
+  import OrphanPanel from '$lib/components/OrphanPanel.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import {
     preferences,
@@ -192,6 +193,8 @@
       {/if}
     {/if}
   </section>
+
+  <OrphanPanel />
 
   <section class="card glass">
     <h2 class="card-title">Slideshow</h2>

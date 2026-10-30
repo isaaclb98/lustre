@@ -36,13 +36,14 @@ from pathlib import Path
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 
+from indexer import orphan_scan, upsert
 from indexer import scan as scan_mod
-from indexer import upsert
 from indexer.image_loader import letterbox_resize, load_image_pil_with_dims
 from indexer.retry import RetryExhausted, retry_with_backoff
 from indexer.scan import ScanCancelled
 from indexer.thumbnails import generate_thumbnail_for_path, thumbnail_path
 from indexer.vision_encoder import VisionEncoder
+from lustre_kernel import orphan_marking
 from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
 from lustre_kernel.registry import get as _registry_get
 
@@ -362,6 +363,13 @@ def _scroll_existing_meta(client, collection, src_name):
     points lacking those fields map to `None` (treated as changed by
     the caller so legacy points heal on next run).
 
+    Also returns the set of point ids carrying the `orphan_since`
+    marker. The caller uses it to clear the marker on points whose
+    file is alive again — a file restored from a backup, or a source
+    re-added to the source list, comes back as the SAME point id
+    (the id is a uuid5 of the path) but would stay hidden behind the
+    marker otherwise.
+
     Replaces the previous per-batch `client.retrieve(...)` which
     issued one round-trip per batch — on a 902k-photo corpus that's
     ~900 extra RTTs to Qdrant per source. One scroll handles them
@@ -370,7 +378,10 @@ def _scroll_existing_meta(client, collection, src_name):
     """
     from qdrant_client.http import models as _qm
 
+    from lustre_kernel.orphan_marking import FIELD_ORPHAN_SINCE
+
     meta: dict = {}
+    marked: set[str] = set()
     offset = None
     while True:
         points, next_offset = client.scroll(
@@ -383,7 +394,7 @@ def _scroll_existing_meta(client, collection, src_name):
                     )
                 ]
             ),
-            with_payload=["mtime", "size"],
+            with_payload=["mtime", "size", FIELD_ORPHAN_SINCE],
             limit=1000,
             offset=offset,
         )
@@ -395,10 +406,13 @@ def _scroll_existing_meta(client, collection, src_name):
                 meta[str(pt.id)] = (int(pl["mtime"]), int(pl["size"]))
             else:
                 meta[str(pt.id)] = None
+            marker = pl.get(FIELD_ORPHAN_SINCE)
+            if isinstance(marker, (int, float)) and not isinstance(marker, bool):
+                marked.add(str(pt.id))
         if next_offset is None:
             break
         offset = next_offset
-    return meta
+    return meta, marked
 
 
 def main(argv=None):
@@ -523,29 +537,78 @@ def main(argv=None):
             limit=args.limit,
         )
 
-    # Prune once per run, scoped to the full set of sources this run
-    # manages. Doing it inside the per-source loop would let each
-    # source's prune delete points owned by the other sources (the
-    # alive-set is built from one dir but the scroll covers the whole
-    # collection). Walking all source dirs + passing every source-name
-    # means only genuinely-missing files under the managed sources are
-    # removed — points from unmanaged sources are never touched.
+    # Mark orphans once per run, scoped to the full set of sources
+    # this run manages.
+    #
+    # This replaces the old destructive prune. The prune DELETED
+    # points whose files were missing; it now MARKS them, and a
+    # separate, operator-confirmed step removes the embeddings. The
+    # marking is what stops the points being served — a marked point
+    # is excluded from every read path — so the user-visible effect
+    # is immediate, while the destructive half is deferred to a
+    # point where a human has looked at the count.
+    #
+    # Scoping matters. Doing this inside the per-source loop would
+    # let each source's scan mark points owned by the other sources
+    # (the alive-set is built from one dir but the scroll covers the
+    # whole collection). Walking all source dirs + passing every
+    # source-name means only genuinely-missing files under the
+    # managed sources are marked.
     if args.prune and not args.dry_run:
+        marked_total = 0
         try:
-            removed = upsert.prune_missing(
+            disk_orphans = orphan_scan.find_disk_orphans(
                 client, args.qdrant_collection,
                 source_dirs=args.source,
                 source_names=source_names,
             )
-        except upsert.PruneScopeError as exc:
-            # The prune could not be scoped safely — abort it, but keep
-            # indexing. Skipping the prune is the safe failure: the
-            # alternative is deleting points whose files are merely
+        except orphan_scan.OrphanScopeError as exc:
+            # The scan could not be scoped safely — abort it, but keep
+            # indexing. Skipping the scan is the safe failure: the
+            # alternative is marking points whose files are merely
             # unreachable.
-            logger.error("prune aborted: %s", exc)
-            removed = 0
+            logger.error("orphan scan aborted: %s", exc)
+            disk_orphans = []
         else:
-            logger.info("prune removed %d point(s)", removed)
+            if disk_orphans:
+                marked = orphan_marking.mark_orphans(
+                    client, args.qdrant_collection, disk_orphans,
+                )
+                marked_total += marked
+                logger.info(
+                    "marked %d point(s) as orphans (files gone from disk)",
+                    marked,
+                )
+            else:
+                logger.info("no orphans found among the managed sources")
+
+        # Retired sources: a source directory that was removed from
+        # the configured source list. Its points are still indexed but
+        # nothing manages them any more, and the files may well still
+        # be on disk — a filesystem liveness check cannot see this.
+        # The configured source list is the only signal, so the facet
+        # is compared against it.
+        try:
+            retired = orphan_scan.find_retired_sources(
+                client, args.qdrant_collection, source_names,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("retired-source detection failed: %s", exc)
+            retired = {}
+        for src_name, count in retired.items():
+            src_ids = orphan_scan.find_source_orphans(
+                client, args.qdrant_collection, src_name,
+            )
+            marked = orphan_marking.mark_orphans(
+                client, args.qdrant_collection, src_ids,
+            )
+            marked_total += marked
+            logger.info(
+                "source %r is no longer managed: marked %d of %d point(s) "
+                "as orphans", src_name, marked, count,
+            )
+        if marked_total:
+            logger.info("orphan marking total: %d point(s)", marked_total)
 
     for src_path, src_name in zip(args.source, source_names, strict=True):
         logger.info("=== %s -> %s ===", src_path, src_name)
@@ -581,15 +644,17 @@ def main(argv=None):
         # The single scroll replaces them all (paginated, but
         # O(pages), not O(batches)).
         source_meta: dict = {}
+        source_marked: set[str] = set()
         source_meta_failed = False
         if not args.rebuild and not args.dry_run:
             try:
-                source_meta = _scroll_existing_meta(
+                source_meta, source_marked = _scroll_existing_meta(
                     client, args.qdrant_collection, src_name,
                 )
                 logger.debug(
-                    "scrolled %d existing points for source %s",
-                    len(source_meta), src_name,
+                    "scrolled %d existing points for source %s "
+                    "(%d marked as orphans)",
+                    len(source_meta), src_name, len(source_marked),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
@@ -685,6 +750,11 @@ def main(argv=None):
             # block below is bound in rebuild mode too (where it's
             # always empty because every file is in to_embed).
             to_thumb: list = []
+
+            # Point ids whose orphan marker must be cleared: the file
+            # is alive again, so the marker is stale. Flushed with the
+            # batch's other writes.
+            to_unmark: list = []
 
             # Skip the change-detection scroll entirely in --rebuild
             # mode. We just wiped the collection, so every existing id
@@ -801,6 +871,15 @@ def main(argv=None):
                         n_changed += 1
                     else:
                         total_skipped += 1
+                        # The file is alive and unchanged. If its point
+                        # still carries the orphan marker, the marker is
+                        # now stale — the photo came back (restored from
+                        # a backup, or its source was re-added to the
+                        # source list) and would stay hidden otherwise.
+                        # The point id is a uuid5 of the path, so the
+                        # same file always maps to the same id.
+                        if pid in source_marked:
+                            to_unmark.append(pid)
                         # Round-50: self-heal. The file's embedding
                         # is up-to-date but the on-disk thumb is
                         # gone (operator deleted the thumb dir, NFS
@@ -825,6 +904,13 @@ def main(argv=None):
             )
 
             if not to_embed and not to_thumb:
+                # Nothing to embed or re-thumb, but a stale orphan
+                # marker may still need clearing.
+                if to_unmark and not args.dry_run:
+                    orphan_scan.clear_orphan_marker(
+                        client, args.qdrant_collection, to_unmark,
+                    )
+                    to_unmark = []
                 continue
 
             if args.dry_run:
@@ -836,6 +922,11 @@ def main(argv=None):
                     logger.info(
                         "dry-run: would regen %d missing thumb(s)",
                         len(to_thumb),
+                    )
+                if to_unmark:
+                    logger.info(
+                        "dry-run: would clear orphan marker on %d point(s)",
+                        len(to_unmark),
                     )
                 total_indexed += n_new
                 total_reembedded += n_changed
@@ -990,6 +1081,17 @@ def main(argv=None):
                     logger.exception("upsert failed")
                     total_errors += len(items)
 
+            # Clear the stale orphan markers for the files that came
+            # back. Done after the embed block: a re-embedded point
+            # has already had its whole payload replaced (which drops
+            # the marker), so this only has work to do for the
+            # up-to-date files.
+            if to_unmark and not args.dry_run:
+                orphan_scan.clear_orphan_marker(
+                    client, args.qdrant_collection, to_unmark,
+                )
+                to_unmark = []
+
             # Round-50: regenerate thumbnails for files whose embed
             # was skipped but whose on-disk thumb is missing. Runs
             # after the embed block (which may have created thumbs
@@ -1056,14 +1158,24 @@ def main(argv=None):
         )
         if rc_b1 or rc_b2:
             logger.warning("full sweep: some backfill rows failed; see log")
-        removed = upsert.prune_missing(
-            client, args.qdrant_collection,
-            source_dirs=args.source,
-            source_names=source_names,
-        )
-        logger.info("full sweep: prune removed %d point(s)", removed)
+        # The full sweep marks orphans rather than deleting them — see
+        # the --prune path for the reasoning.
+        try:
+            full_orphans = orphan_scan.find_disk_orphans(
+                client, args.qdrant_collection,
+                source_dirs=args.source,
+                source_names=source_names,
+            )
+        except orphan_scan.OrphanScopeError as exc:
+            logger.error("full sweep: orphan scan aborted: %s", exc)
+            full_orphans = []
+        else:
+            marked = orphan_marking.mark_orphans(
+                client, args.qdrant_collection, full_orphans,
+            )
+            logger.info("full sweep: marked %d point(s) as orphans", marked)
     elif args.full and args.dry_run:
-        logger.info("dry-run --full: backfill and prune skipped (no writes)")
+        logger.info("dry-run --full: backfill and orphan scan skipped (no writes)")
 
     if last_written_ids and not args.dry_run:
 

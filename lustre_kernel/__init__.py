@@ -9,6 +9,9 @@ It contains:
   delete filter must never be able to match every point in a
   collection by accident (Qdrant treats an empty `must` conjunction
   as "match all", not "match none").
+- `orphan_marking` — marking points as orphans instead of deleting
+  them: the `orphan_since` payload marker, the filters that select
+  or exclude marked points, and the idempotent marking helper.
 - `qdrant_url` — URL → QdrantClient kwargs helper (moved from
   `search/qdrant_url.py`).
 - `payload_schema` — canonical Qdrant point payload field names,
@@ -27,6 +30,7 @@ filesystem reads. The kernel is pure utilities, registries, and types.
 
 from lustre_kernel import (
     destructive_guard,
+    orphan_marking,
     payload_schema,
     qdrant_url,
     registry,
@@ -35,6 +39,7 @@ from lustre_kernel import (
 
 __all__ = [
     "destructive_guard",
+    "orphan_marking",
     "payload_schema",
     "qdrant_url",
     "registry",

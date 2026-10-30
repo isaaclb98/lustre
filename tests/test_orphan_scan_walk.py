@@ -1,6 +1,6 @@
-"""The prune's alive set: a contract on how it is built.
+"""The orphan scan's alive set: a contract on how it is built.
 
-The prune compares the set of existing files under the source dirs
+The scan compares the set of existing files under the source dirs
 against the `path` payload of every point in the collection. It used
 to build that set with `Path.rglob("*")` plus a per-entry
 `is_file()` — the exact anti-pattern `indexer/scan.py` was written
@@ -20,12 +20,12 @@ from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
-# the prune's alive set
+# the orphan scan's alive set
 # ---------------------------------------------------------------------------
 
 
 def test_existing_image_paths_collects_only_images(tmp_path: Path) -> None:
-    """The prune's alive set only needs the image paths.
+    """The scan's alive set only needs the image paths.
 
     The set is compared against the `path` payload of every point in
     the collection, and that payload is always an image path
@@ -50,12 +50,12 @@ def test_existing_image_paths_collects_only_images(tmp_path: Path) -> None:
     assert all(Path(p).is_absolute() for p in found)
 
 
-def test_existing_image_paths_matches_the_prunes_path_format(
+def test_existing_image_paths_matches_the_scans_path_format(
     tmp_path: Path
 ) -> None:
     """The set's paths must match the payload's path format.
 
-    upsert.py stores `str(path.resolve())` in the payload; the prune
+    upsert.py stores `str(path.resolve())` in the payload; the scan
     compares that string against this set. A different format means
     every point looks like an orphan.
     """
@@ -83,24 +83,24 @@ def test_existing_image_paths_skips_hidden_files(tmp_path: Path) -> None:
     assert {Path(p).name for p in found} == {"real.jpg"}
 
 
-def test_the_prune_does_not_use_rglob() -> None:
-    """The prune must not walk the tree with `Path.rglob` again.
+def test_the_orphan_scan_does_not_use_rglob() -> None:
+    """The scan must not walk the tree with `Path.rglob` again.
 
     `indexer/scan.py` exists because `Path.rglob("*")` plus a
     per-entry `is_file()` costs an extra stat syscall per entry, and
-    the prune was doing exactly that while collecting every file in
+    the scan was doing exactly that while collecting every file in
     the tree. On the NAS the walk ran at 445-1,483 entries/s and
     delayed every photo from being embedded.
     """
     import ast
 
-    from indexer import upsert
+    from indexer import orphan_scan
 
-    tree = ast.parse(inspect.getsource(upsert))
+    tree = ast.parse(inspect.getsource(orphan_scan))
     fn = next(
         n
         for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef) and n.name == "prune_missing"
+        if isinstance(n, ast.FunctionDef) and n.name == "find_disk_orphans"
     )
     # Look at the code, not the prose: a comment explaining what was
     # replaced is not a call.
@@ -110,12 +110,12 @@ def test_the_prune_does_not_use_rglob() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     }
     assert "rglob" not in called, (
-        "the prune is walking the tree with rglob again"
+        "the orphan scan is walking the tree with rglob again"
     )
     assert "is_file" not in called, (
-        "the prune is doing a per-entry stat again"
+        "the orphan scan is doing a per-entry stat again"
     )
-    src = inspect.getsource(upsert)
-    start = src.index("def prune_missing")
+    src = inspect.getsource(orphan_scan)
+    start = src.index("def find_disk_orphans")
     end = src.find("\ndef ", start + 10)
     assert "existing_image_paths" in src[start:end if end > 0 else len(src)]

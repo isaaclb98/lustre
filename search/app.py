@@ -609,6 +609,37 @@ def reset_for_tests() -> None:
     text_encoder.reset_encoder_for_tests()
 
 
+def _purge_orphans_after_index(succeeded: bool) -> None:
+    """Run the orphan purge when an index job finishes.
+
+    The purge removes user-state rows whose photos are gone from disk
+    — favourites, dislikes, album memberships. It normally runs on the
+    6-hourly periodic tick; running it here means a photo deleted
+    from the NAS loses its favourite as soon as the next index
+    completes, rather than up to six hours later.
+
+    Only on success: a failed or cancelled index run may have left
+    the corpus in a partial state, and purging user state against a
+    half-written collection is exactly the mistake the purge's
+    liveness rules exist to prevent.
+
+    Never raises — a failed purge must not take down the runner.
+    """
+    if not succeeded:
+        return
+    try:
+        db = get_index_db()
+    except RuntimeError:
+        return
+    try:
+        purged = db.purge_orphaned_user_data()
+    except Exception:
+        logger.exception("orphan purge after index failed")
+        return
+    if any(purged.values()):
+        logger.info("orphan purge after index: %s", purged)
+
+
 # ---------------------- App factory ----------------------
 
 
@@ -650,6 +681,12 @@ def create_app(
         # `/api/collections` call lands.
         # Idempotent; safe to call on every startup.
         qdrant.ensure_payload_index("collection")
+        # The orphan marker is a timestamp, so it needs a FLOAT index.
+        # Without it, "is this point an orphan?" would be a full
+        # collection scan on every search query — the marker is
+        # checked on every read path, so the index is what keeps
+        # that check cheap.
+        qdrant.ensure_payload_index("orphan_since", field_type="float")
     _qdrant = qdrant
 
     # Build the centroid store from config and load it now so the
@@ -673,6 +710,14 @@ def create_app(
         index_db = IndexDB(
             db_path=db_path,
             qdrant_client=qdrant,
+            # The orphan purge needs to map a stored payload path onto
+            # this machine's mount to ask "is the file still there?".
+            photos_root=_cfg.nas_images_base,
+            path_prefix=_cfg.path_prefix,
+            # The other photo mounts (a source mounted as a sibling of
+            # the photos root), so their favourites are garbage
+            # collected too instead of being unresolvable.
+            photos_roots=_cfg.photos_roots,
         )
     _index_db = index_db
     random_picker = RandomPicker(index_db)
@@ -718,7 +763,15 @@ def create_app(
         qdrant_collection=_cfg.qdrant_collection,
         batch_size=_cfg.indexer_batch_size,
     )
-    indexer_runner = IndexerRunner(command_factory=indexer_cmd_factory)
+    indexer_runner = IndexerRunner(
+        command_factory=indexer_cmd_factory,
+        # Run the orphan purge the moment an index job finishes, rather
+        # than waiting for the 6-hourly periodic tick. The purge is
+        # what removes user-state rows whose photos are gone from
+        # disk; running it promptly means a deleted photo's favourite
+        # does not linger for hours.
+        on_complete=_purge_orphans_after_index,
+    )
 
     # ---------------- Dynamic centroids ----------------
     #
@@ -984,6 +1037,7 @@ def create_app(
     # self-contained one first). Inline duplicates will be removed
     # in follow-up commits as each router is verified.
     from search.routers.admin_index import build_admin_index_router
+    from search.routers.admin_orphans import build_admin_orphans_router
     from search.routers.albums import build_albums_router
     from search.routers.centroids import build_centroids_reload_router
     from search.routers.centroids_list import build_centroids_list_router
@@ -1061,6 +1115,13 @@ def create_app(
     app.include_router(build_thumbnails_router())
     app.include_router(build_admin_index_router(
         indexer_runner=indexer_runner,
+        index_db=index_db,
+    ))
+    # The orphan review + confirmed purge. The indexer marks orphans
+    # (files gone from disk, sources retired); these endpoints are
+    # where an operator reviews the count and confirms the removal.
+    app.include_router(build_admin_orphans_router(
+        qdrant=qdrant,
         index_db=index_db,
     ))
 

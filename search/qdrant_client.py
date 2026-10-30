@@ -20,6 +20,47 @@ from uuid import UUID
 logger = logging.getLogger(__name__)
 
 
+def _orphan_must_not() -> Any:
+    """The `must_not` condition that excludes marked (orphan) points.
+
+    A point is an orphan when its payload carries the `orphan_since`
+    marker — a unix timestamp. The marker is a number, so a range
+    query on `>= 0` matches exactly the marked points; points that
+    were never marked, and points whose marker was cleared to null,
+    both fail to match and are therefore not excluded.
+
+    The condition is added to every read path. Marking (rather than
+    deleting) is what makes the two-step purge possible: the point
+    stops being served immediately, but its embedding survives until
+    an operator confirms the removal.
+    """
+    from qdrant_client.http import models as qmodels
+
+    from lustre_kernel.orphan_marking import FIELD_ORPHAN_SINCE
+
+    return qmodels.FieldCondition(
+        key=FIELD_ORPHAN_SINCE,
+        range=qmodels.Range(gte=0),
+    )
+
+
+def _orphan_range_condition() -> Any:
+    """The condition that SELECTS marked (orphan) points.
+
+    The positive counterpart of `_orphan_must_not`: a `must` clause
+    on the `orphan_since` range matches exactly the points carrying
+    the marker. Used to count, list and purge the orphans.
+    """
+    from qdrant_client.http import models as qmodels
+
+    from lustre_kernel.orphan_marking import FIELD_ORPHAN_SINCE
+
+    return qmodels.FieldCondition(
+        key=FIELD_ORPHAN_SINCE,
+        range=qmodels.Range(gte=0),
+    )
+
+
 @dataclass
 class SearchHit:
     id: str
@@ -150,6 +191,11 @@ class QdrantSearch:
             must_not_conditions.append(
                 qmodels.HasIdCondition(has_id=cast("list[int|str|UUID]", exclude_ids))
             )
+        # Orphans are marked, not deleted, so they are still IN the
+        # collection and a query would otherwise return them. Every
+        # read path excludes them: a marked point must not be served
+        # while it waits for an operator to confirm its removal.
+        must_not_conditions.append(_orphan_must_not())
         query_filter = None
         if must_conditions or must_not_conditions:
             query_filter = qmodels.Filter(
@@ -329,6 +375,190 @@ class QdrantSearch:
             )
             for p in points
         ]
+
+    # ---------------- Orphan marking ----------------
+
+    def count_orphans(self) -> int:
+        """How many points are marked as orphans.
+
+        An exact count of the marked points. This is the number an
+        operator reviews before confirming a purge, so it must be
+        exact — an approximate count could under-report and hide
+        points that are about to be deleted.
+
+        Returns 0 if the count fails. The caller treats that as
+        "nothing to purge", which is the safe direction: a failed
+        count must not turn into a mass deletion.
+        """
+        try:
+            from qdrant_client.http import models as qmodels
+
+            result = self.client.count(
+                collection_name=self.collection,
+                count_filter=qmodels.Filter(
+                    must=[_orphan_range_condition()],
+                ),
+                exact=True,
+                timeout=self.timeout_ms // 1000,
+            )
+            return int(result.count)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("count_orphans failed: %s", e)
+            return 0
+
+    def list_orphans(self, limit: int = 100) -> list[dict[str, Any]]:
+        """A sample of the marked (orphan) points, for operator review.
+
+        Returns dictionaries with the point `id`, its `path`, its
+        `collection` (source), and the `orphan_since` timestamp. This
+        is what an operator looks at before confirming the purge: it
+        shows WHICH photos are about to go, and which source they
+        came from.
+
+        The sample is capped by `limit` — this is a review view, not
+        an export. The full set is deleted by the confirmed purge,
+        which works off the marker rather than off this sample.
+        """
+        try:
+            from qdrant_client.http import models as qmodels
+
+            points, _ = self.client.scroll(
+                collection_name=self.collection,
+                limit=limit,
+                scroll_filter=qmodels.Filter(
+                    must=[_orphan_range_condition()],
+                ),
+                with_payload=True,
+                with_vectors=False,
+                timeout=self.timeout_ms // 1000,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("list_orphans failed: %s", e)
+            return []
+        out: list[dict[str, Any]] = []
+        for p in points:
+            payload = p.payload or {}
+            out.append({
+                "id": str(p.id),
+                "path": payload.get("path", ""),
+                "collection": payload.get("collection", ""),
+                "orphan_since": payload.get("orphan_since"),
+            })
+        return out
+
+    def orphan_source_counts(self) -> dict[str, int]:
+        """How many orphans each source holds.
+
+        Answers "which source do I want to retire?" — the count is
+        per source so a whole-source retirement can be confirmed as
+        one decision.
+        """
+        counts: dict[str, int] = {}
+        for item in self.list_orphans(limit=100000):
+            src = item.get("collection") or ""
+            counts[src] = counts.get(src, 0) + 1
+        return counts
+
+    def delete_orphans(
+        self,
+        source_name: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Delete the marked (orphan) points. The confirmed purge.
+
+        This is the SECOND step of the two-step orphan lifecycle. The
+        first step marks the points with the `orphan_since` marker,
+        which excludes them from every read path; this step removes
+        the embeddings for good.
+
+        The delete filter is scoped by the marker itself: it selects
+        exactly the points that carry `orphan_since`, and nothing
+        else. That is the whole point of the marker — it is a
+        positive, selective predicate, so the delete cannot reach an
+        unmarked point. The destructive guard's `assert_scoped`
+        enforces that structurally rather than by convention.
+
+        `source_name` narrows the purge to one retired source. A
+        whole-source retirement can then be confirmed as one
+        decision, without touching any other source's orphans.
+
+        `limit` caps how many points are deleted in this call. It
+        exists so a huge purge can be done in steps. None means no
+        cap.
+
+        Returns a dict with the number of points deleted and the ids
+        that were deleted, so the caller can clean up the matching
+        SQLite rows.
+        """
+        from qdrant_client.http import models as qmodels
+
+        from lustre_kernel.destructive_guard import assert_scoped
+
+        must: list[Any] = [_orphan_range_condition()]
+        if source_name:
+            must.append(
+                qmodels.FieldCondition(
+                    key="collection",
+                    match=qmodels.MatchValue(value=source_name),
+                )
+            )
+        query_filter = qmodels.Filter(must=must)
+
+        # Structural check: the filter must positively select a
+        # subset. The orphan marker IS such a predicate, so this
+        # passes — but the check is what makes an accidental
+        # match-all delete impossible if the filter is ever changed.
+        assert_scoped(
+            {
+                "must": [
+                    {"key": "orphan_since", "range": {"gte": 0}},
+                    *(
+                        [{"key": "collection",
+                          "match": {"value": source_name}}]
+                        if source_name else []
+                    ),
+                ],
+            },
+            context="delete orphans",
+        )
+
+        # Collect the ids first. The delete is done by id rather than
+        # by filter so the caller learns EXACTLY which points went,
+        # and can clean up the matching user-state rows. A filter
+        # delete would report only a count, leaving the SQLite side
+        # guessing.
+        ids: list[str] = []
+        offset = None
+        while True:
+            points, next_offset = self.client.scroll(
+                collection_name=self.collection,
+                limit=1000,
+                offset=offset,
+                scroll_filter=query_filter,
+                with_payload=False,
+                with_vectors=False,
+                timeout=self.timeout_ms // 1000,
+            )
+            for p in points:
+                ids.append(str(p.id))
+                if limit is not None and len(ids) >= limit:
+                    next_offset = None
+                    break
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        if not ids:
+            return {"deleted": 0, "ids": [], "source": source_name}
+
+        self.client.delete(
+            collection_name=self.collection,
+            points_selector=ids,
+            wait=True,
+            timeout=self.timeout_ms // 1000,
+        )
+        logger.info("purged %d orphan point(s)", len(ids))
+        return {"deleted": len(ids), "ids": ids, "source": source_name}
 
     def count_points(self, exact: bool = True) -> int:
         """
@@ -583,6 +813,11 @@ class QdrantSearch:
             must_not_conditions.append(
                 qmodels.HasIdCondition(has_id=cast("list[int|str|UUID]", exclude_ids))
             )
+        # Orphans are marked, not deleted, so they are still IN the
+        # collection and a query would otherwise return them. Every
+        # read path excludes them: a marked point must not be served
+        # while it waits for an operator to confirm its removal.
+        must_not_conditions.append(_orphan_must_not())
         query_filter = None
         if must_conditions or must_not_conditions:
             query_filter = qmodels.Filter(
@@ -667,13 +902,21 @@ class QdrantSearch:
         Yields batches of dictionaries with `id` and `payload`.
         Vectors are intentionally omitted; the search-side SQLite
         cache only needs rebuildable photo metadata.
+
+        Marked (orphan) points are excluded: they are not part of
+        the library any more, and the cache this feeds must not
+        resurrect them as live photos.
         """
+        from qdrant_client.http import models as qmodels
+
+        query_filter = qmodels.Filter(must_not=[_orphan_must_not()])
         scroll_offset = None
         while True:
             batch, next_offset = self.client.scroll(
                 collection_name=self.collection,
                 limit=batch_size,
                 offset=scroll_offset,
+                scroll_filter=query_filter,
                 with_payload=True,
                 with_vectors=False,
                 timeout=self.timeout_ms // 1000,
@@ -706,10 +949,17 @@ class QdrantSearch:
         wanted = set(collections or ())
         total = 0
         try:
+            from qdrant_client.http import models as qmodels
+
             res = self.client.facet(
                 collection_name=self.collection,
                 key="collection",
                 limit=1000,
+                # Exclude marked (orphan) points from the counts: a
+                # source whose points have all been retired must
+                # report zero, not a number of soon-to-be-purged
+                # points.
+                facet_filter=qmodels.Filter(must_not=[_orphan_must_not()]),
             )
             for hit in res.hits:
                 if wanted and hit.value not in wanted:
@@ -751,8 +1001,11 @@ class QdrantSearch:
                     match=qmodels.MatchAny(any=list(collections)),
                 )
             )
-        query_filter = (
-            qmodels.Filter(must=must_conditions) if must_conditions else None
+        # The random deck must not hand out marked (orphan) points.
+        must_not_conditions = [_orphan_must_not()]
+        query_filter = qmodels.Filter(
+            must=must_conditions or None,
+            must_not=must_not_conditions,
         )
         points, next_offset = self.client.scroll(
             collection_name=self.collection,
@@ -803,6 +1056,13 @@ class QdrantSearch:
         if not count:
             return []
         import random
+
+        from qdrant_client.http import models as qmodels
+
+        # Marked (orphan) points are excluded from the id scroll, so
+        # they are never sampled. The count is only used as a
+        # pagination bound, so it may over-count.
+        query_filter = qmodels.Filter(must_not=[_orphan_must_not()])
         # Step 1: paginate to gather all point ids. No payload
         # or vector data — keeps the scroll response small.
         all_ids: list[str] = []
@@ -813,6 +1073,7 @@ class QdrantSearch:
                     collection_name=self.collection,
                     limit=1000,
                     offset=scroll_offset,
+                    scroll_filter=query_filter,
                     with_payload=False,
                     with_vectors=False,
                     timeout=self.timeout_ms // 1000,
@@ -948,11 +1209,20 @@ class QdrantSearch:
         Requires qdrant-client ≥ 1.10 (when `client.facet()` was
         added). Bumped in pyproject.toml.
         """
+        from qdrant_client.http import models as qmodels
+
         response = self.client.facet(
             collection_name=self.collection,
             key="collection",
             limit=100,  # plenty for any sane library count
             timeout=self.timeout_ms // 1000,
+            # A retired source's points are marked as orphans. They
+            # are still in the collection, so without this filter the
+            # chip would keep showing a source that has been removed
+            # from the library, with a count of points that are about
+            # to be purged. Marked points are excluded, so a fully
+            # retired source drops off the chips entirely.
+            facet_filter=qmodels.Filter(must_not=[_orphan_must_not()]),
         )
         items: list[dict[str, Any]] = []
         for h in response.hits:
@@ -992,13 +1262,24 @@ class QdrantSearch:
 
         Safe to call repeatedly — Qdrant treats existing indexes as
         no-ops on duplicate create.
+
+        `field_type` selects the schema: "keyword" for the string
+        fields the facet API needs, "float" for the `orphan_since`
+        marker, whose range queries are what make "is this point an
+        orphan?" a server-side filter rather than a full scan.
         """
         try:
             from qdrant_client.http import models as qmodels
+
+            schema = (
+                qmodels.PayloadSchemaType.FLOAT
+                if field_type == "float"
+                else qmodels.PayloadSchemaType.KEYWORD
+            )
             self.client.create_payload_index(
                 collection_name=self.collection,
                 field_name=field,
-                field_schema=qmodels.PayloadSchemaType.KEYWORD,
+                field_schema=schema,
             )
             logger.info("ensured payload index on %s.%s", self.collection, field)
         except Exception as e:  # noqa: BLE001

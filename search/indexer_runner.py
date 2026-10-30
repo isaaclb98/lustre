@@ -154,11 +154,17 @@ class IndexerRunner:
         command_factory: CommandFactory,
         log_buffer_size: int = 1000,
         clock: Callable[[], float] = time.time,
+        on_complete: Callable[[bool], None] | None = None,
     ) -> None:
         self._cmd_factory = command_factory
         self._log_buffer: deque[str] = deque(maxlen=log_buffer_size)
         self._log_total: int = 0  # monotonic line counter
         self._lock = threading.Lock()
+        # Called once when a job reaches a terminal state, with
+        # True for success. The app uses it to run the orphan purge
+        # the moment an index finishes, rather than waiting for the
+        # 6-hourly periodic tick.
+        self._on_complete = on_complete
         self._proc: subprocess.Popen[str] | None = None
         self._reader_thread: threading.Thread | None = None
         self._wait_thread: threading.Thread | None = None
@@ -444,9 +450,19 @@ class IndexerRunner:
                 # from the exit code.
                 if self._last_error is None:
                     self._last_error = f"indexer exited with code {rc}"
+            succeeded = self._state == IndexerState.IDLE
             self._finished_at = datetime.now(timezone.utc)
             self._last_run_at = self._finished_at
             self._idle_event.set()
+
+        # Notify outside the lock: the callback does I/O (the orphan
+        # purge reads the filesystem and Qdrant) and must not block
+        # status() callers.
+        if self._on_complete is not None:
+            try:
+                self._on_complete(succeeded)
+            except Exception:
+                logger.exception("indexer on_complete callback failed")
 
         # SIGKILL fallback if the child ignored SIGTERM. Should be a
         # no-op for well-behaved indexers but defends against a hung

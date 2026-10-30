@@ -57,10 +57,32 @@ class IndexDB:
         db_path: str,
         qdrant_client: QdrantSearch,
         refresh_interval_seconds: int = 21600,
+        photos_root: str = "",
+        path_prefix: str = "",
+        photos_roots: tuple[str, ...] = (),
     ):
         self.db_path = db_path
         self.qdrant_client = qdrant_client
         self.refresh_interval_seconds = refresh_interval_seconds
+        # Where the photo files live ON THIS MACHINE, and the prefix
+        # the indexer used on ITS machine. Together they map a stored
+        # payload path to a local file, which is what the orphan purge
+        # needs to answer "is this photo still on disk?".
+        self.photos_root = photos_root
+        # Every root a stored path may resolve under. `photos_root` is
+        # the primary one (it is also the base for relative paths and
+        # for the prefix rewrite); the extra roots are the other photo
+        # MOUNTS — a source mounted as a sibling of the photos root
+        # (/gravure next to /nas) keeps its files under a different
+        # top-level path, and without its root listed here the purge
+        # could never confirm that one of its photos is gone, so the
+        # favourite would never be garbage collected.
+        self.photos_roots = (
+            tuple(photos_roots)
+            if photos_roots
+            else ((photos_root,) if photos_root else ())
+        )
+        self.path_prefix = path_prefix
         self._lock = threading.RLock()
         # The periodic maintenance clock starts at "now": there is
         # no derived cache to build at startup, and the corpus in
@@ -99,6 +121,107 @@ class IndexDB:
             self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
+        self._backfill_photo_paths()
+
+    def _backfill_photo_paths(self) -> None:
+        """Fill in `photo_paths` for the rows that predate the table.
+
+        The `photo_paths` table was added so the orphan purge could
+        decide liveness against the FILESYSTEM rather than against
+        Qdrant. Rows written before it existed have no path, and
+        without one the purge has to fall back to the Qdrant-liveness
+        rule — which is wrong for a photo that is on disk but not
+        currently indexed (right now, 80,787 of them).
+
+        So on open, the existing user-state rows get their paths
+        resolved from Qdrant and recorded.
+
+        A row whose point is no longer in Qdrant gets NO path. That
+        is not a failure — it means the photo is already gone from
+        the collection, so there is nothing to look up, and the row
+        is left for the purge to deal with.
+
+        This is self-healing rather than a one-shot migration: it
+        looks for user-state rows with no recorded path, and only
+        does a Qdrant lookup if there are any. Once the paths are
+        recorded there is nothing left to look up, so the steady
+        state costs a few small SELECTs and no network calls. A
+        one-shot flag would be wrong here — the first open of a
+        fresh database happens BEFORE any rows exist, so the flag
+        would be set on an empty table and the real backfill would
+        never run.
+        """
+        with self._lock:
+            candidate_ids: set[str] = set()
+            for table, column in (
+                ("favorites", "id"),
+                ("dislikes", "id"),
+                ("album_memberships", "favorite_id"),
+                ("albums", "cover_favorite_id"),
+            ):
+                rows = self._conn.execute(
+                    f"SELECT DISTINCT {column} AS v FROM {table} "  # noqa: S608
+                    f"WHERE {column} IS NOT NULL AND {column} != ''"
+                ).fetchall()
+                candidate_ids.update(r["v"] for r in rows)
+
+            # Only the rows that still need a path.
+            pending = [
+                pid for pid in sorted(candidate_ids)
+                if self._conn.execute(
+                    "SELECT 1 FROM photo_paths WHERE id = ? LIMIT 1",
+                    (pid,),
+                ).fetchone() is None
+            ]
+
+        if not pending:
+            return
+
+        # Resolve the paths from Qdrant. `retrieve_batch` is one
+        # round-trip per chunk and returns the points the collection
+        # still holds.
+        resolved: dict[str, str] = {}
+        chunk_size = 500
+        for start in range(0, len(pending), chunk_size):
+            chunk = pending[start:start + chunk_size]
+            try:
+                hits = self.qdrant_client.retrieve_batch(chunk)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "photo_paths backfill: lookup failed for %d ids (%s) "
+                    "— leaving them unresolved", len(chunk), e,
+                )
+                continue
+            for hit in hits:
+                path = (hit.payload or {}).get("path") or hit.path
+                if path:
+                    resolved[hit.id] = path
+
+        if resolved:
+            with self._lock:
+                self._conn.executemany(
+                    """
+                    INSERT INTO photo_paths (id, path, recorded_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                      path        = excluded.path,
+                      recorded_at = excluded.recorded_at
+                    """,
+                    [(pid, path, _utc_now())
+                     for pid, path in resolved.items()],
+                )
+                self._conn.commit()
+            logger.info(
+                "photo_paths backfill: recorded %d path(s) for %d "
+                "existing user-state row(s)",
+                len(resolved), len(pending),
+            )
+        unresolved = len(pending) - len(resolved)
+        if unresolved:
+            logger.info(
+                "photo_paths backfill: %d row(s) have no path — their "
+                "photo is not in the collection", unresolved,
+            )
 
     def _init_schema(self) -> None:
         with self._lock:
@@ -119,6 +242,41 @@ class IndexDB:
                 --
                 -- Liveness is therefore always decided against
                 -- Qdrant — see purge_orphaned_user_data().
+                --
+                -- ...with ONE exception, and it is the important one.
+                -- "Is this photo still around?" has two possible
+                -- meanings:
+                --
+                --   1. Is it in the collection right now?
+                --   2. Does the file still exist on disk?
+                --
+                -- These differ, and conflating them loses user data.
+                -- A photo can be absent from Qdrant while its file is
+                -- perfectly alive on the NAS — because it was never
+                -- indexed, or because the collection was restored from
+                -- a snapshot older than the photo's last index run.
+                -- In that state the favourite is still VALID; the
+                -- photo is coming back, and because the point id is
+                -- uuid5(path) it comes back as the SAME id, so the
+                -- favourite re-attaches on its own.
+                --
+                -- Deleting the favourite on "absent from Qdrant"
+                -- would destroy it for a photo that is about to
+                -- return. So the path is recorded alongside the id,
+                -- and liveness is decided against the FILESYSTEM.
+                --
+                -- This table is the id -> path map. It is written when
+                -- a photo is favourited / disliked / added to an
+                -- album, at the moment the path is known, and it is
+                -- the only place a path can be recovered from: the
+                -- point id is a one-way uuid5 hash, so it cannot be
+                -- reversed.
+                CREATE TABLE IF NOT EXISTS photo_paths (
+                  id            TEXT PRIMARY KEY,
+                  path          TEXT NOT NULL,
+                  recorded_at   TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS favorites (
                   id            TEXT PRIMARY KEY,
                   favorited_at  TEXT NOT NULL
@@ -330,8 +488,130 @@ class IndexDB:
             live.update(hit.id for hit in hits)
         return live
 
-    def purge_orphaned_user_data(self) -> dict[str, int]:
-        """Delete user-state rows whose photo is gone from Qdrant.
+    def _file_still_exists(self, stored_path: str) -> bool:
+        """True if the photo's file is still on disk.
+
+        The stored path is the one the INDEXER recorded, which may be
+        from a different machine's mount (Z:\\images\\... on Windows).
+        This maps it onto this machine's mount and checks for the
+        file.
+
+        Three outcomes, and they are not the same thing:
+
+        - The path maps onto our mount and the file is there -> alive.
+        - The path maps onto our mount and the file is NOT there ->
+          the photo is genuinely gone. This is the orphan case.
+        - The path does NOT map onto our mount -> we cannot check.
+          Treated as ALIVE.
+
+        That last case matters. A payload path from a machine whose
+        mount we do not have (or a legacy path outside the photos
+        root) is not evidence that the photo was deleted — it is
+        evidence that we are looking in the wrong place. Treating
+        "cannot check" as "gone" would delete the user's favourites
+        on any host that does not mount the photos: the exact
+        mistake the Qdrant-liveness rule was introduced to avoid,
+        just with a different trigger.
+        """
+        if not stored_path:
+            return True
+        if not self.photos_root:
+            return True
+
+        local = self._map_to_local(stored_path)
+        if local is None:
+            return True
+        try:
+            return local.exists()
+        except OSError:
+            # An unreadable path is not a deleted photo.
+            logger.warning("purge: could not stat %r; treating as alive", local)
+            return True
+
+    def _map_to_local(self, stored_path: str) -> Path | None:
+        """Map a stored payload path onto this machine's photos mount.
+
+        Returns the local path, or None when the stored path cannot
+        be mapped — meaning we have no way to check whether the file
+        is there.
+
+        The mapping mirrors `resolve_local`, but WITHOUT its
+        existence check: `resolve_local` returns None both for "the
+        file is gone" and for "the path does not map", and the two
+        need different answers here.
+        """
+        p = Path(stored_path)
+        prefix = self.path_prefix
+
+        if prefix and str(p).startswith(prefix):
+            rel = str(p)[len(prefix):].lstrip("\\/").replace("\\", "/")
+            return Path(self.photos_root) / rel
+
+        if p.is_absolute():
+            # An absolute path is only checkable if it lands inside
+            # one of the photo roots we have mounted. A path outside
+            # them belongs to a namespace we cannot see.
+            root = self._root_for(p)
+            if root is None:
+                return None
+            # The root itself has to be reachable. A mount that is
+            # down (or a root that was renamed away) makes every file
+            # under it look deleted, and "the file is gone" is a
+            # destructive conclusion — it takes the user's favourites
+            # with it. An unreachable root means we cannot check, and
+            # "cannot check" means alive.
+            if not self._root_is_reachable(root):
+                logger.warning(
+                    "purge: photo root %r is not reachable; treating "
+                    "paths under it as alive (cannot check)",
+                    root,
+                )
+                return None
+            return p
+
+        # Relative: it is relative to the photos root by definition.
+        return Path(self.photos_root) / p
+
+    def _root_for(self, p: Path) -> str | None:
+        """The photo root an absolute path falls under, if any.
+
+        The LONGEST matching root wins, so a path under a source dir
+        is attributed to that source dir rather than to the mount it
+        happens to sit inside. The source dir is the narrower
+        statement of where the file lives, and it is the one that
+        goes away if that source is unmounted.
+        """
+        best: str | None = None
+        for root in self.photos_roots:
+            try:
+                p.relative_to(root)
+            except ValueError:
+                continue
+            if best is None or len(root) > len(best):
+                best = root
+        return best
+
+    @staticmethod
+    def _root_is_reachable(root: str) -> bool:
+        """True if the root is present and is a directory.
+
+        `Path.is_dir()` swallows OSError and answers False, which is
+        the answer we want: a root we cannot stat is a root we cannot
+        check under.
+        """
+        try:
+            return Path(root).is_dir()
+        except OSError:
+            return False
+
+    def find_orphaned_user_ids(self) -> list[str]:
+        """The user-state ids whose photo is gone from DISK.
+
+        Analysis only — nothing is deleted. This is the decision
+        half of the purge; `purge_orphaned_user_data` applies it.
+        `count_orphaned_user_data` reports on it without applying
+        it, so the UI can show what a purge would remove before the
+        operator asks for one.
 
         Orphans accumulate when the indexer prunes Qdrant points
         (files deleted from disk): the favourite/dislike/album rows
@@ -344,34 +624,41 @@ class IndexDB:
 
         Called from POST /api/cache/refresh.
 
-        **Liveness is decided by Qdrant, and by nothing else.**
-        There used to be an `images` table in this database — a
-        DERIVED mirror of the collection. It could be empty or stale
-        (a half-finished rebuild, a mirror that was never populated,
-        a mirror that drifted from the collection). If it were used
-        to decide which user rows are orphans, a stale mirror would
-        delete the user's favourites, dislikes and album memberships
-        — the authoritative state — because the photos they point at
-        are not in the mirror. The mirror said nothing about whether
-        a photo existed; only Qdrant did. The mirror is gone now, and
-        so is the possibility of that mistake.
+        **Liveness is decided by the FILESYSTEM, and by nothing
+        else.**
 
-        So the candidate ids are collected from the user-state
-        tables, and each is checked against Qdrant directly. A
-        candidate that Qdrant still holds is kept, no matter what
-        the mirror says. A candidate Qdrant no longer holds is
-        deleted.
+        The obvious rule — "delete the row if Qdrant no longer holds
+        the point" — is wrong, and dangerously so. A photo can be
+        absent from Qdrant while its file is perfectly alive on the
+        NAS: it was never indexed, or the collection was restored from
+        a snapshot older than its last index run. Right now 80,787
+        photos are in exactly that state. Deleting their favourites
+        would destroy real user state for photos that are about to
+        come back — and because the point id is uuid5(path), they
+        WOULD come back as the same id, re-attaching to a favourite
+        that is no longer there.
+
+        So the rule is: a candidate row is an orphan only when its
+        FILE is gone from disk. The path comes from `photo_paths`,
+        recorded when the photo was favourited / disliked / added to
+        an album. The point id is a one-way hash and cannot be
+        reversed, so this table is the only way back to the path.
+
+        For a candidate with NO recorded path (written before this
+        table existed), the Qdrant check remains the only signal
+        available, so it is used as a fallback. That is the old
+        behaviour, applied to the small residue it applies to.
 
         Purges:
-          - favorites / dislikes rows whose id Qdrant no longer holds
-          - album_memberships whose photo Qdrant no longer holds (a
+          - favorites / dislikes rows whose file is gone from disk
+          - album_memberships whose photo's file is gone (a
             membership of a deleted photo renders as a dead
             thumbnail; note memberships do NOT require the photo
             to be a favourite — add_album_member allows any id —
-            so liveness is checked against Qdrant only)
-          - albums.cover_favorite_id refs pointing at photos Qdrant
-            no longer holds (reset to '' so the UI falls back to
-            the first member)
+            so liveness is checked against the file alone)
+          - albums.cover_favorite_id refs pointing at photos whose
+            file is gone (reset to '' so the UI falls back to the
+            first member)
 
         Keeps: feedback_events (append-only history log, not state —
         nothing feeds it back into recommend) and saved_searches
@@ -380,8 +667,8 @@ class IndexDB:
         Returns per-table deletion counts for logging/API response.
         """
         # Every id the user state refers to. This is a small set —
-        # thousands of rows, not millions — so each one is checked
-        # against Qdrant directly.
+        # thousands of rows, not millions — so each one can be
+        # checked individually.
         with self._lock:
             candidate_ids: set[str] = set()
             for table, column in (
@@ -397,57 +684,148 @@ class IndexDB:
                 candidate_ids.update(r["v"] for r in rows)
 
             if not candidate_ids:
-                return {
-                    "favorites": 0,
-                    "dislikes": 0,
-                    "album_memberships": 0,
-                    "album_covers_reset": 0,
-                }
+                return []
 
-        # NAS-dropout guard: a collection that reports ZERO points is
-        # far more likely to mean "the collection was just recreated"
-        # or "we are looking at the wrong collection" than "every
-        # photo was deleted". Purging on that signal would wipe the
-        # user's entire taste history irrecoverably. An empty
-        # collection is therefore not evidence that anything is an
-        # orphan — the orphans survive until the collection has
-        # points again and a real liveness check can answer.
-        try:
-            total_points = int(self.qdrant_client.count_points())
-        except Exception as e:  # noqa: BLE001
-            logger.warning("purge: count_points failed, keeping all user data: %s", e)
+            recorded_paths = {
+                r["id"]: r["path"]
+                for r in self._conn.execute("SELECT id, path FROM photo_paths").fetchall()
+            }
+
+        # Which of those ids are genuinely gone?
+        #
+        # The rule: a candidate is an orphan when its FILE is gone
+        # from disk. The path comes from photo_paths (recorded when
+        # the photo was favourited). For candidates with no recorded
+        # path — written before photo_paths existed — fall back to the
+        # Qdrant liveness check, which is the only signal available.
+        #
+        # The filesystem check needs the payload path resolved to a
+        # LOCAL path: the indexer may have stored a path from another
+        # machine's mount (Z:\images\... on Windows), and the search
+        # app sees it at a different mount point. `resolve_local`
+        # does that mapping.
+
+        # ids whose file is confirmed gone from disk
+        disk_gone: set[str] = set()
+        # ids with no recorded path -> judged by Qdrant liveness
+        no_path: set[str] = set()
+        for pid in candidate_ids:
+            path = recorded_paths.get(pid)
+            if not path:
+                no_path.add(pid)
+                continue
+            if not self._file_still_exists(path):
+                disk_gone.add(pid)
+
+        # The Qdrant fallback only applies to the rows with no
+        # recorded path. It needs a non-empty collection to be
+        # meaningful: a collection reporting ZERO points is far more
+        # likely to mean "the collection was just recreated" or "we
+        # are looking at the wrong collection" than "every photo was
+        # deleted", and on that signal EVERY pathless row would look
+        # dead. The file-based rule does not need this guard — it
+        # consults the filesystem, not the collection, so an empty
+        # collection tells it nothing.
+        orphan_set = set(disk_gone)
+        if no_path:
+            try:
+                total_points = int(self.qdrant_client.count_points())
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "purge: count_points failed, keeping pathless user data: %s", e,
+                )
+                total_points = -1
+            if total_points == 0:
+                logger.info(
+                    "purge: collection %r is empty — not evidence that a "
+                    "pathless photo is gone; keeping those rows",
+                    getattr(self.qdrant_client, "collection", "?"),
+                )
+            elif total_points > 0:
+                live_ids = self._live_point_ids(sorted(no_path))
+                orphan_set.update(pid for pid in no_path if pid not in live_ids)
+
+        # SQLite binds parameters from a sequence, not a set.
+        return sorted(orphan_set)
+
+    def count_orphaned_user_data(self) -> dict[str, int]:
+        """How many user-state rows a purge would remove.
+
+        Reports what `purge_orphaned_user_data` would delete without
+        deleting any of it, so the operator can see the scope before
+        asking for the purge.
+
+        Returns the same per-table keys the purge reports, so the
+        UI can show "12 favourites, 3 album entries" without the
+        operator having to run it to find out.
+        """
+        orphans = self.find_orphaned_user_ids()
+        if not orphans:
             return {
                 "favorites": 0,
                 "dislikes": 0,
                 "album_memberships": 0,
                 "album_covers_reset": 0,
             }
-        if total_points == 0:
-            logger.info(
-                "purge: collection %r is empty — not evidence that any "
-                "photo is gone; keeping all user data",
-                getattr(self.qdrant_client, "collection", "?"),
-            )
-            return {
-                "favorites": 0,
-                "dislikes": 0,
-                "album_memberships": 0,
-                "album_covers_reset": 0,
-            }
-
-        # Which of those ids does Qdrant still hold? This is the
-        # authoritative liveness check.
-        live_ids = self._live_point_ids(sorted(candidate_ids))
-
         with self._lock:
-            orphans = [pid for pid in candidate_ids if pid not in live_ids]
-            if not orphans:
-                return {
-                    "favorites": 0,
-                    "dislikes": 0,
-                    "album_memberships": 0,
-                    "album_covers_reset": 0,
-                }
+            placeholders = ",".join("?" * len(orphans))
+            counts = {
+                "favorites": self._conn.execute(
+                    f"SELECT COUNT(*) AS c FROM favorites "  # noqa: S608
+                    f"WHERE id IN ({placeholders})",
+                    orphans,
+                ).fetchone()["c"],
+                "dislikes": self._conn.execute(
+                    f"SELECT COUNT(*) AS c FROM dislikes "  # noqa: S608
+                    f"WHERE id IN ({placeholders})",
+                    orphans,
+                ).fetchone()["c"],
+                "album_memberships": self._conn.execute(
+                    f"SELECT COUNT(*) AS c FROM album_memberships "  # noqa: S608
+                    f"WHERE favorite_id IN ({placeholders})",
+                    orphans,
+                ).fetchone()["c"],
+                "album_covers_reset": self._conn.execute(
+                    f"SELECT COUNT(*) AS c FROM albums "  # noqa: S608
+                    f"WHERE cover_favorite_id IN ({placeholders})",
+                    orphans,
+                ).fetchone()["c"],
+            }
+        return counts
+
+    def purge_orphaned_user_data(self) -> dict[str, int]:
+        """Delete user-state rows whose photo is gone from DISK.
+
+        The delete half of `find_orphaned_user_ids`. See that method
+        for why liveness is decided against the filesystem rather
+        than against Qdrant.
+
+        Purges:
+          - favorites / dislikes rows whose file is gone from disk
+          - album_memberships whose photo's file is gone (a
+            membership of a deleted photo renders as a dead
+            thumbnail; note memberships do NOT require the photo
+            to be a favourite — add_album_member allows any id —
+            so liveness is checked against the file alone)
+          - albums.cover_favorite_id refs pointing at photos whose
+            file is gone (reset to '' so the UI falls back to the
+            first member)
+
+        Keeps: feedback_events (append-only history log, not state —
+        nothing feeds it back into recommend) and saved_searches
+        (prompt text only, no point ids).
+
+        Returns per-table deletion counts for logging/API response.
+        """
+        orphans = self.find_orphaned_user_ids()
+        if not orphans:
+            return {
+                "favorites": 0,
+                "dislikes": 0,
+                "album_memberships": 0,
+                "album_covers_reset": 0,
+            }
+        with self._lock:
             placeholders = ",".join("?" * len(orphans))
             cur_memberships = self._conn.execute(
                 f"""
@@ -480,6 +858,71 @@ class IndexDB:
             }
         if any(purged.values()):
             logger.info("purged orphaned user data: %s", purged)
+        return purged
+
+    def delete_user_state_for_ids(self, point_ids: list[str]) -> dict[str, int]:
+        """Delete the user-state rows referring to the given point ids.
+
+        This is the SQLite half of the confirmed orphan purge. The
+        Qdrant half removes the embeddings; this removes the
+        favourites, dislikes, album memberships and album covers that
+        pointed at them.
+
+        Called AFTER the Qdrant delete, and only for the ids the
+        operator confirmed. The `photo_paths` rows go too — the
+        photo is gone, so its path record is dead weight and would
+        otherwise grow forever.
+
+        Returns per-table deletion counts.
+        """
+        if not point_ids:
+            return {
+                "favorites": 0,
+                "dislikes": 0,
+                "album_memberships": 0,
+                "album_covers_reset": 0,
+                "photo_paths": 0,
+            }
+        ids = sorted(set(point_ids))
+        with self._lock:
+            placeholders = ",".join("?" * len(ids))
+            cur_memberships = self._conn.execute(
+                f"""
+                DELETE FROM album_memberships
+                WHERE favorite_id IN ({placeholders})
+                """,  # noqa: S608
+                ids,
+            )
+            cur_favs = self._conn.execute(
+                f"DELETE FROM favorites WHERE id IN ({placeholders})",  # noqa: S608
+                ids,
+            )
+            cur_dis = self._conn.execute(
+                f"DELETE FROM dislikes WHERE id IN ({placeholders})",  # noqa: S608
+                ids,
+            )
+            cur_covers = self._conn.execute(
+                f"""
+                UPDATE albums SET cover_favorite_id = ''
+                WHERE cover_favorite_id IN ({placeholders})
+                """,  # noqa: S608
+                ids,
+            )
+            cur_paths = self._conn.execute(
+                f"DELETE FROM photo_paths WHERE id IN ({placeholders})",  # noqa: S608
+                ids,
+            )
+            self._conn.commit()
+            purged = {
+                "favorites": cur_favs.rowcount,
+                "dislikes": cur_dis.rowcount,
+                "album_memberships": cur_memberships.rowcount,
+                "album_covers_reset": cur_covers.rowcount,
+                "photo_paths": cur_paths.rowcount,
+            }
+        if any(purged.values()):
+            logger.info("purged user state for %d confirmed orphan(s): %s",
+                        len(ids), purged)
         return purged
 
     def new_cursor_deck(
@@ -617,6 +1060,55 @@ class IndexDB:
             self._count_cache_at = now
         return count
 
+    def record_photo_path(self, point_id: str, path: str) -> None:
+        """Record the on-disk path for a point id.
+
+        The path is the payload's `path` value — the location the
+        INDEXER saw, which may be a different machine's mount (the
+        search app resolves it through `resolve_local`).
+
+        This is recorded the moment a photo is favourited, disliked or
+        added to an album — the only moment the path is available
+        without a Qdrant round trip. It is what lets the orphan purge
+        tell "this photo is gone from disk" (delete the row) apart
+        from "this photo is merely not indexed right now" (keep the
+        row, it will re-attach).
+
+        Idempotent. A re-record overwrites the path, which is correct
+        if the photo was re-indexed from a different location.
+        """
+        if not point_id or not path:
+            return
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO photo_paths (id, path, recorded_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  path        = excluded.path,
+                  recorded_at = excluded.recorded_at
+                """,
+                (point_id, path, _utc_now()),
+            )
+            self._conn.commit()
+
+    def get_photo_path(self, point_id: str) -> str | None:
+        """The recorded on-disk path for a point id, or None."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT path FROM photo_paths WHERE id = ? LIMIT 1",
+                (point_id,),
+            ).fetchone()
+        return row["path"] if row else None
+
+    def list_photo_paths(self) -> dict[str, str]:
+        """Every recorded id -> path pair."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, path FROM photo_paths"
+            ).fetchall()
+        return {r["id"]: r["path"] for r in rows}
+
     def mark_favorite(self, point_id: str) -> None:
         # Photo must exist in the cache before it can be favourited;
         # otherwise the UI would have no /photo/{id} page to link to
@@ -634,6 +1126,27 @@ class IndexDB:
                 (point_id, _utc_now()),
             )
             self._conn.commit()
+        # Record the path OUTSIDE the lock: it needs a Qdrant lookup,
+        # and holding the DB lock across a network call would serialise
+        # every writer behind it.
+        self._record_path_from_qdrant(point_id)
+
+    def _record_path_from_qdrant(self, point_id: str) -> None:
+        """Look the point's path up in Qdrant and record it.
+
+        Best-effort: a Qdrant failure leaves the path unrecorded,
+        which makes the orphan purge fall back to the Qdrant-liveness
+        rule for that id. Never raises.
+        """
+        try:
+            hit = self.qdrant_client.retrieve(point_id)
+        except Exception:  # noqa: BLE001 — path recording is best-effort
+            return
+        if hit is None:
+            return
+        path = (hit.payload or {}).get("path") or hit.path
+        if path:
+            self.record_photo_path(point_id, path)
 
     def unmark_favorite(self, point_id: str) -> None:
         # DELETE is idempotent and never raises on missing row, which
@@ -799,6 +1312,9 @@ class IndexDB:
                 (point_id, _utc_now(), source),
             )
             self._conn.commit()
+        # Record the path so the orphan purge can tell "gone from disk"
+        # from "merely not indexed right now". See photo_paths.
+        self._record_path_from_qdrant(point_id)
 
     def unmark_dislike(self, point_id: str) -> None:
         """Remove a ✕. Used by undo and by the /for-you Reset button."""
@@ -1114,6 +1630,9 @@ class IndexDB:
                 (album_id, favorite_id, now),
             )
             self._conn.commit()
+        # Album members are user curation, so the photo may not exist
+        # yet — the path lookup is best-effort and may find nothing.
+        self._record_path_from_qdrant(favorite_id)
         return True
 
     def remove_album_member(
@@ -1269,6 +1788,10 @@ class IndexDB:
                 (favorite_id or "", _utc_now(), album_id),
             )
             self._conn.commit()
+        if favorite_id:
+            # The cover can point at a photo that is not a favourite, so
+            # this id may have no photo_paths row yet.
+            self._record_path_from_qdrant(favorite_id)
         return True
 
     # ---------------------- Saved searches ----------------------

@@ -37,6 +37,8 @@ __all__ = [  # noqa: RUF022 — grouped by category for readability; strict alph
     "FIELD_MODEL_REVISION",
     "FIELD_MODEL_DIM",
     "FIELD_INDEXED_AT",
+    # Orphan marking
+    "FIELD_ORPHAN_SINCE",
     # Diversity fingerprints
     "FIELD_CONTENT_SHA256",
     "FIELD_DHASH",
@@ -63,6 +65,21 @@ FIELD_MODEL_NAME = "model_name"
 FIELD_MODEL_REVISION = "model_revision"
 FIELD_MODEL_DIM = "model_dim"
 FIELD_INDEXED_AT = "indexed_at"
+
+# --- Orphan marking -------------------------------------------------------
+# Set on a point whose photo is no longer wanted in the index: either
+# its file is gone from disk, or its source directory was retired
+# (removed from the configured source list).
+#
+# The field is a marker, not a deletion. A marked point is EXCLUDED
+# from every read path, so it stops being served immediately, but the
+# embedding is kept until an operator confirms the purge. That is the
+# two-step: mark, verify the count, then delete.
+#
+# The value is the unix timestamp of the marking. A float payload
+# index on this field makes "is this point an orphan?" a cheap
+# server-side range query.
+FIELD_ORPHAN_SINCE = "orphan_since"
 
 
 # --- Diversity fingerprints (sub-keys; same flat payload) ---------------
