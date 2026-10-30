@@ -104,4 +104,5 @@ def guess_content_type(local_path: Path) -> str:
         ".gif": "image/gif",
         ".heic": "image/heic",
         ".heif": "image/heif",
+        ".avif": "image/avif",
     }.get(ext, "application/octet-stream")

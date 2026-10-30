@@ -27,7 +27,7 @@ dependencies = [
     "timm>=1.0.15",
     "torch>=2.1",
     "torchvision>=0.16",
-    "pillow>=10",
+    "pillow>=11.3",
     "pillow-heif>=0.16",
     "blurhash>=1.0",  # LQIP placeholders — computed at index time, decoded client-side
     # libvips (via pyvips) — primary thumbnail encoder. libvips
