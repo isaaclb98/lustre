@@ -528,6 +528,16 @@ class Config:
     indexer_sources: tuple[str, ...] = ()
     indexer_device: str = "cpu"
     indexer_batch_size: int = 8
+    # Every directory a stored photo path may resolve under, for the
+    # orphan purge's liveness check. The primary one is PHOTOS_DIR
+    # (the photos mount); the others are the indexer's source dirs —
+    # a source mounted as a SIBLING of the photos root keeps its
+    # files under a different top-level path, and a path outside
+    # every root is "cannot check" (treated as alive), so without
+    # them that source's favourites would never be garbage
+    # collected. Derived from `indexer_sources`, so adding a source
+    # gives it purge coverage with no second place to configure.
+    photos_roots: tuple[str, ...] = ()
     # (Single-user auth removed. Front the service with a reverse-proxy
     # auth if access control is needed: caddy, oauth2-proxy, tailscale, etc.)
 
@@ -625,6 +635,39 @@ def load() -> Config:
         raise ValueError(
             "PHOTOS_DIR is required (NAS_IMAGES_BASE is a deprecated alias)"
         )
+
+    # `INDEXER_SOURCES` is a comma-separated list of source dirs;
+    # defaults to `NAS_IMAGES_PATH` so a single-source setup just
+    # sets the latter.
+    indexer_sources = tuple(
+        s.strip()
+        for s in _str(
+            "INDEXER_SOURCES",
+            _str("NAS_IMAGES_PATH", ""),
+        ).split(",")
+        if s.strip()
+    )
+
+    # The roots the orphan purge may resolve a stored photo path
+    # under. `photos_dir` is the photos mount; every source that is
+    # NOT already inside it is a separate mount (a source mounted as
+    # a sibling of the photos root) and needs its own entry, or the
+    # purge could never confirm that one of its photos is gone.
+    #
+    # Sources INSIDE the photos mount are not added: the mount
+    # already covers them, and listing them would narrow the root a
+    # path is attributed to. The mount is the durable statement of
+    # "these files live here"; a source dir can be renamed or
+    # retired without the mount going away.
+    photos_roots: tuple[str, ...] = (photos_dir,) if photos_dir else ()
+    for src in indexer_sources:
+        if not photos_dir:
+            photos_roots = photos_roots + (src,)
+            continue
+        try:
+            Path(src).relative_to(photos_dir)
+        except ValueError:
+            photos_roots = photos_roots + (src,)
 
     # Validate SigLIP2 variant before loading the rest of the config
     variant = get_siglip_variant()
@@ -727,16 +770,13 @@ def load() -> Config:
         # In-app indexer (admin Index button). `INDEXER_SOURCES` is a
         # comma-separated list; defaults to `NAS_IMAGES_PATH` so a
         # single-source setup just sets the latter.
-        indexer_sources=tuple(
-            s.strip()
-            for s in _str(
-                "INDEXER_SOURCES",
-                _str("NAS_IMAGES_PATH", ""),
-            ).split(",")
-            if s.strip()
-        ),
+        indexer_sources=indexer_sources,
         indexer_device=_str("INDEXER_DEVICE", "cpu"),
         indexer_batch_size=_int("INDEXER_BATCH_SIZE", 8),
+        # Roots the orphan purge may resolve a stored path under: the
+        # photos mount plus every indexer source that is NOT already
+        # inside it. See the `photos_roots` field comment for why.
+        photos_roots=photos_roots,
         # Auth removed — no env vars to read here.
     )
 

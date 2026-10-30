@@ -714,6 +714,10 @@ def create_app(
             # this machine's mount to ask "is the file still there?".
             photos_root=_cfg.nas_images_base,
             path_prefix=_cfg.path_prefix,
+            # The other photo mounts (a source mounted as a sibling of
+            # the photos root), so their favourites are garbage
+            # collected too instead of being unresolvable.
+            photos_roots=_cfg.photos_roots,
         )
     _index_db = index_db
     random_picker = RandomPicker(index_db)

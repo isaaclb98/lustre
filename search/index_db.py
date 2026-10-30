@@ -59,6 +59,7 @@ class IndexDB:
         refresh_interval_seconds: int = 21600,
         photos_root: str = "",
         path_prefix: str = "",
+        photos_roots: tuple[str, ...] = (),
     ):
         self.db_path = db_path
         self.qdrant_client = qdrant_client
@@ -68,6 +69,19 @@ class IndexDB:
         # payload path to a local file, which is what the orphan purge
         # needs to answer "is this photo still on disk?".
         self.photos_root = photos_root
+        # Every root a stored path may resolve under. `photos_root` is
+        # the primary one (it is also the base for relative paths and
+        # for the prefix rewrite); the extra roots are the other photo
+        # MOUNTS — a source mounted as a sibling of the photos root
+        # (/gravure next to /nas) keeps its files under a different
+        # top-level path, and without its root listed here the purge
+        # could never confirm that one of its photos is gone, so the
+        # favourite would never be garbage collected.
+        self.photos_roots = (
+            tuple(photos_roots)
+            if photos_roots
+            else ((photos_root,) if photos_root else ())
+        )
         self.path_prefix = path_prefix
         self._lock = threading.RLock()
         # The periodic maintenance clock starts at "now": there is
@@ -535,16 +549,60 @@ class IndexDB:
 
         if p.is_absolute():
             # An absolute path is only checkable if it lands inside
-            # the photos root we have mounted. A path outside it
-            # belongs to a namespace we cannot see.
-            try:
-                p.relative_to(self.photos_root)
-            except ValueError:
+            # one of the photo roots we have mounted. A path outside
+            # them belongs to a namespace we cannot see.
+            root = self._root_for(p)
+            if root is None:
+                return None
+            # The root itself has to be reachable. A mount that is
+            # down (or a root that was renamed away) makes every file
+            # under it look deleted, and "the file is gone" is a
+            # destructive conclusion — it takes the user's favourites
+            # with it. An unreachable root means we cannot check, and
+            # "cannot check" means alive.
+            if not self._root_is_reachable(root):
+                logger.warning(
+                    "purge: photo root %r is not reachable; treating "
+                    "paths under it as alive (cannot check)",
+                    root,
+                )
                 return None
             return p
 
         # Relative: it is relative to the photos root by definition.
         return Path(self.photos_root) / p
+
+    def _root_for(self, p: Path) -> str | None:
+        """The photo root an absolute path falls under, if any.
+
+        The LONGEST matching root wins, so a path under a source dir
+        is attributed to that source dir rather than to the mount it
+        happens to sit inside. The source dir is the narrower
+        statement of where the file lives, and it is the one that
+        goes away if that source is unmounted.
+        """
+        best: str | None = None
+        for root in self.photos_roots:
+            try:
+                p.relative_to(root)
+            except ValueError:
+                continue
+            if best is None or len(root) > len(best):
+                best = root
+        return best
+
+    @staticmethod
+    def _root_is_reachable(root: str) -> bool:
+        """True if the root is present and is a directory.
+
+        `Path.is_dir()` swallows OSError and answers False, which is
+        the answer we want: a root we cannot stat is a root we cannot
+        check under.
+        """
+        try:
+            return Path(root).is_dir()
+        except OSError:
+            return False
 
     def find_orphaned_user_ids(self) -> list[str]:
         """The user-state ids whose photo is gone from DISK.
