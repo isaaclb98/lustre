@@ -5,10 +5,10 @@
     1. A favicon is loaded as its OWN SVG document, not inherited from
        the page, so `currentColor` resolves to the SVG's own initial
        `color` (black) and cannot track the browser's tab colour. An
-       earlier version stroked with `currentColor` and was therefore
-       black-on-black on dark chrome — invisible at 16px. The glyph is
-       white on an opaque accent tile instead, which reads identically
-       on any tab colour.
+       earlier version stroked with `currentColor` was therefore
+       black-on-black on dark chrome and invisible at 16px. The glyph is
+       painted black on an opaque white tile instead, so it reads
+       identically on any tab colour.
 
     2. The path data is the in-app brand mark (Icon.svelte's 'sparkle')
        copied verbatim, so the tab icon and the topbar logo are the same
@@ -16,10 +16,11 @@
        FILLED rather than stroked because a hollow centre turns to mush
        at 16px; the solid silhouette still reads as a sparkle at tab size.
 
-    The tile is the accent colour (2563eb), the app's primary blue.
-    White on that blue is 5.2:1 contrast.
+    One variant only: black on white, no theme switch. The white tile
+    carries its own contrast, so the icon never depends on the browser
+    picking a tone for it.
   -->
-  <rect x="0" y="0" width="24" height="24" rx="5" fill="#2563eb"/>
-  <path d="M12 2 L13.2 9.6 L20.8 10.8 L13.2 12 L12 19.6 L10.8 12 L3.2 10.8 L10.8 9.6 Z" fill="#ffffff"/>
-  <path d="M19 16 L19.4 17.6 L21 18 L19.4 18.4 L19 20 L18.6 18.4 L17 18 L18.6 17.6 Z" fill="#ffffff"/>
+  <rect x="0" y="0" width="24" height="24" rx="5" fill="#ffffff"/>
+  <path d="M12 2 L13.2 9.6 L20.8 10.8 L13.2 12 L12 19.6 L10.8 12 L3.2 10.8 L10.8 9.6 Z" fill="#000000"/>
+  <path d="M19 16 L19.4 17.6 L21 18 L19.4 18.4 L19 20 L18.6 18.4 L17 18 L18.6 17.6 Z" fill="#000000"/>
 </svg>

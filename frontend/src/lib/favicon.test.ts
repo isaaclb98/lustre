@@ -63,6 +63,29 @@ describe('favicon', () => {
     expect(fill).toMatch(/^#[0-9a-fA-F]{6}$/);
   });
 
+  it('is black on white, in one variant', () => {
+    // The favicon is a single black-on-white mark: no theme switch, no
+    // accent colour. The white tile supplies the contrast, so the icon
+    // reads the same on light and dark chrome.
+    const bg = faviconMarkup.match(/<rect[^>]*>/)?.[0] ?? '';
+    expect(bg.match(/fill="([^"]+)"/)?.[1]?.toLowerCase()).toBe('#ffffff');
+
+    const glyphFills = [...faviconMarkup.matchAll(/<path[^>]*\bfill="([^"]+)"/g)].map(
+      (m) => m[1].toLowerCase()
+    );
+    expect(glyphFills.length).toBeGreaterThan(0);
+    for (const f of glyphFills) {
+      expect(f).toBe('#000000');
+    }
+  });
+
+  it('has no theme-dependent variant', () => {
+    // A prefers-color-scheme block inside a favicon would produce a
+    // second look; there is only one.
+    expect(faviconMarkup).not.toContain('prefers-color-scheme');
+    expect(faviconMarkup).not.toContain('@media');
+  });
+
   it('uses the same path data as the in-app brand mark', () => {
     expect(pathData(faviconMarkup)).toEqual(brandMarkPaths());
   });
