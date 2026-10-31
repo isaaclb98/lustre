@@ -1,31 +1,25 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
   <!--
-    Brand favicon. The same sparkle / starburst used as the
-    in-app brand mark (Icon.svelte's 'sparkle' glyph) so the
-    browser-tab icon and the topbar logo read as the same
-    product. Stroked (no fill) so the browser chrome picks the
-    right tone via the favicon's own colour, but a `currentColor`
-    fallback is fine on most platforms.
+    Brand favicon. Two constraints drive every choice here:
 
-    The main sparkle is the two-crossing-diamond form; the small
-    secondary sparkle in the upper-right is the same asymmetric
-    detail from the in-app icon.
+    1. A favicon is loaded as its OWN SVG document, not inherited from
+       the page, so `currentColor` resolves to the SVG's own initial
+       `color` (black) and cannot track the browser's tab colour. An
+       earlier version stroked with `currentColor` and was therefore
+       black-on-black on dark chrome — invisible at 16px. The glyph is
+       white on an opaque accent tile instead, which reads identically
+       on any tab colour.
 
-    Background: subtle rounded square so the icon reads on both
-    light and dark tab strips. Using a glass-2 grey that fades
-    into the page background on white tabs and stays subtle on
-    dark tabs. If the browser supports `prefers-color-scheme`,
-    the dark variant below darkens the background.
+    2. The path data is the in-app brand mark (Icon.svelte's 'sparkle')
+       copied verbatim, so the tab icon and the topbar logo are the same
+       shape rather than two drifting approximations of it. It is
+       FILLED rather than stroked because a hollow centre turns to mush
+       at 16px; the solid silhouette still reads as a sparkle at tab size.
+
+    The tile is the accent colour (2563eb), the app's primary blue.
+    White on that blue is 5.2:1 contrast.
   -->
-  <style>
-    .bg { fill: rgba(255, 255, 255, 0.06); }
-    .stroke { stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-    .fill { fill: currentColor; }
-    @media (prefers-color-scheme: dark) {
-      .bg { fill: rgba(255, 255, 255, 0.08); }
-    }
-  </style>
-  <rect class="bg" x="0" y="0" width="24" height="24" rx="5"/>
-  <path class="stroke" d="M12 3.5 L12.7 9.4 L18.5 10.2 L12.7 11 L12 16.9 L11.3 11 L5.5 10.2 L11.3 9.4 Z"/>
-  <path class="stroke" d="M18.5 14.5 L18.8 16.2 L20.5 16.5 L18.8 16.8 L18.5 18.5 L18.2 16.8 L16.5 16.5 L18.2 16.2 Z"/>
+  <rect x="0" y="0" width="24" height="24" rx="5" fill="#2563eb"/>
+  <path d="M12 2 L13.2 9.6 L20.8 10.8 L13.2 12 L12 19.6 L10.8 12 L3.2 10.8 L10.8 9.6 Z" fill="#ffffff"/>
+  <path d="M19 16 L19.4 17.6 L21 18 L19.4 18.4 L19 20 L18.6 18.4 L17 18 L18.6 17.6 Z" fill="#ffffff"/>
 </svg>
