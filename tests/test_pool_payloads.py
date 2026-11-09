@@ -15,7 +15,6 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
-import pytest
 
 
 class _FakeQdrant:
@@ -77,48 +76,20 @@ def test_surprise_pool_search_does_not_fetch_payloads() -> None:
     assert qdrant.search_calls[0].get("with_payload") is False
 
 
-def test_for_you_pool_recommend_does_not_fetch_payloads() -> None:
-    """The for-you deck's pool recommend must ask for ids + scores only."""
-    import asyncio
-
-    from search.for_you_deck import build_for_you_deck
-
-    qdrant = _FakeQdrant()
-    # The fake returns an empty pool, so the builder raises.
-    with pytest.raises(RuntimeError):
-        asyncio.run(
-            build_for_you_deck(
-                fav_ids=["a"],
-                dis_ids=[],
-                qdrant=qdrant,
-                pool_size=100,
-                deck_size=10,
-                temperature=0.5,
-                seed=1,
-            )
-        )
-    assert qdrant.recommend_calls, "the pool recommend never ran"
-    assert qdrant.recommend_calls[0].get("with_payload") is False
-
-
 def test_the_deck_needs_only_ids_and_scores() -> None:
     """The pool hits are read for their id and their score — nothing else.
 
     If this ever fails, a pool builder started using the payload and
     the pool cost went back up.
     """
-    from search import for_you_deck, surprise_deck
+    from search import surprise_deck
 
-    for module, fn_name in (
-        (surprise_deck, "build_surprise_deck"),
-        (for_you_deck, "build_for_you_deck"),
-    ):
-        src = inspect.getsource(getattr(module, fn_name))
-        # The pool hits are consumed as .id and .score.
-        assert ".id" in src
-        assert ".score" in src
-        # ...and the payload is never read off a pool hit.
-        assert ".payload" not in src
+    src = inspect.getsource(surprise_deck.build_surprise_deck)
+    # The pool hits are consumed as .id and .score.
+    assert ".id" in src
+    assert ".score" in src
+    # ...and the payload is never read off a pool hit.
+    assert ".payload" not in src
 
 
 def test_the_pool_search_uses_a_narrow_hnsw_beam() -> None:

@@ -59,7 +59,6 @@ EXPECTED_PATHS = {
     "/api/albums/{album_id}",
     "/api/favorites",
     "/api/favorites/{point_id}",
-    "/api/for-you/feed",
     "/api/dislikes",
     "/api/dislikes/{point_id}",
     "/api/collections",

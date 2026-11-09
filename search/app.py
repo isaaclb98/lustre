@@ -48,7 +48,6 @@ from search.models import (
 )
 from search.qdrant_client import QdrantSearch, SearchHit
 from search.random import RandomPicker
-from search.routers.for_you import invalidate_for_you_cache as _for_you_invalidate_deck
 from search.search_snapshot import SearchSnapshotCache
 
 logger = logging.getLogger(__name__)
@@ -353,56 +352,6 @@ def _make_likes_centroid_spec(
     )
 
 
-def _make_dislikes_centroid_spec(
-    qdrant: Any, index_db: Any,
-) -> DynamicCentroidSpec:
-    """Build the registration spec for the dislikes dynamic centroid.
-
-    Round‑29: mirror of `_make_likes_centroid_spec` so the
-    Search button on the Dislikes album card has a real centroid
-    to query. Without this, /api/centroids/dislikes/search 404s.
-
-    The compute path is identical to favourites (mean of member
-    vectors, L2-normalised) — only the source table differs.
-    """
-    import numpy as np
-
-    def compute() -> tuple[list[float], int, list[str]] | None:
-        dislike_ids = index_db.list_dislike_ids()
-        if not dislike_ids:
-            return None
-        pairs = qdrant.retrieve_batch_with_vectors(dislike_ids)
-        if not pairs:
-            return None
-        vectors = np.asarray(
-            [v for _, v in pairs if v], dtype=np.float32,
-        )
-        if vectors.size == 0:
-            return None
-        centroid = vectors.mean(axis=0)
-        norm = float(np.linalg.norm(centroid))
-        if norm == 0:
-            return None
-        centroid = (centroid / norm).tolist()
-        seed_ids = [pid for pid, _ in pairs]
-        return (centroid, len(seed_ids), seed_ids)
-
-    return DynamicCentroidSpec(
-        name="dislikes",
-        label="Dislikes",
-        description=(
-            "Mean of every disliked photo's embedding, "
-            "re-normalised to unit length. Updates as you dislike."
-        ),
-        compute_fn=compute,
-        source="dislikes",
-        empty_message=(
-            "Dislike a few photos first — this centroid is built "
-            "from your dislikes list."
-        ),
-    )
-
-
 def _invalidate_likes_centroid() -> None:
     """Drop the cached likes centroid so the next read recomputes.
 
@@ -417,17 +366,6 @@ def _invalidate_likes_centroid() -> None:
     if _dynamic_centroids is not None:
         _dynamic_centroids.invalidate("likes")
         _dynamic_centroids.invalidate("favourites")
-
-
-def _invalidate_dislikes_centroid() -> None:
-    """Drop the cached dislikes centroid so the next read recomputes.
-
-    Round‑29: mirror of `_invalidate_likes_centroid`, wired
-    into mark_dislike / unmark_dislike so the centroid stays in
-    sync with the dislikes table.
-    """
-    if _dynamic_centroids is not None:
-        _dynamic_centroids.invalidate("dislikes")
 
 
 # ---------------------- Album centroid helpers ----------------------
@@ -793,12 +731,6 @@ def create_app(
     # saved searches / shared links that pass `?centroid=favourites`
     # working without forcing everyone to migrate.
     _dynamic_centroids.register(_make_likes_centroid_spec(qdrant, index_db))
-    # Round‑29: register the dislikes centroid so the Search
-    # button on the Dislikes album card has a real centroid to
-    # query. New dislikes / undislikes invalidate it via
-    # `_invalidate_dislikes_centroid` (wired into the dislikes
-    # router below).
-    _dynamic_centroids.register(_make_dislikes_centroid_spec(qdrant, index_db))
     # Register every existing album as a centroid. New albums
     # register themselves via POST /api/albums → _register_album_centroid;
     # renames via PATCH /api/albums/{id}; deletes via
@@ -1063,7 +995,6 @@ def create_app(
     from search.routers.dislikes import build_dislikes_router
     from search.routers.explore import build_explore_router
     from search.routers.favorites import build_favorites_router
-    from search.routers.for_you import build_for_you_router
     from search.routers.random import build_random_router
     from search.routers.saved_searches import build_saved_searches_router
     from search.routers.search import build_search_router
@@ -1078,28 +1009,15 @@ def create_app(
         index_db=index_db,
     ))
     app.include_router(build_random_router(index_db=index_db, cfg=_cfg))
-    app.include_router(build_for_you_router(
-        index_db=index_db,
-        qdrant=qdrant,
-        cfg=_cfg,
-    ))
-    app.include_router(build_for_you_router(
-        index_db=index_db,
-        qdrant=qdrant,
-        cfg=_cfg,
-    ))
     app.include_router(build_favorites_router(
         index_db=index_db,
         cfg=_cfg,
         invalidate_likes_centroid=_invalidate_likes_centroid,
-        invalidate_for_you=_for_you_invalidate_deck,
     ))
     app.include_router(build_dislikes_router(
         index_db=index_db,
         cfg=_cfg,
         invalidate_likes_centroid=_invalidate_likes_centroid,
-        invalidate_dislikes_centroid=_invalidate_dislikes_centroid,  # round‑29
-        invalidate_for_you=_for_you_invalidate_deck,
     ))
     app.include_router(build_albums_router(
         index_db=index_db,
