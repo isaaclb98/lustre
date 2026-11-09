@@ -2345,18 +2345,18 @@
         "summary": "Mark Dislike"
       }
     },
-    "/api/explore/album/{album_id}/round": {
+    "/api/explore/{source}/round": {
       "get": {
-        "description": "Serve a page of the current Explore round for an album.",
-        "operationId": "explore_round_api_explore_album__album_id__round_get",
+        "description": "Serve a page of the current Explore round for a source.",
+        "operationId": "explore_round_api_explore__source__round_get",
         "parameters": [
           {
             "in": "path",
-            "name": "album_id",
+            "name": "source",
             "required": true,
             "schema": {
-              "title": "Album Id",
-              "type": "integer"
+              "title": "Source",
+              "type": "string"
             }
           },
           {
@@ -2430,18 +2430,18 @@
         "summary": "Explore Round"
       }
     },
-    "/api/explore/album/{album_id}/vote": {
+    "/api/explore/{source}/vote": {
       "post": {
         "description": "Record an up-vote or a down-vote for the current session.\n\nBody: `{\"photo_id\": \"...\", \"vote\": \"up\" | \"down\"}`.\n\nA down-vote is session-scoped: it joins the negative set and\ninvalidates the round, so the next request re-queries Qdrant\nwith the new negative. An up-vote is permanent: the photo\njoins the album, making it a positive for every later round\nand every later session.",
-        "operationId": "explore_vote_api_explore_album__album_id__vote_post",
+        "operationId": "explore_vote_api_explore__source__vote_post",
         "parameters": [
           {
             "in": "path",
-            "name": "album_id",
+            "name": "source",
             "required": true,
             "schema": {
-              "title": "Album Id",
-              "type": "integer"
+              "title": "Source",
+              "type": "string"
             }
           },
           {
@@ -2629,127 +2629,6 @@
           }
         },
         "summary": "Mark Favorite"
-      }
-    },
-    "/api/for-you/feed": {
-      "get": {
-        "description": "Walk through a Gumbel-sampled deck of photos in the user's\ntaste neighborhood.\n\nThe candidate pool is sourced from Qdrant\n`recommend(positive=likes, negative=dislikes)`. The\nrecommend() results are ordered by score descending, and\nthe Gumbel draw biases the deck toward high scores by\nthe temperature. At T=0 the deck is the deterministic\ntop-K; at T=1.0 the deck is near-uniform random over the\npool.\n\nCache key: `compute_for_you_cache_key(fav_ids, dis_ids,\ntemperature, pool_size, seed)`. A client that keeps\nthese stable across multiple offsets walks through the\nsame deck. A new seed (or a new fav_ids/dis_ids after a\nlike/dislike) produces a fresh deck.\n\nCold start: 0 favourites returns 400. The /for-you page\nsurfaces a \"Like a few photos to seed\" empty state\nbefore sending a request.",
-        "operationId": "for_you_feed_api_for_you_feed_get",
-        "parameters": [
-          {
-            "description": "Number of recommend() candidates the Gumbel draw is taken from. Default 2000. Range [200, 50000]. Higher = more variety, slower first page.",
-            "in": "query",
-            "name": "pool_size",
-            "required": false,
-            "schema": {
-              "default": 2000,
-              "description": "Number of recommend() candidates the Gumbel draw is taken from. Default 2000. Range [200, 50000]. Higher = more variety, slower first page.",
-              "maximum": 50000,
-              "minimum": 200,
-              "title": "Pool Size",
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Photos per page. No upper bound.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 30,
-              "description": "Photos per page. No upper bound.",
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Zero-based offset into the cached Gumbel deck. Pass the same `session` value to walk forward through the same deck without recomputing.",
-            "in": "query",
-            "name": "offset",
-            "required": false,
-            "schema": {
-              "default": 0,
-              "description": "Zero-based offset into the cached Gumbel deck. Pass the same `session` value to walk forward through the same deck without recomputing.",
-              "minimum": 0,
-              "title": "Offset",
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Gumbel noise scale. T=0 is deterministic top-K (curated). T=1.0 is near-uniform random over the pool. Default 0.05.",
-            "in": "query",
-            "name": "temperature",
-            "required": false,
-            "schema": {
-              "default": 0.05,
-              "description": "Gumbel noise scale. T=0 is deterministic top-K (curated). T=1.0 is near-uniform random over the pool. Default 0.05.",
-              "maximum": 1.0,
-              "minimum": 0.0,
-              "title": "Temperature",
-              "type": "number"
-            }
-          },
-          {
-            "description": "Random seed for the Gumbel draw. Pass a fresh random int on every page reload so the user sees a different deck each time. Pass the same value for paginated scroll within a single page-mount to walk through the same deck. If omitted, the route generates a fresh random seed per request.",
-            "in": "query",
-            "name": "seed",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Random seed for the Gumbel draw. Pass a fresh random int on every page reload so the user sees a different deck each time. Pass the same value for paginated scroll within a single page-mount to walk through the same deck. If omitted, the route generates a fresh random seed per request.",
-              "title": "Seed"
-            }
-          },
-          {
-            "description": "Opaque cache key from a prior /api/for-you/feed response. Pass back with offset=N to walk the same deck without recomputing. Server-cached for 30 minutes.",
-            "in": "query",
-            "name": "session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Opaque cache key from a prior /api/for-you/feed response. Pass back with offset=N to walk the same deck without recomputing. Server-cached for 30 minutes.",
-              "title": "Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SearchResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "For You Feed"
       }
     },
     "/api/photo/{point_id}": {

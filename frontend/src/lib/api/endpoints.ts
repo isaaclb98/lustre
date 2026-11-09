@@ -177,75 +177,6 @@ export function random(params: RandomParams | number = {}, signal?: AbortSignal)
   });
 }
 
-// ---------- For You (Gumbel-max taste sampler) ----------
-
-/**
- * Parameters for forYouFeed.
- *
- * Round-88: the /for-you algorithm swapped from "uniform
- * shuffle the top X% of library by taste" to "Gumbel-max
- * sample from a Qdrant recommend() pool of pool_size
- * candidates." The temperature slider controls the
- * Gumbel noise scale: T=0 is the deterministic top-K,
- * T=1.0 is near-uniform random over the pool.
- *
- * `seed` is a numeric random seed (int). Pass a fresh
- * random int on every page reload so the user sees a
- * different deck; reuse the same value for paginated
- * scroll calls within a single page-mount to walk
- * through the same deck coherently.
- *
- * `session` is the opaque cache key from a prior
- * response. Pass back with offset=N to walk the same
- * deck without recomputing.
- */
-export interface ForYouFeedParams {
-  /** Photos per page. 1..100. Default 30. */
-  limit?: number;
-  /** Zero-based offset into the cached Gumbel deck. */
-  offset?: number;
-  /** Number of recommend() candidates the Gumbel draw is
-   * taken from. Default 2000. Range [200, 50_000]. */
-  pool_size?: number;
-  /** Gumbel temperature. 0.0..1.0. Default 0.05. */
-  temperature?: number;
-  /** Numeric random seed. See interface docstring. */
-  seed?: number;
-  /** Opaque cache key from a prior response. */
-  session?: string;
-  /** Abort the request. */
-  signal?: AbortSignal;
-}
-
-/**
- * For You — Gumbel-max sample from a Qdrant recommend()
- * pool of `pool_size` candidates. The Gumbel noise scale
- * (temperature) controls how biased the deck is toward
- * high-scoring photos: T=0 is deterministic top-K (curated),
- * T=1.0 is near-uniform random over the pool.
- *
- * The server caches the deck keyed by
- * (fav_ids, dis_ids, temperature, pool_size, seed). Same
- * seed → same deck (coherent pagination), different
- * seed → fresh deck (page reload).
- *
- * See: search/routers/for_you.py for the endpoint wiring.
- */
-export function forYouFeed(params: ForYouFeedParams = {}, signal?: AbortSignal) {
-  const sig = signal ?? params.signal;
-  const search = new URLSearchParams();
-  if (params.limit !== undefined) search.set('limit', String(params.limit));
-  if (params.offset !== undefined) search.set('offset', String(params.offset));
-  if (params.pool_size !== undefined) search.set('pool_size', String(params.pool_size));
-  if (params.temperature !== undefined) search.set('temperature', String(params.temperature));
-  if (params.seed !== undefined) search.set('seed', String(params.seed));
-  if (params.session !== undefined) search.set('session', params.session);
-  return apiGet<SearchResponse>(`/api/for-you/feed?${search.toString()}`, {
-    signal: sig,
-    schema: Z.SearchResponse,
-    schemaName: 'SearchResponse (for-you)'
-  });
-}
 export function similarPhotos(
   pointId: string,
   limit = GRID_PAGE_SIZE,
@@ -424,7 +355,29 @@ export interface ExploreRoundParams {
 }
 
 /**
- * Fetch a page of the current Explore round for an album.
+ * The source an Explore round runs against.
+ *
+ * `album:{id}` is a user album; `favourites` is the built-in album,
+ * whose members are the favourited photos. Same vocabulary the
+ * centroid registry uses, so one string means the same thing in both
+ * places.
+ */
+export type ExploreSource = string;
+
+/**
+ * Build the source key for a user album.
+ */
+export function albumExploreSource(albumId: number): ExploreSource {
+  return `album:${albumId}`;
+}
+
+/**
+ * The source key for the built-in Favourites album.
+ */
+export const FAVOURITES_EXPLORE_SOURCE: ExploreSource = 'favourites';
+
+/**
+ * Fetch a page of the current Explore round for a source.
  *
  * The server materialises the round once and slices it — the client
  * pages through the cached list rather than re-querying Qdrant,
@@ -432,7 +385,7 @@ export interface ExploreRoundParams {
  * the page boundaries.
  */
 export function exploreRound(
-  albumId: number,
+  source: ExploreSource,
   params: ExploreRoundParams = {},
   signal?: AbortSignal
 ) {
@@ -442,7 +395,7 @@ export function exploreRound(
   if (params.offset !== undefined) search.set('offset', String(params.offset));
   if (params.session !== undefined) search.set('session', params.session);
   return apiGet<SearchResponse>(
-    `/api/explore/album/${albumId}/round?${search.toString()}`,
+    `/api/explore/${encodeURIComponent(source)}/round?${search.toString()}`,
     { signal: sig, schema: Z.SearchResponse, schemaName: 'SearchResponse (explore)' }
   );
 }
@@ -450,19 +403,22 @@ export function exploreRound(
 /**
  * Record an Explore vote.
  *
- * `up` adds the photo to the album — it becomes a positive for every
- * later round. `down` adds the photo to the session's negative set;
- * it is temporary and never reaches the permanent dislikes table.
+ * `up` adds the photo to the source — it becomes a positive for every
+ * later round. On the built-in Favourites album that means marking
+ * the photo as a favourite, because that album's membership IS the
+ * favourites table. `down` adds the photo to the session's negative
+ * set; it is temporary and never reaches the permanent dislikes
+ * table.
  */
 export async function exploreVote(
-  albumId: number,
+  source: ExploreSource,
   session: string | undefined,
   photoId: string,
   vote: 'up' | 'down'
 ) {
   const search = new URLSearchParams();
   if (session !== undefined) search.set('session', session);
-  await apiPost(`/api/explore/album/${albumId}/vote?${search.toString()}`, {
+  await apiPost(`/api/explore/${encodeURIComponent(source)}/vote?${search.toString()}`, {
     photo_id: photoId,
     vote
   });

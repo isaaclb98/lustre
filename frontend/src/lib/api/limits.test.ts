@@ -15,9 +15,7 @@ import {
   TEMPERATURE_MIN,
   TEMPERATURE_MAX,
   POOL_STOPS_HOME,
-  POOL_STOPS_FOR_YOU,
   DEFAULT_POOL_INDEX_HOME,
-  DEFAULT_POOL_INDEX_FOR_YOU,
   DEFAULT_TEMPERATURE,
   SLIDESHOW_PRESETS_MS,
   DEFAULT_SLIDESHOW_MS
@@ -36,12 +34,6 @@ describe('POOL_SIZE bounds', () => {
   });
   it('every HOME stop is within bounds', () => {
     for (const s of POOL_STOPS_HOME) {
-      expect(s).toBeGreaterThanOrEqual(POOL_SIZE_MIN);
-      expect(s).toBeLessThanOrEqual(POOL_SIZE_MAX);
-    }
-  });
-  it('every FOR_YOU stop is within bounds', () => {
-    for (const s of POOL_STOPS_FOR_YOU) {
       expect(s).toBeGreaterThanOrEqual(POOL_SIZE_MIN);
       expect(s).toBeLessThanOrEqual(POOL_SIZE_MAX);
     }
@@ -66,18 +58,6 @@ describe('POOL_STOPS_HOME', () => {
   });
   it('DEFAULT_POOL_INDEX_HOME resolves to 5_000 (index 2)', () => {
     expect(POOL_STOPS_HOME[DEFAULT_POOL_INDEX_HOME]).toBe(5_000);
-  });
-});
-
-describe('POOL_STOPS_FOR_YOU', () => {
-  it('is the documented 6-stop log-spaced array (one finer step than home)', () => {
-    expect(POOL_STOPS_FOR_YOU).toEqual([200, 500, 1_000, 2_000, 10_000, 50_000]);
-  });
-  it('the rightmost stop equals POOL_SIZE_MAX', () => {
-    expect(POOL_STOPS_FOR_YOU[POOL_STOPS_FOR_YOU.length - 1]).toBe(POOL_SIZE_MAX);
-  });
-  it('DEFAULT_POOL_INDEX_FOR_YOU resolves to 2_000 (index 3)', () => {
-    expect(POOL_STOPS_FOR_YOU[DEFAULT_POOL_INDEX_FOR_YOU]).toBe(2_000);
   });
 });
 

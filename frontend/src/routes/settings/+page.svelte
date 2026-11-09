@@ -230,7 +230,7 @@
       How dense the photo grid renders. Larger tiles are easier to
       scan one at a time; smaller tiles pack more photos per row
       and work better on wide monitors. Applies to every page that
-      shows the photo grid (home, /random, /for-you, /albums). The
+      shows the photo grid (home, /random, /albums). The
       number of photos loaded per page follows your window width, so
       every row comes out full — resize the window and the page size
       adjusts to match.
@@ -272,7 +272,7 @@
 
 <style>
   /* Settings sits in the same column as every other page — the
-     page header (PageHeader), the grid (Random / For you /
+     page header (PageHeader), the grid (Random /
      Albums), and these form cards all share --grid-width
      (1216px at desktop). Previously this wrapper was
      unconstrained (1376px — full shell content), which made

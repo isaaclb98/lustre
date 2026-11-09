@@ -44,7 +44,6 @@ BASELINE: dict[str, int] = {
     "centroids_search.py": 0,
     "dislikes.py": 6,
     "favorites.py": 6,
-    "for_you.py": 8,  # round‑14: cold‑start + reset_feedback wrap
     # 3: the deck is a cursor into the corpus's id space, so the
     # route makes two network calls on the request path — the facet
     # that sizes the deck, and the scroll that reads the page's ids.
@@ -68,7 +67,7 @@ BASELINE: dict[str, int] = {
 # acceptable until those IndexDB methods become async.
 NONZERO_ALLOWED: set[str] = {
     "albums.py", "dislikes.py", "explore.py", "favorites.py",
-    "for_you.py", "random.py", "saved_searches.py", "search.py",
+    "random.py", "saved_searches.py", "search.py",
     "similar.py", "system.py",
 }
 

@@ -11,7 +11,7 @@ Favorites CRUD:
 
 The favourites routing is the canonical example of where invalidation
 hooks live: any mark/unmark mutates the user's preference signal,
-which forces both `favourites dynamic centroid` and `for-you ranker`
+which forces the `favourites dynamic centroid` to
 to drop their caches on the next request. The router takes both
 invalidators as factory parameters; the app passes the live ones.
 
@@ -80,7 +80,6 @@ def build_favorites_router(
     index_db: Any,
     cfg: Any,
     invalidate_likes_centroid: Callable[[], None],
-    invalidate_for_you: Callable[[], None],
 ) -> APIRouter:
     """Build the favourites router with the live dependencies."""
     router = APIRouter()
@@ -97,11 +96,8 @@ def build_favorites_router(
                 status_code=404, detail="Photo not found in index cache",
             ) from err
         # Invalidate the favourites dynamic centroid so the next
-        # search through it reflects the new favourite. Same for
-        # for_you's pool cache — every mark changes the recommend()
-        # seed so the cached pool is now stale.
+        # search through it reflects the new favourite.
         invalidate_likes_centroid()
-        invalidate_for_you()
         row = await asyncio.to_thread(index_db.get_by_id, point_id)
         return FavoriteToggleResponse(
             id=point_id,
@@ -118,7 +114,6 @@ def build_favorites_router(
         # centroid, and we don't try to detect whether it moved enough
         # to matter. Cheap, simple, correct.
         invalidate_likes_centroid()
-        invalidate_for_you()
 
     @router.get("/api/favorites", response_model=None)
     async def api_favorites(

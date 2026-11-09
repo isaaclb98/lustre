@@ -1,20 +1,34 @@
 """
 search/routers/explore.py — the Explore feedback loop.
 
-GET /api/explore/album/{album_id}/round?session=&offset=&limit=:
+GET /api/explore/{source}/round?session=&offset=&limit=:
     Serve a page of the current round. The round is materialised with
-    one Qdrant `recommend()` call whose POSITIVES are the album's
+    one Qdrant `recommend()` call whose POSITIVES are the source's
     member photos and whose NEGATIVES are the photos the user
     down-voted so far. The client pages through the materialised
     round via `offset`; the server slices the cached id list rather
     than re-querying Qdrant, because offset-paging a recommend query
     returns duplicate rows at the page boundaries.
 
-POST /api/explore/album/{album_id}/vote:
+POST /api/explore/{source}/vote:
     Record a vote. `down` adds the photo to the session's negative
     set and invalidates the current round, so the next round is
     re-queried with the new negative. `up` adds the photo to the
-    album itself, which makes it a positive for every later round.
+    source itself, which makes it a positive for every later round.
+
+`source` is a source key, not an album id: `album:{id}` for a user
+album, `favourites` for the built-in one. The built-in album has no
+row in the `albums` table — its members are the rows in the
+`favorites` table — so it needs its own key and its own up-vote
+behaviour. The vocabulary is the same one the centroid registry uses,
+so `album:{id}` means the same thing in both places.
+
+Up-votes mean different things per source. On a user album, an
+up-vote adds the photo to the album's membership. On the built-in
+Favourites album, an up-vote marks the photo as a favourite — the
+built-in album's membership IS the favourites table, so "add it to
+the album" and "favourite it" are the same act. Both then invalidate
+the relevant centroid, because the source's own direction moved.
 
 Why up-votes join the album: the album is what the user is curating,
 so an up-vote is a curation act. It also compounds — each up-vote
@@ -43,6 +57,7 @@ from qdrant_client import models
 from search._result_helpers import bad_request
 from search.explore import (
     EXPLORE_ROUND_SIZE,
+    FAVOURITES_SOURCE,
     ExploreSession,
     ExploreSessionStore,
 )
@@ -94,17 +109,67 @@ def _results_from_hits(
     ]
 
 
+# The prefix on a user album's source key. `album:5` is album 5.
+_ALBUM_SOURCE_PREFIX = "album:"
+
+
+def parse_source(source: str) -> tuple[str, int | None]:
+    """Split a source key into (kind, album_id).
+
+    `kind` is "album" for a user album, "favourites" for the built-in
+    one, or "unknown" for anything else. The album id is None for the
+    built-in album, which has no row in the `albums` table.
+
+    A malformed key is not an error here — it resolves to "unknown"
+    and the route answers 404. That keeps the parsing total: every
+    caller gets a value back and never has to handle an exception.
+    """
+    if source == FAVOURITES_SOURCE:
+        return "favourites", None
+    if source.startswith(_ALBUM_SOURCE_PREFIX):
+        raw = source[len(_ALBUM_SOURCE_PREFIX):]
+        if raw.isdigit():
+            return "album", int(raw)
+    return "unknown", None
+
+
 def build_explore_router(
     *,
     index_db: Any,
     qdrant: Any,
     cfg: Any,
     invalidate_album_centroid: Any = None,
+    invalidate_favourites_centroid: Any = None,
 ) -> APIRouter:
     """Build the Explore router with the live dependencies."""
     router = APIRouter()
     sessions = ExploreSessionStore()
     _web_ui_url = cfg.web_ui_url
+
+    def _member_ids(kind: str, album_id: int | None) -> list[str]:
+        """The photos that seed the round for this source."""
+        if kind == "favourites":
+            return list(index_db.list_favorite_ids())
+        return list(index_db.list_album_member_ids(album_id))
+
+    def _add_member(
+        kind: str, album_id: int | None, point_id: str,
+    ) -> bool:
+        """Up-vote: make the photo a permanent member of the source.
+
+        On a user album that is an album membership. On the built-in
+        Favourites album it is a favourite — the same act, expressed
+        against the table that backs that album.
+        """
+        if kind == "favourites":
+            try:
+                index_db.mark_favorite(point_id)
+            except Exception:  # noqa: BLE001 — the photo left the cache
+                return False
+            if invalidate_favourites_centroid is not None:
+                invalidate_favourites_centroid()
+            return True
+        return bool(index_db.add_album_member(album_id, point_id))
 
     def _liveness_filter(ids: list[str]) -> list[str]:
         """Drop ids Qdrant no longer knows about.
@@ -142,7 +207,8 @@ def build_explore_router(
         one thread hop keeps them off the event loop without paying
         for a hop per call.
         """
-        member_ids = index_db.list_album_member_ids(sess.album_id)
+        kind, album_id = parse_source(sess.source)
+        member_ids = _member_ids(kind, album_id)
         if not member_ids:
             return []
         live_members = _liveness_filter(list(member_ids))
@@ -187,9 +253,9 @@ def build_explore_router(
         dis_set = index_db.dislike_id_set(page_ids)
         return ordered, fav_set, dis_set
 
-    @router.get("/api/explore/album/{album_id}/round", response_model=SearchResponse)
+    @router.get("/api/explore/{source}/round", response_model=SearchResponse)
     async def explore_round(
-        album_id: int,
+        source: str,
         session: Annotated[
             str | None,
             Query(
@@ -209,15 +275,19 @@ def build_explore_router(
             Query(ge=1, le=EXPLORE_ROUND_SIZE, description="photos per page"),
         ] = 24,
     ) -> SearchResponse | JSONResponse:
-        """Serve a page of the current Explore round for an album."""
+        """Serve a page of the current Explore round for a source."""
         started = time.monotonic()
+
+        kind, _album_id = parse_source(source)
+        if kind == "unknown":
+            return bad_request("unknown explore source")
 
         existing = sessions.get(session)
         if existing is None:
-            session_id, sess = sessions.put_new(album_id)
+            session_id, sess = sessions.put_new(source)
         else:
             session_id, sess = existing
-            if sess.album_id != album_id:
+            if sess.source != source:
                 return bad_request(
                     "session belongs to a different album; start a new "
                     "session to explore this one"
@@ -293,9 +363,9 @@ def build_explore_router(
             session_total=len(sess.round_ids),
         )
 
-    @router.post("/api/explore/album/{album_id}/vote", response_model=None)
+    @router.post("/api/explore/{source}/vote", response_model=None)
     async def explore_vote(
-        album_id: int,
+        source: str,
         body: dict[str, Any],
         session: Annotated[
             str | None,
@@ -312,12 +382,16 @@ def build_explore_router(
         joins the album, making it a positive for every later round
         and every later session.
         """
+        kind, album_id = parse_source(source)
+        if kind == "unknown":
+            return bad_request("unknown explore source")
+
         existing = sessions.get(session)
         if existing is None:
-            session_id, sess = sessions.put_new(album_id)
+            session_id, sess = sessions.put_new(source)
         else:
             session_id, sess = existing
-            if sess.album_id != album_id:
+            if sess.source != source:
                 return bad_request(
                     "session belongs to a different album; start a new "
                     "session to explore this one"
@@ -343,20 +417,22 @@ def build_explore_router(
                 "downvotes": len(sess.downvotes),
             }
 
-        # Up-vote: join the album. The membership write is what
+        # Up-vote: join the source. The membership write is what
         # makes this photo a positive for later rounds.
         ok = await asyncio.to_thread(
-            index_db.add_album_member, album_id, photo_id
+            _add_member, kind, album_id, photo_id
         )
         if not ok:
             return bad_request("album not found")
-        # The album's membership changed, so its cached centroid is
+        # The source's membership changed, so its cached centroid is
         # stale. The Explore round reads member ids directly and does
-        # not need the centroid, but the album's own Search does.
+        # not need the centroid, but the source's own Search does.
         #
         # This is an in-memory registry drop, not a blocking call —
-        # no thread hop needed.
-        if invalidate_album_centroid is not None:
+        # no thread hop needed. `_add_member` already invalidates the
+        # favourites centroid on the built-in album's path, since a
+        # favourite IS that album's membership.
+        if kind == "album" and invalidate_album_centroid is not None:
             invalidate_album_centroid(album_id)
         # The album grew, so the current round's positives changed
         # too. Rebuild it on the next request.

@@ -8,7 +8,7 @@
  *   - rollback on API failure.
  *   - per-id in-flight lock (rapid double-tap is a no-op).
  *   - mutualExclusion:false preserves the opposite flag
- *     (some pages want this for the for-you flow).
+ *     (some pages want this for the favourites flow).
  *   - missing id is a no-op (not a throw).
  */
 import { describe, it, expect, vi } from 'vitest';

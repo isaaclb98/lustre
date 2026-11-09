@@ -61,6 +61,18 @@
   async function load() {
     const id = String($page.params.id);
     loading = true;
+    // The album id is a positive integer. A non-numeric id means
+    // the URL named an album that does not exist — /albums/likes
+    // before the built-in was renamed, /albums/dislikes after it
+    // was removed. Asking the API anyway returns HTTP 422 and the
+    // raw status leaks into the page, so answer it here instead.
+    if (!/^\d+$/.test(id) || Number(id) <= 0) {
+      detail = null;
+      members = [];
+      error = 'Album not found';
+      loading = false;
+      return;
+    }
     try {
       const limit = pageLimit();
       const res = (await getAlbum(id, limit, 0)) as AlbumDetail;

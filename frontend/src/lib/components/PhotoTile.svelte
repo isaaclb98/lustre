@@ -22,7 +22,7 @@
   type Props = {
     pointId: string;
     blurhash?: string | null;
-    /** Back-compat alias for `blurhash` — ForYouRow passes the
+    /** Back-compat alias for `blurhash` — some callers pass the
      *  pre-computed blurhash data URL under this name. */
     dataUrl?: string | null;
     scoreStr?: string;
@@ -76,6 +76,13 @@
     votedUp?: boolean;
     /** This photo was down-voted — highlights the down chip. */
     votedDown?: boolean;
+    /**
+     * Label on the up-vote chip. The default is "Add to album",
+     * which is what an up-vote does on a user album; the built-in
+     * Favourites album passes "Favourite this photo" because there
+     * the up-vote marks the photo as a favourite.
+     */
+    voteUpLabel?: string;
   };
   let {
     pointId,
@@ -92,7 +99,8 @@
     removeLabel = 'Remove',
     onVote,
     votedUp = false,
-    votedDown = false
+    votedDown = false,
+    voteUpLabel = 'Add to album'
   }: Props = $props();
 
   // Pre-computed data URL takes priority (caller already decoded
@@ -211,7 +219,14 @@
   {#if scoreStr}
     <span class="score">{scoreStr}</span>
   {/if}
-  {#if isFavorite}
+  <!-- The favourite badge and the remove button share the top-right
+       corner slot, and the remove button is the one the user needs
+       to be able to reach. On a grid of favourites or album members
+       EVERY photo is a favourite by definition, so the badge marks
+       nothing — every tile would carry the same heart — while still
+       sitting on top of the control that does something. Where a
+       remove button is present, the corner belongs to it alone. -->
+  {#if isFavorite && !onRemove}
     <span class="fav" data-no-open title="Like">
       <Icon name="heart-filled" size={14} />
     </span>
@@ -250,8 +265,8 @@
         class="vote-btn vote-up"
         class:voted={votedUp}
         data-no-open
-        title="Add to album"
-        aria-label="Add to album"
+        title={voteUpLabel}
+        aria-label={voteUpLabel}
         aria-pressed={votedUp}
         onclick={(e) => {
           e.preventDefault();
@@ -294,13 +309,17 @@
        which was tuned for dark surfaces). --shadow-1 is the
        standard tile resting shadow. */
     box-shadow: var(--shadow-1);
-    transition: transform var(--t-fast) var(--ease-out),
-                border-color var(--t-fast) var(--ease-out),
-                box-shadow var(--t-fast) var(--ease-out),
-                opacity var(--t-fast) var(--ease-out);
+    transition: border-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+                box-shadow var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+                opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
+  /* The tile does NOT move on hover. It used to jump up by 3px, but
+     a tile that shifts leaves a gap under itself and overlaps the
+     row above — in a grid of photos that reads as a stutter, not a
+     response. The photo inside grows instead (see `.ph, .full`),
+     which is a change the eye reads as "this photo is closer"
+     without anything on the page moving. */
   .tile:hover {
-    transform: translateY(-3px);
     border-color: var(--glass-edge-strong);
     box-shadow: var(--shadow-3);
   }
@@ -352,7 +371,19 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transition: opacity var(--t-med) var(--ease-out);
+    transition: opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+                transform var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
+    /* The photo grows inside the tile on hover rather than the
+       tile growing. Scaling the TILE would push it over its
+       neighbours and break the grid's rhythm; scaling the photo
+       inside the clipped frame gives the same "leaning in" read
+       with nothing on the page shifting. */
+    transform: scale(1);
+    transform-origin: center;
+  }
+  .tile:hover .ph,
+  .tile:hover .full {
+    transform: scale(var(--grid-hover-zoom, 1.04));
   }
   .ph {
     z-index: 0;
@@ -390,7 +421,7 @@
     -webkit-backdrop-filter: var(--pill-blur);
     opacity: 0;
     z-index: 2;
-    transition: opacity var(--t-fast) var(--ease-out);
+    transition: opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
   .tile:hover .score,
   .tile.menu-open .score { opacity: 1; }
@@ -471,17 +502,23 @@
     -webkit-backdrop-filter: var(--glass-light);
     box-shadow: var(--shadow-glass);
     opacity: 0;
+    /* A button hidden with opacity alone still swallows pointer
+       events. This one sits on top of the tile's own link, so a
+       click in the top-right corner would remove the photo from the
+       album without the user ever seeing the control that did it. */
+    pointer-events: none;
     z-index: 2;
     transition:
-      opacity var(--t-fast) var(--ease-out),
-      background var(--t-fast) var(--ease-out),
-      border-color var(--t-fast) var(--ease-out),
-      transform var(--t-fast) var(--ease-out);
+      opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      background var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      border-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      transform var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
   .tile:hover .remove-btn,
   .tile:focus-within .remove-btn,
   .remove-btn:focus-visible {
     opacity: 1;
+    pointer-events: auto;
   }
   .remove-btn:hover {
     background: color-mix(in srgb, var(--negative) 18%, transparent);
@@ -518,10 +555,10 @@
     box-shadow: var(--shadow-glass);
     opacity: 0;
     transition:
-      opacity var(--t-fast) var(--ease-out),
-      background var(--t-fast) var(--ease-out),
-      border-color var(--t-fast) var(--ease-out),
-      transform var(--t-fast) var(--ease-out);
+      opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      background var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      border-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      transform var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
   .tile:hover .vote-btn,
   .tile:focus-within .vote-btn,
@@ -544,8 +581,17 @@
   }
   /* Mobile / touch: hover doesn't exist, so the chip is always
    * present so the user can see the affordance. */
-  @media (hover: none) {
+  /* Touch devices have no hover, so a hover-revealed control would
+     never appear and the remove button would be unreachable. Keep it
+     visible there. The query is `(hover: none) AND (pointer: coarse)`
+     rather than `(hover: none)` alone: a hybrid laptop whose primary
+     pointer is a mouse still reports `hover: none` on some setups,
+     and that device SHOULD get hover-only behaviour like any other
+     mouse. */
+  @media (hover: none) and (pointer: coarse) {
     .remove-btn { opacity: 1; }
+  }
+  @media (hover: none) {
     .vote-btn { opacity: 1; }
   }
 </style>

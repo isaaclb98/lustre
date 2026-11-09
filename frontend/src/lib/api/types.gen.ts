@@ -465,7 +465,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/explore/album/{album_id}/round": {
+    "/api/explore/{source}/round": {
         parameters: {
             query?: never;
             header?: never;
@@ -474,9 +474,9 @@ export interface paths {
         };
         /**
          * Explore Round
-         * @description Serve a page of the current Explore round for an album.
+         * @description Serve a page of the current Explore round for a source.
          */
-        get: operations["explore_round_api_explore_album__album_id__round_get"];
+        get: operations["explore_round_api_explore__source__round_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -485,7 +485,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/explore/album/{album_id}/vote": {
+    "/api/explore/{source}/vote": {
         parameters: {
             query?: never;
             header?: never;
@@ -506,7 +506,7 @@ export interface paths {
          *     joins the album, making it a positive for every later round
          *     and every later session.
          */
-        post: operations["explore_vote_api_explore_album__album_id__vote_post"];
+        post: operations["explore_vote_api_explore__source__vote_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -543,45 +543,6 @@ export interface paths {
         post: operations["mark_favorite_api_favorites__point_id__post"];
         /** Unmark Favorite */
         delete: operations["unmark_favorite_api_favorites__point_id__delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/for-you/feed": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * For You Feed
-         * @description Walk through a Gumbel-sampled deck of photos in the user's
-         *     taste neighborhood.
-         *
-         *     The candidate pool is sourced from Qdrant
-         *     `recommend(positive=likes, negative=dislikes)`. The
-         *     recommend() results are ordered by score descending, and
-         *     the Gumbel draw biases the deck toward high scores by
-         *     the temperature. At T=0 the deck is the deterministic
-         *     top-K; at T=1.0 the deck is near-uniform random over the
-         *     pool.
-         *
-         *     Cache key: `compute_for_you_cache_key(fav_ids, dis_ids,
-         *     temperature, pool_size, seed)`. A client that keeps
-         *     these stable across multiple offsets walks through the
-         *     same deck. A new seed (or a new fav_ids/dis_ids after a
-         *     like/dislike) produces a fresh deck.
-         *
-         *     Cold start: 0 favourites returns 400. The /for-you page
-         *     surfaces a "Like a few photos to seed" empty state
-         *     before sending a request.
-         */
-        get: operations["for_you_feed_api_for_you_feed_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2224,7 +2185,7 @@ export interface operations {
             };
         };
     };
-    explore_round_api_explore_album__album_id__round_get: {
+    explore_round_api_explore__source__round_get: {
         parameters: {
             query?: {
                 /** @description Session id from a previous round response. Pass it back to keep the same down-vote set. A new session (or no session) starts a fresh round. */
@@ -2236,7 +2197,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                album_id: number;
+                source: string;
             };
             cookie?: never;
         };
@@ -2262,7 +2223,7 @@ export interface operations {
             };
         };
     };
-    explore_vote_api_explore_album__album_id__vote_post: {
+    explore_vote_api_explore__source__vote_post: {
         parameters: {
             query?: {
                 /** @description session id from a previous round response */
@@ -2270,7 +2231,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                album_id: number;
+                source: string;
             };
             cookie?: never;
         };
@@ -2386,48 +2347,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    for_you_feed_api_for_you_feed_get: {
-        parameters: {
-            query?: {
-                /** @description Number of recommend() candidates the Gumbel draw is taken from. Default 2000. Range [200, 50000]. Higher = more variety, slower first page. */
-                pool_size?: number;
-                /** @description Photos per page. No upper bound. */
-                limit?: number;
-                /** @description Zero-based offset into the cached Gumbel deck. Pass the same `session` value to walk forward through the same deck without recomputing. */
-                offset?: number;
-                /** @description Gumbel noise scale. T=0 is deterministic top-K (curated). T=1.0 is near-uniform random over the pool. Default 0.05. */
-                temperature?: number;
-                /** @description Random seed for the Gumbel draw. Pass a fresh random int on every page reload so the user sees a different deck each time. Pass the same value for paginated scroll within a single page-mount to walk through the same deck. If omitted, the route generates a fresh random seed per request. */
-                seed?: number | null;
-                /** @description Opaque cache key from a prior /api/for-you/feed response. Pass back with offset=N to walk the same deck without recomputing. Server-cached for 30 minutes. */
-                session?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SearchResponse"];
-                };
             };
             /** @description Validation Error */
             422: {

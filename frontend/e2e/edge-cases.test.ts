@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { assertDisposable } from './guard';
 
 async function appReady(page: any) {
   // The composer is on every page that has a search bar; the topbar
@@ -161,24 +162,11 @@ test.describe('Lightbox edge cases', () => {
 });
 
 test.describe('Empty states', () => {
-  test('For You page when no likes exist shows empty state', async ({ page }) => {
-    // Clear all likes first
-    const favs = await page.request.get('/api/favorites').then(r => r.json());
-    for (const fav of (favs.favorites ?? [])) {
-      await page.request.delete(`/api/favorites/${fav.point_id}`);
-    }
-
-    await page.goto('/for-you');
-    await page.waitForSelector('h1', { timeout: 5000 });
-
-    // Should show empty state or at least not crash
-    await expect(page.getByRole('heading', { name: /for you/i })).toBeVisible();
-    const body = await page.textContent('body');
-    expect(body).toBeTruthy();
-  });
-
   test('Albums page when no custom albums exist shows empty state', async ({ page }) => {
-    // Delete all user albums (keep system albums)
+    // Delete all user albums (keep system albums). This deletes EVERY
+    // user album, so it must only ever run against a disposable
+    // backend — assertDisposable aborts the test otherwise.
+    await assertDisposable(page.request, 'the empty-albums Albums test');
     const albums = await page.request.get('/api/albums').then(r => r.json());
     for (const album of (albums.albums ?? [])) {
       if (!['Likes', 'Dislikes'].includes(album.name)) {
@@ -331,10 +319,10 @@ test.describe('Loading states', () => {
 
     // After the delayed response, results should appear. Scope to
     // section.results because .grid-tile also matches the home
-    // page's always-on "For you" row tiles — without scoping,
-    // the wait would succeed on For You tiles BEFORE the search
-    // finishes, and the loading-state assertion below would race
-    // against the still-in-flight search.
+    // page's always-on result tiles — without scoping, the wait
+    // would succeed on those BEFORE the search finishes, and the
+    // loading-state assertion below would race against the
+    // still-in-flight search.
     await expect(page.locator('section.results .grid-tile').first()).toBeVisible({ timeout: 5000 });
 
     // Loading state should be gone. Give it a moment to clear after

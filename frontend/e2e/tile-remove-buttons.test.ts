@@ -1,13 +1,13 @@
 /**
- * E2E for the tile-remove affordance on /albums, /albums/likes,
- * /albums/dislikes.
+ * E2E for the tile-remove affordance on /albums and
+ * /albums/favourites.
  *
  * Parallel-safe: each test seeds its own photo and verifies only
  * that the specific tile for that photo is present and removable.
  * The grid may contain arbitrary other tiles from concurrent
  * tests or pre-existing data; we don't care about their count.
  *
- * For likes/dislikes we tag the photo with a unique albums note
+ * For favourites we tag the photo with a unique albums note
  * via a throwaway album membership so we can identify the right
  * tile across concurrent edits.
  */
@@ -45,17 +45,8 @@ async function like(req: APIRequestContext, photo: string) {
   expect(r.ok()).toBeTruthy();
 }
 
-async function dislike(req: APIRequestContext, photo: string) {
-  const r = await req.post(`/api/dislikes/${encodeURIComponent(photo)}`);
-  expect(r.ok()).toBeTruthy();
-}
-
 async function unlike(req: APIRequestContext, photo: string) {
   await req.delete(`/api/favorites/${encodeURIComponent(photo)}`);
-}
-
-async function undislike(req: APIRequestContext, photo: string) {
-  await req.delete(`/api/dislikes/${encodeURIComponent(photo)}`);
 }
 
 // Tile locator by photo id — the <a class="tile"> href is
@@ -68,7 +59,7 @@ function tileByPhoto(page: Page, photo: string) {
   return page.locator(`.grid-tile:has(a.tile[href$="/photo/${photo}"])`);
 }
 
-test.describe('tile remove buttons (album / likes / dislikes)', () => {
+test.describe('tile remove buttons (album / favourites)', () => {
   test('album: remove button on hover, click decrements grid, server reflects', async ({ page, request }) => {
     const photo = await randomPhoto(request);
     expect(photo, 'dev stack should have at least one photo').toBeTruthy();
@@ -96,14 +87,14 @@ test.describe('tile remove buttons (album / likes / dislikes)', () => {
     }
   });
 
-  test('likes: remove button on hover, click decrements grid, server reflects', async ({ page, request }) => {
+  test('favourites: remove button on hover, click decrements grid, server reflects', async ({ page, request }) => {
     const photo = await randomPhoto(request);
     expect(photo).toBeTruthy();
     await like(request, photo!);
     try {
-      await page.goto('/albums/likes');
+      await page.goto('/albums/favourites');
       const targetTile = tileByPhoto(page, photo!);
-      await expect(targetTile, 'liked photo should appear in the likes grid').toHaveCount(1);
+      await expect(targetTile, 'liked photo should appear in the favourites grid').toHaveCount(1);
       const removeBtn = targetTile.locator('button.remove-btn');
       await expect(removeBtn).toHaveCount(1);
       await expect(removeBtn).toHaveAttribute('title', 'Unlike');
@@ -122,27 +113,4 @@ test.describe('tile remove buttons (album / likes / dislikes)', () => {
     }
   });
 
-  test('dislikes: remove button on hover, click decrements grid, server reflects', async ({ page, request }) => {
-    const photo = await randomPhoto(request);
-    expect(photo).toBeTruthy();
-    await dislike(request, photo!);
-    try {
-      await page.goto('/albums/dislikes');
-      const targetTile = tileByPhoto(page, photo!);
-      await expect(targetTile, 'disliked photo should appear in the dislikes grid').toHaveCount(1);
-      const removeBtn = targetTile.locator('button.remove-btn');
-      await expect(removeBtn).toHaveCount(1);
-      await expect(removeBtn).toHaveAttribute('title', 'Remove dislike');
-      await targetTile.hover();
-      await page.waitForTimeout(200);
-      await removeBtn.click({ force: true });
-      await expect(targetTile).toHaveCount(0);
-      const r = await request.get('/api/dislikes?as_results=1&limit=500');
-      const j = await r.json();
-      const ids = (j.results ?? []).map((x: { id: string }) => x.id);
-      expect(ids).not.toContain(photo);
-    } finally {
-      await undislike(request, photo!);
-    }
-  });
 });

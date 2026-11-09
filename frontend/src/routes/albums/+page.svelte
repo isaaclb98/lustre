@@ -1,17 +1,21 @@
 <script lang="ts">
   /**
-   * Albums — list + create. Two non-optional system albums (Likes,
-   * Dislikes) are rendered first and cannot be deleted or renamed;
-   * user-created albums follow.
+   * Albums — list + create. One non-optional system album
+   * (Favourites) is rendered first and cannot be deleted or
+   * renamed; user-created albums follow.
+   *
+   * The built-in Dislikes album was removed — the Explore album
+   * feature covers that ground, and a dislikes grid is a list of
+   * photos the user has told the system to stop showing them.
    *
    * Round‑29: every card has a "Search" button that navigates to
-   * the home page with ?centroid=album:{id} (or ?centroid=likes /
-   * ?centroid=dislikes for the built-ins). The home page renders
+   * the home page with ?centroid=album:{id} (or
+   * ?centroid=favourites for the built-in). The home page renders
    * results inline using that album's centroid.
    *
-   * Round‑29b: the Likes centroid is now registered under
-   * `likes` (was `favourites`). The backend keeps `favourites`
-   * as a back-compat alias so legacy URLs still resolve.
+   * The built-in album is named Favourites; its centroid key
+   * stays `likes` on the backend, with `favourites` as a
+   * back-compat alias, so saved searches keep resolving.
    *
    * Round‑92: the per-card "Surprise" button was removed. The
    * home page now exposes Surprise me (Gumbel-max deck with
@@ -28,23 +32,22 @@
     listAlbums,
     createAlbum,
     deleteAlbum,
+    updateAlbum,
     listFavorites,
-    listDislikes,
     getFavoriteCount,
-    getDislikeCount,
     thumbUrl
   } from '$lib/api/endpoints';
   import { dialog } from '$lib/components/Dialog.svelte';
+  import { ApiError } from '$lib/api/client';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import Button from '$lib/components/Button.svelte';
   import type { AlbumSummary } from '$lib/api/endpoints';
 
-  // Round‑29b: renamed from 'favourites' to 'likes' to match
-  // the user-visible album label. The backend also registers
-  // 'favourites' as a back-compat alias so legacy URLs still
-  // resolve.
-  const LIKES_CENTROID = 'likes';
-  const DISLIKES_CENTROID = 'dislikes';
+  // The centroid key for the built-in album. `favourites` is the
+  // primary key on the backend, matching the album's name; `likes`
+  // stays registered as a back-compat alias so saved searches and
+  // shared links keep resolving.
+  const FAVOURITES_CENTROID = 'favourites';
 
   async function searchByAlbum(centroidName: string) {
     await goto(resolve(`/?centroid=${encodeURIComponent(centroidName)}`));
@@ -59,12 +62,13 @@
 
   let albums = $state<AlbumSummary[]>([]);
   let loading = $state(true);
+  // Non-fatal error banner — a failed rename needs to be visible,
+  // otherwise the dialog closes and the card looks untouched.
+  let errorMsg = $state<string | null>(null);
   let likesCount = $state(0);
-  let dislikesCount = $state(0);
   // First photo id in each built-in album — used as the card cover.
   // Empty string while loading or when the album is empty.
   let likesFirstId = $state('');
-  let dislikesFirstId = $state('');
 
   async function refresh() {
     loading = true;
@@ -80,33 +84,27 @@
 
   async function refreshSystemCounts() {
     try {
-      // Phase 2: getFavoriteCount / getDislikeCount wrap the
-      // raw `/api/favorites?limit=1` and `/api/dislikes?limit=1`
-      // endpoints with Zod validation. No need for a hand-rolled
-      // extractCount shim once the response is typed.
-      const [likes, dislikes] = await Promise.all([
-        getFavoriteCount(),
-        getDislikeCount()
-      ]);
-      likesCount = likes;
-      dislikesCount = dislikes;
+      // Phase 2: getFavoriteCount wraps the raw
+      // `/api/favorites?limit=1` endpoint with Zod validation. No
+      // need for a hand-rolled extractCount shim once the response
+      // is typed.
+      likesCount = await getFavoriteCount();
     } catch {
       // Counts are decorative; a 502 on count fetch shouldn't
       // blank the whole page.
     }
     // Cover photo for each built-in album. Fire-and-forget — the
     // card is already informative without a thumbnail.
-    Promise.all([
-      fetchCover(listFavorites).then((id) => (likesFirstId = id)),
-      fetchCover(listDislikes).then((id) => (dislikesFirstId = id))
-    ]).catch(() => {
-      /* non-fatal */
-    });
+    fetchCover(listFavorites)
+      .then((id) => (likesFirstId = id))
+      .catch(() => {
+        /* non-fatal */
+      });
   }
 
   /** Fetch one SearchResult from the list endpoint and return its id.
-   * With `as_results=1` (which is what listFavorites / listDislikes
-   * set), the backend returns a SearchResponse envelope — the
+   * With `as_results=1` (which is what listFavorites sets), the
+   * backend returns a SearchResponse envelope — the
    * array lives under `results`, not `favorites` / `items`. */
   async function fetchCover(
     list: (limit?: number, offset?: number) => Promise<unknown>
@@ -151,6 +149,35 @@
     }
   }
 
+  /**
+   * Rename a user album. The prompt is pre-filled with the current
+   * name so the user edits rather than retypes it.
+   *
+   * A duplicate name is rejected by the backend's UNIQUE constraint
+   * (HTTP 400) — surface that message instead of failing silently,
+   * because the user has no other way to tell that "Rename" did
+   * nothing. Any other failure falls back to a generic message.
+   */
+  async function rename(album: AlbumSummary) {
+    const name = await dialog.prompt({
+      title: 'Rename album',
+      label: 'Album name',
+      confirmLabel: 'Rename',
+      defaultValue: album.name
+    });
+    const trimmed = (name ?? '').trim();
+    if (!trimmed || trimmed === album.name) return;
+    try {
+      await updateAlbum(album.id, { name: trimmed });
+      await refresh();
+    } catch (e) {
+      errorMsg =
+        e instanceof ApiError && e.status === 400
+          ? `An album named "${trimmed}" already exists.`
+          : 'Could not rename this album. Please try again.';
+    }
+  }
+
   onMount(() => {
     // Both fetch from independent endpoints; run them in parallel
     // so the page reaches a fully-populated state in max(t1, t2)
@@ -175,6 +202,10 @@
   {/snippet}
 </PageHeader>
 
+{#if errorMsg}
+  <div class="error-msg">{errorMsg}</div>
+{/if}
+
 <div class="grid" aria-label="Albums">
   <article class="card glass">
     {#if likesFirstId}
@@ -182,11 +213,11 @@
     {:else}
       <div class="cover cover-empty" aria-hidden="true"></div>
     {/if}
-    <a class="title" href={resolve('/albums/likes')}>
-      <span>Likes</span>
+    <a class="title" href={resolve('/albums/favourites')}>
+      <span>Favourites</span>
     </a>
     <!-- Round-61: removed the description ("Photos you've liked.
-         Built-in, always here."). The title "Likes" already says
+         Built-in, always here."). The title "Favourites" already says
          what the album is; "Built-in, always here" was filler
          text that pushed the card taller and added 50px of
          whitespace below the cover when the album was empty. -->
@@ -208,41 +239,22 @@
         variant="ghost"
         size="sm"
         class="search-btn"
-        data={{ 'data-centroid': LIKES_CENTROID }}
-        onclick={() => searchByAlbum(LIKES_CENTROID)}
+        data={{ 'data-centroid': FAVOURITES_CENTROID }}
+        onclick={() => searchByAlbum(FAVOURITES_CENTROID)}
         disabled={likesCount === 0}
-        aria-label="Search by Likes centroid"
+        aria-label="Search by Favourites centroid"
       >Search</Button>
-    </div>
-  </article>
-  <article class="card glass">
-    {#if dislikesFirstId}
-      <img class="cover" src={thumbUrl(dislikesFirstId)} alt="" loading="lazy" />
-    {:else}
-      <div class="cover cover-empty" aria-hidden="true"></div>
-    {/if}
-    <a class="title" href={resolve('/albums/dislikes')}>
-      <span>Dislikes</span>
-    </a>
-    <!-- Round-61: removed the description ("Photos you've
-         disliked. Built-in, always here.") and the "built-in"
-         pill. The title is self-explanatory. -->
-    <footer>
-      <span class="count">{dislikesCount} photo{dislikesCount === 1 ? '' : 's'}</span>
-    </footer>
-    <div class="search-row">
       <Button
         variant="ghost"
         size="sm"
         class="search-btn"
-        data={{ 'data-centroid': DISLIKES_CENTROID }}
-        onclick={() => searchByAlbum(DISLIKES_CENTROID)}
-        disabled={dislikesCount === 0}
-        aria-label="Search by Dislikes centroid"
-      >Search</Button>
+        href={resolve('/explore/favourites')}
+        disabled={likesCount === 0}
+        aria-label="Explore Favourites"
+        title="Vote down the photos that don't match and the next round leans away from them"
+      >Explore</Button>
     </div>
   </article>
-
   {#if loading}
     <div class="state state-wide">Loading albums…</div>
   {:else if albums.length > 0}
@@ -257,13 +269,21 @@
         {#if a.description}<p class="desc">{a.description}</p>{/if}
         <footer>
           <span class="count">{a.member_count ?? 0} photos</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            danger
-            onclick={() => remove(a.id, a.name)}
-            aria-label="Delete {a.name}"
-          >Delete</Button>
+          <div class="actions">
+            <Button
+              variant="ghost"
+              size="sm"
+              onclick={() => rename(a)}
+              aria-label="Rename {a.name}"
+            >Rename</Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              danger
+              onclick={() => remove(a.id, a.name)}
+              aria-label="Delete {a.name}"
+            >Delete</Button>
+          </div>
         </footer>
         <div class="search-row">
           <Button
@@ -308,11 +328,10 @@
     flex: 1 1 auto;
   }
 
-  /* System albums (Likes, Dislikes) live in the same grid as the
-     user-created albums below. They are pinned to the top of the
-     flow by virtue of being declared first in the template; the
-     `built-in` pill in the footer marks them visually. */
-  /* Album cards (Likes/Dislikes + user albums) in a single auto-fit
+  /* The built-in album (Favourites) lives in the same grid as the
+     user-created albums below. It is pinned to the top of the
+     flow by virtue of being declared first in the template. */
+  /* Album cards (Favourites + user albums) in a single auto-fit
      grid. auto-fit collapses empty tracks when item count is below
      the column count, so a sparse row (e.g. 2 user albums) centers
      the filled cards rather than leaving an empty band on the right.
@@ -365,7 +384,7 @@
      Margins, not flex gap — gap is uniform across siblings. */
   /* Round-61: cover→title 16px (unchanged). Removed the
      title→desc 4px gap and desc→footer 12px gap because
-     Likes/Dislikes no longer render a description. footer→search
+     Favourites no longer renders a description. footer→search
      stays 16px. search-row gets margin-top: auto so it pins to
      the bottom of the card — any leftover vertical space in a
      row-stretched card lands between footer and search-row, not
@@ -435,8 +454,24 @@
     align-items: center;
     margin-top: auto;
   }
+  /* Rename + Delete sit together on the right; the photo count
+     stays on the left. Without this wrapper the two buttons would
+     be spread apart by `justify-content: space-between`. */
+  .actions {
+    display: flex;
+    gap: var(--s-1);
+  }
   .count {
     color: var(--fg-3);
     font-size: var(--fs-sm);
+  }
+  /* Non-fatal error banner — a failed rename has to be visible,
+     otherwise the dialog closes and nothing looks different. */
+  .error-msg {
+    max-width: var(--grid-width, 1200px);
+    margin: 0 auto var(--s-3);
+    padding: var(--s-2) var(--s-3);
+    color: var(--accent);
+    text-align: center;
   }
 </style>

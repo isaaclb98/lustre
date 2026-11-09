@@ -441,7 +441,7 @@ class Config:
     # Single source of truth for the Diversity knob. Routers resolve
     # query params against this default via `resolve_diversity()`.
     diversity: Diversity = field(default_factory=load_diversity_from_env)
-    # Per-request timeout for Qdrant's recommend() API (used by /api/for-you's
+    # Per-request timeout for Qdrant's recommend() API (used by the
     # centroid blend and any future recommend-style endpoints). Recommend
     # is heavier than a plain search (Qdrant has to fetch positive/negative
     # point vectors, compute their mean, then run an HNSW search across
@@ -450,7 +450,7 @@ class Config:
     # Raised 10s -> 40s: at the prod library size (1.96M points, 409 fav
     # ids), Qdrant's HNSW search latency has crept to 2-10s and occasionally
     # trips the 10s cap. The graceful fallback (qdrant_client.recommend)
-    # turns a timeout into an empty result set, which the for-you cache
+    # turns a timeout into an empty result set, which the Explore cache
     # then sticks at for 5 minutes — effectively "For You is broken until
     # the cache TTL expires". 40s gives the heavy recommend path room to
     # succeed under load; on a healthy Qdrant the median is <2s, so the

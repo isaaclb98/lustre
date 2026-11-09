@@ -41,13 +41,12 @@ test.describe('Full User Experience E2E Tests', () => {
     await appReady(page);
     await expect(page).toHaveTitle(/lustre/);
     await expect(page.locator('.composer-input').first()).toBeVisible();
-    // Current topbar tabs: Home, Random, For You, Albums, Settings.
+    // Current topbar tabs: Home, Random, Albums, Settings.
     // (The earlier 'Search' tab was removed when /search became the
     // home route — there's no longer a dedicated 'Search' link.)
     await expect(page.getByRole('link', { name: /Home/i }).first()).toBeVisible();
     await expect(page.getByRole('link', { name: /Random/i }).first()).toBeVisible();
-    await expect(page.getByRole('link', { name: /For You/i }).first()).toBeVisible();
-  });
+      });
 
   test('Search: positive prompt + Search button renders results', async ({ page }) => {
     await gotoSearch(page);
@@ -103,17 +102,6 @@ test.describe('Full User Experience E2E Tests', () => {
     await expect(page.locator('.grid-tile').first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test('For You page loads (round 33: shuffled pool, no diversity controls)', async ({ page }) => {
-    await page.goto('/for-you');
-    await appReady(page);
-    await expect(page.getByRole('heading', { name: /For you/i })).toBeVisible();
-    // Round 33 dropped the diversity controls from this page —
-    // the new endpoint takes `top_pct`/`page`/`limit`, no
-    // user-facing tuning of diversity rerank. Confirm there's no
-    // legacy combobox visible.
-    await expect(page.getByRole('combobox', { name: /Diversity mode/i })).toHaveCount(0);
-  });
-
   test('Albums page loads', async ({ page }) => {
     await page.goto('/albums');
     await appReady(page);
@@ -124,7 +112,7 @@ test.describe('Full User Experience E2E Tests', () => {
   });
 
   test('Navigation: all main routes render without server error', async ({ page }) => {
-    const paths = ['/', '/search', '/random', '/for-you', '/albums', '/favorites'];
+    const paths = ['/', '/search', '/random', '/albums', '/favorites'];
     for (const p of paths) {
       const resp = await page.goto(p);
       expect(resp?.status() ?? 0).toBeLessThan(500);
@@ -132,16 +120,12 @@ test.describe('Full User Experience E2E Tests', () => {
     }
   });
 
-  test('Search page with no prompts renders the For You row (default), no crash', async ({ page }) => {
+  test('Search page with no prompts renders results (default), no crash', async ({ page }) => {
     // / IS the search route. With no prompts in the URL, the page
-    // shows the "For you" recommendations row rather than crashing
-    // or showing a blank screen. The earlier expectation of an
-    // `.empty` element was based on a now-removed empty-state UI;
-    // For You is the current landing default.
+    // shows its default results rather than crashing or showing a
+    // blank screen.
     await gotoSearch(page);
     await expect(page.locator('.grid-tile').first()).toBeVisible({ timeout: 10_000 });
-    // The "For you" section heading should be visible.
-    await expect(page.getByRole('heading', { name: /For you/i })).toBeVisible();
   });
 
   test('Image raw endpoint serves JPEG bytes for a search result', async ({ page }) => {

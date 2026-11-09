@@ -71,15 +71,10 @@ const browser = await chromium.launch();
   await ready();
   await shot(page, '02-random-grid');
 
-  console.log('3. /for-you');
-  await page.goto(`${BASE}/for-you`, { waitUntil: 'networkidle' });
-  await ready();
-  await shot(page, '03-for-you-grid');
-
-  console.log('4. /albums');
+  console.log('3. /albums');
   await page.goto(`${BASE}/albums`, { waitUntil: 'networkidle' });
   await ready();
-  await shot(page, '04-albums-list');
+  await shot(page, '03-albums-list');
 
   const photoId = await getFirstPhotoId(page);
   if (!photoId) {

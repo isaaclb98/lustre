@@ -225,27 +225,6 @@ test.describe('Similar photos page (/similar/<id>)', () => {
   });
 });
 
-test.describe('For You feed', () => {
-  test('For You page renders with heading', async ({ page }) => {
-    await page.goto(`${APP}/for-you`);
-    await appReady(page);
-
-    await expect(page.getByRole('heading', { name: /for you/i })).toBeVisible();
-  });
-
-  test('For You page has no Diversity control (round 33)', async ({ page }) => {
-    await page.goto(`${APP}/for-you`);
-    await appReady(page);
-
-    // Round 33 replaced the diversity-rerank For You with the
-    // shuffled-pool ranker. The diversity combobox used to live on
-    // this page; assert it's gone.
-    await expect(
-      page.getByRole('combobox', { name: /diversity/i })
-    ).toHaveCount(0);
-  });
-});
-
 test.describe('Albums page interactions', () => {
   test('clicking an album card navigates to album detail', async ({ page }) => {
     // Create a test album

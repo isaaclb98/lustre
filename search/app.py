@@ -25,6 +25,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from qdrant_client import QdrantClient
+from starlette.middleware.base import RequestResponseEndpoint
 
 from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
 from search import config, text_encoder
@@ -38,6 +39,7 @@ from search.diversity import (
     DiversityResultCache,
     DiversityStats,
 )
+from search.explore import album_source
 from search.image_resolver import guess_content_type, resolve_local, resolve_url
 from search.index_db import DEFAULT_INDEX_DB_PATH, IndexDB
 from search.models import (
@@ -47,7 +49,6 @@ from search.models import (
 )
 from search.qdrant_client import QdrantSearch, SearchHit
 from search.random import RandomPicker
-from search.routers.for_you import invalidate_for_you_cache as _for_you_invalidate_deck
 from search.search_snapshot import SearchSnapshotCache
 
 logger = logging.getLogger(__name__)
@@ -259,10 +260,10 @@ def _make_favourites_centroid_spec(
 ) -> DynamicCentroidSpec:
     """Build the registration spec for the favourites dynamic centroid.
 
-    Round‑29b: superseded by `_make_likes_centroid_spec` (the album
-    was renamed from Favourites to Likes). This one is still
-    registered as a back‑compat alias so old
-    `?centroid=favourites` URLs keep working.
+    The built-in album is named Favourites, so this is the primary
+    centroid key. `likes` is registered as a back-compat alias (see
+    `_make_likes_centroid_spec`) so old `?centroid=likes` URLs and
+    saved searches keep resolving.
     """
     import numpy as np
 
@@ -288,11 +289,10 @@ def _make_favourites_centroid_spec(
 
     return DynamicCentroidSpec(
         name="favourites",
-        label="Favourites (legacy alias)",
+        label="Favourites",
         description=(
             "Mean of every liked photo's embedding, re-normalised "
-            "to unit length. Back‑compat alias for the new 'likes' "
-            "centroid."
+            "to unit length. Updates as you like."
         ),
         compute_fn=compute,
         source="favourites",
@@ -308,11 +308,10 @@ def _make_likes_centroid_spec(
 ) -> DynamicCentroidSpec:
     """Build the registration spec for the likes dynamic centroid.
 
-    Round‑29b: renamed from `favourites` to `likes` to match the
-    user‑visible album label. Same compute shape — just a
-    different registry key. The old `favourites` name remains
-    registered as a back‑compat alias; see
-    `_make_favourites_centroid_spec`.
+    Back-compat alias: the built-in album is now named Favourites,
+    so `favourites` is the primary key (see
+    `_make_favourites_centroid_spec`). This keeps `?centroid=likes`
+    URLs and saved searches working.
     """
     import numpy as np
 
@@ -338,66 +337,17 @@ def _make_likes_centroid_spec(
 
     return DynamicCentroidSpec(
         name="likes",
-        label="Likes",
+        label="Likes (legacy alias)",
         description=(
             "Mean of every liked photo's embedding, "
-            "re-normalised to unit length. Updates as you like."
+            "re-normalised to unit length. Back-compat alias for "
+            "the 'favourites' centroid."
         ),
         compute_fn=compute,
         source="likes",
         empty_message=(
             "Like a few photos first — this centroid is built "
             "from your likes list."
-        ),
-    )
-
-
-def _make_dislikes_centroid_spec(
-    qdrant: Any, index_db: Any,
-) -> DynamicCentroidSpec:
-    """Build the registration spec for the dislikes dynamic centroid.
-
-    Round‑29: mirror of `_make_likes_centroid_spec` so the
-    Search button on the Dislikes album card has a real centroid
-    to query. Without this, /api/centroids/dislikes/search 404s.
-
-    The compute path is identical to favourites (mean of member
-    vectors, L2-normalised) — only the source table differs.
-    """
-    import numpy as np
-
-    def compute() -> tuple[list[float], int, list[str]] | None:
-        dislike_ids = index_db.list_dislike_ids()
-        if not dislike_ids:
-            return None
-        pairs = qdrant.retrieve_batch_with_vectors(dislike_ids)
-        if not pairs:
-            return None
-        vectors = np.asarray(
-            [v for _, v in pairs if v], dtype=np.float32,
-        )
-        if vectors.size == 0:
-            return None
-        centroid = vectors.mean(axis=0)
-        norm = float(np.linalg.norm(centroid))
-        if norm == 0:
-            return None
-        centroid = (centroid / norm).tolist()
-        seed_ids = [pid for pid, _ in pairs]
-        return (centroid, len(seed_ids), seed_ids)
-
-    return DynamicCentroidSpec(
-        name="dislikes",
-        label="Dislikes",
-        description=(
-            "Mean of every disliked photo's embedding, "
-            "re-normalised to unit length. Updates as you dislike."
-        ),
-        compute_fn=compute,
-        source="dislikes",
-        empty_message=(
-            "Dislike a few photos first — this centroid is built "
-            "from your dislikes list."
         ),
     )
 
@@ -418,17 +368,6 @@ def _invalidate_likes_centroid() -> None:
         _dynamic_centroids.invalidate("favourites")
 
 
-def _invalidate_dislikes_centroid() -> None:
-    """Drop the cached dislikes centroid so the next read recomputes.
-
-    Round‑29: mirror of `_invalidate_likes_centroid`, wired
-    into mark_dislike / unmark_dislike so the centroid stays in
-    sync with the dislikes table.
-    """
-    if _dynamic_centroids is not None:
-        _dynamic_centroids.invalidate("dislikes")
-
-
 # ---------------------- Album centroid helpers ----------------------
 #
 # Each user album auto-registers as a dynamic centroid under the
@@ -441,7 +380,7 @@ def _invalidate_dislikes_centroid() -> None:
 
 def _album_centroid_name(album_id: int) -> str:
     """Centroid registry key for an album. Stable across renames."""
-    return f"album:{album_id}"
+    return album_source(album_id)
 
 
 def _make_album_centroid_spec(
@@ -792,12 +731,6 @@ def create_app(
     # saved searches / shared links that pass `?centroid=favourites`
     # working without forcing everyone to migrate.
     _dynamic_centroids.register(_make_likes_centroid_spec(qdrant, index_db))
-    # Round‑29: register the dislikes centroid so the Search
-    # button on the Dislikes album card has a real centroid to
-    # query. New dislikes / undislikes invalidate it via
-    # `_invalidate_dislikes_centroid` (wired into the dislikes
-    # router below).
-    _dynamic_centroids.register(_make_dislikes_centroid_spec(qdrant, index_db))
     # Register every existing album as a centroid. New albums
     # register themselves via POST /api/albums → _register_album_centroid;
     # renames via PATCH /api/albums/{id}; deletes via
@@ -1018,6 +951,22 @@ def create_app(
         redirect_slashes=False,
     )
 
+    # A disposable E2E instance announces itself with this header. The
+    # frontend's destructive tests (the ones that clear all favourites
+    # and all user albums to assert on an empty state) refuse to run
+    # against a backend that does not carry it, and against one whose
+    # data volume says "real library". Without this marker the
+    # destructive tests deleted all 21 of Isaac's production albums on
+    # 2026-11-09.
+    @app.middleware("http")
+    async def _mark_disposable_e2e_backend(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        response = await call_next(request)
+        if os.environ.get("LUSTRE_E2E_MODE") == "1":
+            response.headers["x-lustre-e2e-mode"] = "1"
+        return response
+
     app.state.index_db = index_db
     app.state.random_picker = random_picker
     app.state.diversity_cache = diversity_cache
@@ -1046,7 +995,6 @@ def create_app(
     from search.routers.dislikes import build_dislikes_router
     from search.routers.explore import build_explore_router
     from search.routers.favorites import build_favorites_router
-    from search.routers.for_you import build_for_you_router
     from search.routers.random import build_random_router
     from search.routers.saved_searches import build_saved_searches_router
     from search.routers.search import build_search_router
@@ -1061,28 +1009,15 @@ def create_app(
         index_db=index_db,
     ))
     app.include_router(build_random_router(index_db=index_db, cfg=_cfg))
-    app.include_router(build_for_you_router(
-        index_db=index_db,
-        qdrant=qdrant,
-        cfg=_cfg,
-    ))
-    app.include_router(build_for_you_router(
-        index_db=index_db,
-        qdrant=qdrant,
-        cfg=_cfg,
-    ))
     app.include_router(build_favorites_router(
         index_db=index_db,
         cfg=_cfg,
         invalidate_likes_centroid=_invalidate_likes_centroid,
-        invalidate_for_you=_for_you_invalidate_deck,
     ))
     app.include_router(build_dislikes_router(
         index_db=index_db,
         cfg=_cfg,
         invalidate_likes_centroid=_invalidate_likes_centroid,
-        invalidate_dislikes_centroid=_invalidate_dislikes_centroid,  # round‑29
-        invalidate_for_you=_for_you_invalidate_deck,
     ))
     app.include_router(build_albums_router(
         index_db=index_db,
@@ -1096,6 +1031,7 @@ def create_app(
         qdrant=qdrant,
         cfg=_cfg,
         invalidate_album_centroid=_invalidate_album_centroid,
+        invalidate_favourites_centroid=_invalidate_likes_centroid,
     ))
     app.include_router(build_centroids_reload_router(
         centroid_store=_centroid_store,

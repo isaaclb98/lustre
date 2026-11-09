@@ -276,9 +276,9 @@ def test_api_centroids_includes_dynamic_favourites(fav_app):
         None,
     )
     assert fav is not None
-    # Round‑29: label kept as "Favourites (legacy alias)" for back-compat
-    # with older clients that matched on the exact string.
-    assert fav["label"] == "Favourites (legacy alias)"
+    # The built-in album is named Favourites, so this is the primary
+    # centroid key and carries the plain label.
+    assert fav["label"] == "Favourites"
     assert fav["source"] == "favourites"
     assert fav["n_images"] is None
 

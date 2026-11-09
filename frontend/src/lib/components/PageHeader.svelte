@@ -1,19 +1,19 @@
 <script lang="ts">
   /**
    * PageHeader — the standard title bar used on the result-grid
-   * pages (/random, /for-you, /similar, /albums, /albums/likes,
-   * /albums/dislikes, /albums/[id]).
+   * pages (/random, /similar, /albums, /albums/favourites,
+   * /albums/favourites, /albums/[id]).
    *
    * Single source of truth for the page-header pattern. Every
    * page passes a subtitle — title-only headers render ~23px
    * shorter and break the card rhythm across pages. Variants:
-   *   - title + subtitle    — random, for-you, similar, home, settings
+   *   - title + subtitle    — random, similar, home, settings
    *   - title + actions     — albums (+ New album button)
-   *   - title + meta        — albums/likes, albums/dislikes ("N photos")
+   *   - title + meta        — albums/favourites ("N photos")
    *   - title + all of the above — albums/[id] (zip download)
    *
    * Title can be a plain string OR a snippet (for cases that need
-   * an inline icon, like the heart on /albums/likes).
+   * an inline icon, like the heart on /albums/favourites).
    *
    * Layout: title block on the left (h1 + optional subtitle/meta),
    * actions slot on the right. When actions is empty, the title

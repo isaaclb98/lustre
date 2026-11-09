@@ -100,13 +100,6 @@ test.describe('Deep linking', () => {
     await expect(page.getByRole('heading', { name: /random/i })).toBeVisible();
   });
 
-  test('GET /for-you renders the for-you page', async ({ page }) => {
-    const resp = await page.goto('http://127.0.0.1:8000/for-you');
-    expect(resp?.status()).toBe(200);
-    await appReady(page);
-    await expect(page.getByRole('heading', { name: /for you/i })).toBeVisible();
-  });
-
   test('GET /albums renders the albums page', async ({ page }) => {
     const resp = await page.goto('http://127.0.0.1:8000/albums');
     expect(resp?.status()).toBe(200);
@@ -187,7 +180,7 @@ test.describe('Page transitions', () => {
     await appReady(page);
 
     // Navigate to a few pages
-    const pages = ['/search', '/random', '/for-you', '/albums'];
+    const pages = ['/search', '/random', '/albums'];
     for (const path of pages) {
       await page.goto(`http://127.0.0.1:8000${path}`);
       await appReady(page);
@@ -203,16 +196,15 @@ test.describe('Page transitions', () => {
     // dev port (:18000) — the old hardcoded :8000 worked when tests
     // ran against prod but the project now uses a dev stack.
     const base = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:18000';
-    const paths = ['/', '/random', '/for-you', '/albums'];
+    const paths = ['/', '/random', '/albums'];
     for (const path of paths) {
       await page.goto(`${base}${path}`);
       await appReady(page);
       // Same nav links should be present on every page. Current
-      // topbar has Home, Random, For You, Albums, Settings (the
-      // old 'Search' tab no longer exists; / IS search).
+      // topbar has Home, Random, Albums, Settings (the old
+      // 'Search' tab no longer exists; / IS search).
       await expect(page.getByRole('navigation').getByRole('link', { name: 'Home' })).toBeVisible();
       await expect(page.getByRole('navigation').getByRole('link', { name: 'Random' })).toBeVisible();
-      await expect(page.getByRole('navigation').getByRole('link', { name: 'For You' })).toBeVisible();
     }
   });
 });
