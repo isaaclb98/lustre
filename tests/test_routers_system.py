@@ -8,7 +8,7 @@ shapes. The router must be importable and testable without the full
 `create_app()` machinery.
 
 When the rest of §B2 lands (search, favorites, albums,
-photos, saved-searches, centroids, for-you), this test
+photos, saved-searches, centroids), this test
 file is the template: one module per group, one test file per group.
 """
 

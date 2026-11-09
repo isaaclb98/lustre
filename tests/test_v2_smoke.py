@@ -174,13 +174,6 @@ def test_album_detail_returns_members(client):
     assert isinstance(body["members"], list)
 
 
-# ---------- for-you ----------
-#
-# /api/for-you/state and /api/for-you/reset were removed in the
-# round-72 refactor (cd3a76b "merge Shuffled For You into For You,
-# drop old pipeline"). The remaining /api/for-you/feed is covered
-# by tests/test_for_you_route.py and the contract tests.
-
 # ---------- photo bytes ----------
 
 def test_photo_raw_serves_bytes(client):

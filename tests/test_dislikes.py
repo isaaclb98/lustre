@@ -112,7 +112,7 @@ def test_dislike_validation_errors(app_with_qdrant):
 
 # /api/for-you/state was removed in the round-72 refactor (cd3a76b
 # "merge Shuffled For You into For You, drop old pipeline"). The
-# dislike-reflected-in-for-you state check below no longer has a
+# dislike-reflected-in-feed state check below no longer has a
 # state endpoint to query; the user-visible behaviour — that
-# disliked photos don't appear in /api/for-you/feed — is exercised
-# in tests/test_for_you_route.py.
+# disliked photos don't appear in the Explore feed — is exercised
+# in tests/test_explore_api.py.

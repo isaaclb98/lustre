@@ -52,7 +52,6 @@ def _build(fake_index_db, fake_cfg, invalidate):
         index_db=fake_index_db,
         cfg=fake_cfg,
         invalidate_likes_centroid=invalidate,
-        invalidate_for_you=invalidate,
     )
     app = FastAPI()
     app.include_router(router)
@@ -66,7 +65,7 @@ def test_mark_dislike_calls_db_and_invalidates(fake_index_db, fake_cfg, invalida
     assert resp.status_code == 204
     fake_index_db.mark_dislike.assert_called_once_with("abc", "search")
     fake_index_db.record_feedback.assert_called_once_with("abc", "dislike", "search")
-    assert invalidate.call_count == 2
+    assert invalidate.call_count == 1
 
 
 def test_mark_dislike_defaults_source_to_manual(fake_index_db, fake_cfg, invalidate):
@@ -83,7 +82,7 @@ def test_unmark_dislike_calls_db_and_invalidates(fake_index_db, fake_cfg, invali
         resp = client.delete("/api/dislikes/abc")
     assert resp.status_code == 204
     fake_index_db.unmark_dislike.assert_called_once_with("abc")
-    assert invalidate.call_count == 2
+    assert invalidate.call_count == 1
 
 
 def test_list_dislikes_default_shape(fake_index_db, fake_cfg, invalidate):
