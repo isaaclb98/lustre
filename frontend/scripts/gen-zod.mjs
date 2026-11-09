@@ -178,7 +178,7 @@ const IndexerStatus = z.object({
 // ---- count shapes (Phase 2) ----
 // /api/favorites (without as_results=1) and /api/dislikes each
 // return a list envelope with a total/count field. Used by the
-// Albums page header to display Likes / Dislikes counts.
+// Albums page header to display Favourites counts.
 const FavoritesList = z.object({
   favorites: z.array(z.object({
     id: z.string(),

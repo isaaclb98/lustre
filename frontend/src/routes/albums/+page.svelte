@@ -9,9 +9,9 @@
    * photos the user has told the system to stop showing them.
    *
    * Round‑29: every card has a "Search" button that navigates to
-   * the home page with ?centroid=album:{id} (or ?centroid=likes
-   * for the built-in). The home page renders results inline using
-   * that album's centroid.
+   * the home page with ?centroid=album:{id} (or
+   * ?centroid=favourites for the built-in). The home page renders
+   * results inline using that album's centroid.
    *
    * The built-in album is named Favourites; its centroid key
    * stays `likes` on the backend, with `favourites` as a
@@ -217,7 +217,7 @@
       <span>Favourites</span>
     </a>
     <!-- Round-61: removed the description ("Photos you've liked.
-         Built-in, always here."). The title "Likes" already says
+         Built-in, always here."). The title "Favourites" already says
          what the album is; "Built-in, always here" was filler
          text that pushed the card taller and added 50px of
          whitespace below the cover when the album was empty. -->
