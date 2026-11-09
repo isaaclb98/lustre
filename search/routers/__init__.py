@@ -2,7 +2,7 @@
 
 The 39 routes in `search/app.py` are split into one `APIRouter` per
 resource group: search, favorites, albums, photos, saved-searches,
-centroids, for-you, system. Each router is a factory
+centroids, system. Each router is a factory
 function `build_<group>_router(...)` returning an `APIRouter` ready
 to `app.include_router(...)`.
 

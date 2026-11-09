@@ -288,7 +288,7 @@ class IndexDB:
                 -- Persistent "do not recommend" feedback. Independent
                 -- of the `favorites` table so king can ✕ photos that
                 -- they never liked. Mirrors favorites structurally so
-                -- the for-you ranking service reads them identically.
+                -- the Explore ranking service reads them identically.
                 CREATE TABLE IF NOT EXISTS dislikes (
                   id            TEXT PRIMARY KEY,
                   disliked_at   TEXT NOT NULL,
@@ -301,12 +301,12 @@ class IndexDB:
                 -- Append-only feedback event log. Records every like
                 -- and dislike (including cross-page toggles of an
                 -- existing favourite) with the page that produced it.
-                -- Used by the for-you ranking to (1) compute "trained
+                -- Used by the Explore ranking to (1) compute "trained
                 -- N seconds ago" copy and (2) infer dwell-time style
                 -- signals in a later phase. Source values:
                 --   'grid'     — photo-card ♥ / ✕ on a result grid
                 --   'lightbox' — fullscreen viewer
-                --   'for_you'  — /for-you feed itself
+                --   'for_you'  — reserved for a future feed source
                 --   'detail'   — /photo/{id} page
                 CREATE TABLE IF NOT EXISTS feedback_events (
                   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -619,7 +619,7 @@ class IndexDB:
         uuid5 id) would re-attach them. That re-attach window has a
         cost though — orphan ids poison qdrant.recommend() (a single
         missing id 404s the WHOLE call; see filter_live_ids in
-        search/for_you.py) and orphan album members render as dead
+        the Explore deck) and orphan album members render as dead
         thumbnails.
 
         Called from POST /api/cache/refresh.
@@ -1163,15 +1163,15 @@ class IndexDB:
         """Return every favourite id in the cache, with no JOIN.
 
         Used by the dynamic favourites-centroid compute and the
-        for-you recommend seed: every id the user has favourited,
+        Explore recommend seed: every id the user has favourited,
         including ones whose photo is no longer in the `images`
         table (orphans — kept between purge runs).
 
         Callers that feed these ids to Qdrant must handle orphans
         themselves: `retrieve` silently drops unknown ids, but
         `recommend` 404s the WHOLE call if any positive/negative
-        id is missing. The for-you route filters through
-        `search.for_you.filter_live_ids` for exactly this reason.
+        id is missing. The Explore route filters through
+        `filter_live_ids` for exactly this reason.
         """
         with self._lock:
             rows = self._conn.execute(
@@ -1298,7 +1298,7 @@ class IndexDB:
 
         Idempotent — re-pressing ✕ on an already-disliked photo just
         refreshes the timestamp, which matters because time decay on
-        the for-you feed weights recent feedback more.
+        the Explore feed weights recent feedback more.
         """
         with self._lock:
             self._conn.execute(
@@ -1317,7 +1317,7 @@ class IndexDB:
         self._record_path_from_qdrant(point_id)
 
     def unmark_dislike(self, point_id: str) -> None:
-        """Remove a ✕. Used by undo and by the /for-you Reset button."""
+        """Remove a ✕. Used by undo."""
         with self._lock:
             self._conn.execute(
                 "DELETE FROM dislikes WHERE id = ?",
@@ -1335,7 +1335,7 @@ class IndexDB:
 
     def list_dislike_ids(self) -> list[str]:
         """All dislike ids, including orphans. Same shape as
-        `list_favorite_ids` — consumed symmetrically by the for-you
+        `list_favorite_ids` — consumed symmetrically by the Explore
         ranking service."""
         with self._lock:
             rows = self._conn.execute(
@@ -1362,7 +1362,7 @@ class IndexDB:
 
 
     # ----------------------------------------------------------------
-    # Feedback event log (append-only; power for-you observability)
+    # Feedback event log (append-only; powers the Explore ranking)
     # ----------------------------------------------------------------
     def record_feedback(
         self, photo_id: str, kind: str, source: str
@@ -1386,7 +1386,7 @@ class IndexDB:
 
     def most_recent_feedback(self) -> str | None:
         """ISO timestamp of the latest feedback event, or None. Used by
-        the for-you header chip ("trained 4 min ago")."""
+        the Explore header chip ("trained 4 min ago")."""
         with self._lock:
             row = self._conn.execute(
                 "SELECT at FROM feedback_events ORDER BY at DESC LIMIT 1"
@@ -1413,7 +1413,7 @@ class IndexDB:
 
     def reset_feedback(self) -> None:
         """Wipe all dislikes + feedback events (NOT favourites).
-        Used by the /for-you Reset button. Keeps the favorites table
+        Used by undo. Keeps the favorites table
         intact so a reset still leaves a centroid to recommend from."""
         with self._lock:
             self._conn.execute("DELETE FROM dislikes")

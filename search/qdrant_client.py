@@ -249,7 +249,7 @@ class QdrantSearch:
 
         `positive` and `negative` are lists of point IDs. Must be
         non-empty. Caller is responsible for sampling/deduping the
-        results (e.g. /for-you draws 2 from the top-20 to
+        results (e.g. the Explore deck draws 2 from the top-20 to
         keep the feed from converging to the same top-1 result).
 
         Score is the cosine similarity to the recomputed target
@@ -338,7 +338,7 @@ class QdrantSearch:
         except Exception as e:  # noqa: BLE001
             # Graceful fallback: if the recommend call times out
             # (or any other transient Qdrant error fires), return
-            # an empty result set instead of propagating. /for-you's
+            # an empty result set instead of propagating. The Explore
             # fallback already handles `< 2 unseen candidates` by
             # using a random sample, so returning [] here means the
             # user gets a slightly-less-personalized next round. The
@@ -1039,7 +1039,7 @@ class QdrantSearch:
         """
         Return up to `limit` points sampled uniformly at random
         from the collection. Used as a cold-start sampler for
-        the /random route and for /for-you when no positive/
+        the /random route and for Explore when no positive/
         negative signal exists yet to drive a recommend query.
 
         Implementation:

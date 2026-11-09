@@ -122,7 +122,7 @@
   // Surprise section is rendered there now) so the slider
   // markup and the size-array stay in sync.
   // Phase 1: now imported from $lib/api/limits so the home page,
-  // AdditionalFilters, and the for-you page all read the same
+  // AdditionalFilters all read the same
   // list of legal values. The local POOL_STOPS const is gone.
   let surprisePoolIndex = $state(DEFAULT_POOL_INDEX_HOME);
   let surprisePool = $derived(POOL_STOPS_HOME[surprisePoolIndex]);
@@ -353,7 +353,7 @@
 
   // Phase 3: usePhotoFeedback consolidates the like/unlike
   // mutation pattern that was duplicated across home,
-  // for-you, Lightbox, and the photo page. Home's dislike
+  // Lightbox, and the photo page. Home's dislike
   // remains its own 1-way function (the dislikes page is
   // the only place to un-dislike), so the composable only
   // handles the favourite toggle here.
@@ -470,8 +470,8 @@
   <!-- Round-56: every page's title block now lives in a
        <PageHeader> card for full-app consistency. The home was
        the last holdout — the h1 + .sub were plain centered text
-       while /random, /for-you, /albums, /albums/[id], /albums/likes,
-       /albums/dislikes, /settings, /similar all used PageHeader.
+       while /random, /albums, /albums/[id], /albums/favourites,
+       /albums/favourites, /settings, /similar all used PageHeader.
        Now both default and centroid modes of / use the same chrome
        (glass card, .head padding, --page-header-pad) as every
        other page.
@@ -629,7 +629,7 @@
 <style>
   .hero {
     /* Matches the .head width on the other grid pages (random,
-       for-you, albums, similar, ...). All page-level "sections"
+       albums, similar, ...). All page-level "sections"
        span --grid-width so they line up visually. Round-1 polish:
        dropped horizontal padding (shell owns it via --shell-pad-x),
        trimmed top padding (was 40px → 8px) since the shell already
@@ -643,7 +643,7 @@
     max-width: 1548px;
     margin: 0 auto;
     /* Round-Y: padding-top dropped to 0 — .shell already provides
-       --shell-pad-y (16px) above the page, and random/for-you/
+       --shell-pad-y (16px) above the page, and random/
        albums/similar all rely on that single source (16px gap
        from topbar). The home page was the outlier at 24px
        (16px shell + 8px hero) until this edit. The padding-top
@@ -766,7 +766,7 @@
      Hero's padding-bottom was dropped to 0 in lockstep — together
      they replace the previous padding-bottom:24 + margin-top:16 +
      shell-gap:16 = 56px stack with the single 16px shell gap,
-     matching how random/for-you/albums/similar handle the same
+     matching how random/albums/similar handle the same
      header → grid boundary. */
   .results { margin-top: 0; }
 </style>

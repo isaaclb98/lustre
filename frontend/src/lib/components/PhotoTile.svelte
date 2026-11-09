@@ -22,7 +22,7 @@
   type Props = {
     pointId: string;
     blurhash?: string | null;
-    /** Back-compat alias for `blurhash` — ForYouRow passes the
+    /** Back-compat alias for `blurhash` — some callers pass the
      *  pre-computed blurhash data URL under this name. */
     dataUrl?: string | null;
     scoreStr?: string;

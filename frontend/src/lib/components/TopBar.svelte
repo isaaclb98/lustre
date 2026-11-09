@@ -27,7 +27,6 @@
   const tabs: Tab[] = [
     { href: '/', label: 'Home', reset: true },
     { href: '/random', label: 'Random' },
-    { href: '/for-you', label: 'For you' },
     { href: '/albums', label: 'Albums' },
     { href: '/settings', label: 'Settings' }
   ];
@@ -117,7 +116,7 @@
     padding: 0 var(--shell-pad-x);
     /* Match the page header card width via --grid-width so the
        brand mark and tabs stay vertically aligned with the random
-       / for-you / albums header below. The hardcoded 1600px that
+       / albums header below. The hardcoded 1600px that
        used to live here drifted away from --grid-width at every
        zoom level (bar widened to 2400px at 150%, header only to
        2190px), pulling the nav tabs noticeably rightward of the
@@ -189,7 +188,7 @@
     .brand-text { display: none; }
     .tab {
       padding: 0 10px;
-      /* Prevent "For you" from wrapping to two lines at 375px —
+      /* Prevent a nav label from wrapping to two lines at 375px —
          the tab's natural width at 15px font is wider than the
          tab wants to be when text wraps. */
       white-space: nowrap;

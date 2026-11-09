@@ -17,7 +17,7 @@
    * Surprise: optional. Pass `showSurprise=true` plus the
    * surprise state and setters to render the section. Used on
    * the home page only — other pages don't need it (centroid
-   * search goes through a different route, and for-you has
+   * search goes through a different route, and
    * its own complete UI).
    */
   import CollectionsChips from './CollectionsChips.svelte';
@@ -62,7 +62,7 @@
   }: Props = $props();
 
   // Surprise me pool slider stops. Imported from $lib/api/limits
-  // so the home page, AdditionalFilters, and the for-you page
+  // so the home page and AdditionalFilters
   // all read the same list of legal values.
   // Phase 1: replaced the local POOL_STOPS const with
   // POOL_STOPS_HOME. The rightmost is the upper bound for the
@@ -225,7 +225,7 @@
     padding: var(--s-0) var(--s-3) var(--s-3);
     border-top: 1px solid var(--glass-edge);
   }
-  /* Inline label + control pattern, matching /for-you. The label
+  /* Inline label + control pattern. The label
      sits on the left at a fixed width so "Filename" and "Surprise
      me" align at the same x, and the input/control fills the
      remaining row width via flex: 1. Without this the fields
@@ -241,7 +241,7 @@
   .field .lab {
     color: var(--fg-2);
     font-size: var(--fs-sm);
-    /* Wider than /for-you (96px) because "Filename contains" and
+    /* Wider than the label column (96px) because "Filename contains" and
      "Surprise me" don't fit in 96px without wrapping. The +24px
      keeps all labels on one line while still aligning the
      dropdowns at a consistent x. */

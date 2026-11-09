@@ -2,11 +2,11 @@
   /**
    * PhotoGrid — the single, canonical photo-tile grid.
    *
-   * Round‑27: unified the old SearchGrid + ForYouRow into one
+   * Round‑27: unified the old SearchGrid into one
    * component. Used by every page that lays out photo tiles:
    *   - Home page search results
-   *   - Home page "For you" row (via ForYouRow wrapper)
-   *   - /random, /for-you, /search, /similar/[id], /albums/[id]
+   *   - Home page result rows
+   *   - /random, /search, /similar/[id], /albums/[id]
    *
    *   - Renders tiles via PhotoTile
    *   - Right-click on a tile opens the ImageContextMenu
@@ -34,7 +34,7 @@
 
   // Use the generated SearchResult shape so `url`, `width`,
   // `height`, `is_disliked` etc. stay in lockstep with the
-  // backend. Everything optional because some callers (ForYouRow)
+  // backend. Everything optional because some callers
   // pass a strict subset and that's fine.
   type Item = Partial<SearchResult> & { id: string };
 
@@ -74,7 +74,7 @@
     onPhotoOpen?: (item: Item) => void;
     /**
      * Bindable. When the parent owns the lightbox state (e.g. the
-     * ForYouRow wrapper), bind here so clicks reset the parent's
+     * wrapper), bind here so clicks reset the parent's
      * lightboxIndex instead of an internal one. If unbound, the
      * component manages its own lightboxIndex internally.
      */
@@ -373,7 +373,7 @@
   // effects. They were pushing the first-visible row's blurhash
   // (and the lightbox-active photo's URL) to a global backdrop
   // element on every IntersectionObserver tick, which caused two
-  // visible problems on /random, /for-you, and any grid feed:
+  // visible problems on /random and any grid feed:
   //   - the backdrop colour shifted continuously as the user
   //     scrolled past photos (the anchor row changed, the wash
   //     followed);

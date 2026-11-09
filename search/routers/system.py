@@ -5,7 +5,7 @@ The smallest extractable router group: `/healthz` (the k8s probe)
 and `/api/cache/status` (operator visibility into the dual-store
 sync). This module establishes the pattern for the rest of §B2
 (search, favorites, albums, photos, saved-searches, centroids,
-for-you) which land in follow-up PRs.
+explore) which land in follow-up PRs.
 
 Pattern:
 

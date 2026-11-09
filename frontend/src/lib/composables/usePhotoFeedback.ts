@@ -1,7 +1,7 @@
 /**
  * usePhotoFeedback — consolidate the like/dislike mutation
  * pattern that was duplicated across Lightbox.svelte,
- * routes/+page.svelte, routes/for-you/+page.svelte, and
+ * routes/+page.svelte, routes/albums/favourites/+page.svelte, and
  * routes/photo/[id]/+page.svelte.
  *
  * The shared shape:
