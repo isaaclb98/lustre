@@ -47,7 +47,7 @@ test('score pill paints above loaded thumbnail', async ({ page }) => {
 });
 
 test('fav heart paints above loaded thumbnail', async ({ page }) => {
-  await page.goto(`${APP}/albums/likes`);
+  await page.goto(`${APP}/albums/favourites`);
   const r = await assertChromeAboveLoadedThumb(page, '.fav');
   console.log('fav:', JSON.stringify(r));
   expect(r.imgLoaded).toBeTruthy();

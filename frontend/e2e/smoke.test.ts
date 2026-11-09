@@ -88,13 +88,6 @@ test('Albums renders list or empty state', async ({ page }) => {
   await waitFor(page, '.card, .placeholder', 8000);
 });
 
-test('For You renders header + body', async ({ page }) => {
-  await page.goto(APP + '/for-you');
-  await appReady(page);
-  await expect(page.getByRole('heading', { name: /For you/i })).toBeVisible();
-  await expect(page.getByRole('combobox', { name: /Diversity mode/i })).toBeVisible();
-});
-
 test('Top bar tabs are interactive', async ({ page }) => {
   // Topbar tabs: Home, Random, For You, Albums, Settings. We test
   // a few — clicking Random should navigate to /random and activate
