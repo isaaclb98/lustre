@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { assertDisposable } from './guard';
 
 async function appReady(page: any) {
   // The composer is on every page that has a search bar; the topbar
@@ -162,7 +163,10 @@ test.describe('Lightbox edge cases', () => {
 
 test.describe('Empty states', () => {
   test('For You page when no likes exist shows empty state', async ({ page }) => {
-    // Clear all likes first
+    // Clear all likes first. This deletes EVERY favourite, so it must
+    // only ever run against a disposable backend — assertDisposable
+    // aborts the test otherwise.
+    await assertDisposable(page.request, 'the empty-likes For You test');
     const favs = await page.request.get('/api/favorites').then(r => r.json());
     for (const fav of (favs.favorites ?? [])) {
       await page.request.delete(`/api/favorites/${fav.point_id}`);
@@ -178,7 +182,10 @@ test.describe('Empty states', () => {
   });
 
   test('Albums page when no custom albums exist shows empty state', async ({ page }) => {
-    // Delete all user albums (keep system albums)
+    // Delete all user albums (keep system albums). This deletes EVERY
+    // user album, so it must only ever run against a disposable
+    // backend — assertDisposable aborts the test otherwise.
+    await assertDisposable(page.request, 'the empty-albums Albums test');
     const albums = await page.request.get('/api/albums').then(r => r.json());
     for (const album of (albums.albums ?? [])) {
       if (!['Likes', 'Dislikes'].includes(album.name)) {
