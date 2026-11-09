@@ -7,7 +7,12 @@
   import { onNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
   import { preferences } from '$lib/stores/preferences';
-  import { GRID_SIZE_CONFIG } from '$lib/grid/config';
+  import {
+    GRID_HOVER_ZOOM,
+    GRID_MOTION_EASE,
+    GRID_MOTION_MS,
+    GRID_SIZE_CONFIG
+  } from '$lib/grid/config';
   import { columnsForWidth, widthForColumns } from '$lib/grid/geometry';
 
   let { children } = $props();
@@ -132,6 +137,9 @@
       document.documentElement.style.setProperty('--grid-tile-size', TILE + 'px');
       document.documentElement.style.setProperty('--grid-gutter-size', GAP + 'px');
       document.documentElement.style.setProperty('--grid-row-max-width', ROW_MAX_WIDTH + 'px');
+      document.documentElement.style.setProperty('--grid-hover-zoom', String(GRID_HOVER_ZOOM));
+      document.documentElement.style.setProperty('--grid-motion-ms', GRID_MOTION_MS + 'ms');
+      document.documentElement.style.setProperty('--grid-motion-ease', GRID_MOTION_EASE);
     };
     publishSizeVars();
     const unsub = preferences.subscribe(() => publishSizeVars());
