@@ -54,6 +54,15 @@
     onRemove?: (id: string) => void;
     /** Tooltip / aria-label for the remove button. */
     removeLabel?: string;
+    /**
+     * Vote affordance — the Explore page's per-tile up/down pair.
+     * See PhotoTile's `onVote` for the semantics.
+     */
+    onVote?: (id: string, direction: 'up' | 'down') => void;
+    /** Photo ids that were up-voted — highlights their up chip. */
+    upVoted?: Set<string>;
+    /** Photo ids that were down-voted — highlights their down chip. */
+    downVoted?: Set<string>;
     albums?: { id: number; name: string }[];
     /**
      * Optional override for the default left-click behaviour
@@ -81,6 +90,9 @@
     onDislike,
     onRemove,
     removeLabel,
+    onVote,
+    upVoted,
+    downVoted,
     albums,
     onPhotoOpen,
     lightboxIndex = $bindable<number | null>(null)
@@ -421,6 +433,9 @@
                 onContextMenu={(id, e) => openContextMenu(item, e)}
                 onRemove={onRemove}
                 removeLabel={removeLabel}
+                onVote={onVote}
+                votedUp={upVoted?.has(item.id) ?? false}
+                votedDown={downVoted?.has(item.id) ?? false}
               />
             </div>
           {/each}
