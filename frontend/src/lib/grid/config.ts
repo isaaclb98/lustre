@@ -28,6 +28,18 @@
  * viewport (see grid/geometry.ts) — the row count is the stable
  * part of the promise, and every page holds at least this many
  * rows once aligned to whole rows.
+ *
+ * Gap: 0 for every size. The tiles are a continuous wall of
+ * photos that touch pixel-to-pixel — no gutter between them at
+ * any density. This is the grid's look, not its size, so it does
+ * not vary per preset: the size choice still changes the tile
+ * size and the column count, which is what actually changes the
+ * density.
+ *
+ * Because the gap is 0, the column math in grid/geometry.ts
+ * collapses to floor(width / tile), and a full row is exactly
+ * cols × tile px — the row's max width and the CSS track count
+ * agree with the JS without a correction term.
  */
 export type GridSize = 'large' | 'medium' | 'small';
 
@@ -40,10 +52,51 @@ export interface GridSizeConfig {
 }
 
 export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
-  large: { tile: 240, gap: 14, maxCols: 6, rows: 4 },
-  medium: { tile: 192, gap: 8, maxCols: 8, rows: 4 },
-  small: { tile: 144, gap: 4, maxCols: 10, rows: 4 }
+  large: { tile: 240, gap: 0, maxCols: 6, rows: 4 },
+  medium: { tile: 192, gap: 0, maxCols: 8, rows: 4 },
+  small: { tile: 144, gap: 0, maxCols: 10, rows: 4 }
 };
+
+/**
+ * Corner radius of a tile, in px. 0 = square corners.
+ *
+ * The tile's radius is a grid-look property, not a per-size one:
+ * every density gets the same corners. It lives here so the real
+ * tile and the loading skeleton (which are rendered by two
+ * different components) cannot drift apart.
+ */
+export const GRID_TILE_RADIUS = 0;
+
+/**
+ * The hover zoom: how far the photo inside a tile scales up when
+ * the pointer is over it.
+ *
+ * The zoom is applied to the IMAGE, not the tile. Scaling the
+ * tile would push it over its neighbours in a gapless wall, so
+ * the tile stays put and the photo grows inside the clipped
+ * frame instead.
+ */
+export const GRID_HOVER_ZOOM = 1.04;
+
+/**
+ * Motion timing for the grid's own transitions, in ms.
+ *
+ * The app-wide `--t-fast` / `--ease-out` tokens are referenced
+ * across the codebase but were never defined, so every transition
+ * that names them currently resolves to nothing and the browser
+ * applies the initial `0s` duration — the animations do not run.
+ * The grid carries its own pair rather than depending on tokens
+ * that do not exist, and rather than switching on transitions
+ * across the whole app as a side effect of a grid change.
+ */
+export const GRID_MOTION_MS = 100;
+
+/**
+ * Easing for the grid's transitions. The app's historical
+ * `--ease-out` curve (cubic-bezier(0.16, 0.84, 0.32, 1)), which
+ * is what the pre-redesign tokens used.
+ */
+export const GRID_MOTION_EASE = 'cubic-bezier(0.16, 0.84, 0.32, 1)';
 
 export const DEFAULT_GRID_SIZE: GridSize = 'large';
 

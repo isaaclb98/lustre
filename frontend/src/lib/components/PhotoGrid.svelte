@@ -551,12 +551,12 @@
        a layout bug. Centering reads as deliberate. */
     justify-content: center;
     /* Gap follows the same preference as the tile size — see
-       GRID_SIZE_CONFIG. Larger photos get a larger gap (the
-       Round-38 design intent: 14px reads as 'personal photo
-       library', tighter gaps read as utilitarian). The JS-side
-       GAP constant in this file's <script> matches this value
-       exactly so the virtualizer's rowHeight math is right. */
-    gap: var(--grid-gutter-size, 14px);
+       GRID_SIZE_CONFIG. The tiles are a continuous wall: they
+       touch pixel-to-pixel, with no gutter between them at any
+       density. The JS-side GAP constant in this file's <script>
+       matches this value exactly so the virtualizer's rowHeight
+       math is right. */
+    gap: var(--grid-gutter-size, 0px);
     /* Cap the row at the max-cols width. Without this, on a 2400px
        viewport with the small setting (10 cols × 144 + 9 × 4 =
        1476px), the row would expand to fill the available width
@@ -647,13 +647,16 @@
        justify-content. No additional sizing needed. The
        margin-bottom matches the row gap so the shimmer
        band has the same vertical rhythm as the real grid. */
-    margin-bottom: var(--grid-gutter-size, 14px);
+    margin-bottom: var(--grid-gutter-size, 0px);
     pointer-events: none;
   }
   .skeleton-tile {
     /* Inherits aspect-ratio: 1 from .grid-tile. */
     background: var(--skeleton-base);
-    border-radius: var(--r-md, 8px);
+    /* Matches the real tile's radius — the skeleton and the photo
+       it stands in for must not change shape when the photo
+       arrives, so both read the same published var. */
+    border-radius: var(--grid-tile-radius, 0px);
     overflow: hidden;
     position: relative;
   }

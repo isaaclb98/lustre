@@ -7,7 +7,13 @@
   import { onNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
   import { preferences } from '$lib/stores/preferences';
-  import { GRID_SIZE_CONFIG } from '$lib/grid/config';
+  import {
+    GRID_HOVER_ZOOM,
+    GRID_MOTION_EASE,
+    GRID_MOTION_MS,
+    GRID_SIZE_CONFIG,
+    GRID_TILE_RADIUS
+  } from '$lib/grid/config';
   import { columnsForWidth, widthForColumns } from '$lib/grid/geometry';
 
   let { children } = $props();
@@ -101,7 +107,6 @@
   // matches the JS math — without it, auto-fit would let tracks
   // grow past the cap and the row would fill the viewport.
   const ROW_MAX_WIDTH = $derived(widthForColumns(MAX_COLS, config));
-
   // Compute and publish `--grid-width` on :root so any page
   // element (header bar, filters panel, etc.) can size to match
   // the rendered photo grid. Same math as PhotoGrid uses, but
@@ -120,6 +125,10 @@
   // CSS can read them without needing its own preference
   // subscription. The ResizeObserver re-publishes them on every
   // container-width tick AND on every gridSize change.
+  //
+  // The grid's LOOK vars (radius, hover zoom, motion timing) are
+  // published the same way — from grid/config.ts — so the tile
+  // component and the loading skeleton read the same numbers.
   onMount(() => {
     if (typeof ResizeObserver === 'undefined') return;
     // Publish the size-driven CSS vars on mount and on every
@@ -132,6 +141,10 @@
       document.documentElement.style.setProperty('--grid-tile-size', TILE + 'px');
       document.documentElement.style.setProperty('--grid-gutter-size', GAP + 'px');
       document.documentElement.style.setProperty('--grid-row-max-width', ROW_MAX_WIDTH + 'px');
+      document.documentElement.style.setProperty('--grid-tile-radius', GRID_TILE_RADIUS + 'px');
+      document.documentElement.style.setProperty('--grid-hover-zoom', String(GRID_HOVER_ZOOM));
+      document.documentElement.style.setProperty('--grid-motion-ms', GRID_MOTION_MS + 'ms');
+      document.documentElement.style.setProperty('--grid-motion-ease', GRID_MOTION_EASE);
     };
     publishSizeVars();
     const unsub = preferences.subscribe(() => publishSizeVars());
