@@ -25,6 +25,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from qdrant_client import QdrantClient
+from starlette.middleware.base import RequestResponseEndpoint
 
 from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
 from search import config, text_encoder
@@ -1017,6 +1018,22 @@ def create_app(
         # Don't redirect /photo/{id} to /photo/{id}/ (trailing slash).
         redirect_slashes=False,
     )
+
+    # A disposable E2E instance announces itself with this header. The
+    # frontend's destructive tests (the ones that clear all favourites
+    # and all user albums to assert on an empty state) refuse to run
+    # against a backend that does not carry it, and against one whose
+    # data volume says "real library". Without this marker the
+    # destructive tests deleted all 21 of Isaac's production albums on
+    # 2026-11-09.
+    @app.middleware("http")
+    async def _mark_disposable_e2e_backend(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        response = await call_next(request)
+        if os.environ.get("LUSTRE_E2E_MODE") == "1":
+            response.headers["x-lustre-e2e-mode"] = "1"
+        return response
 
     app.state.index_db = index_db
     app.state.random_picker = random_picker
