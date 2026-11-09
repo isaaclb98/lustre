@@ -302,13 +302,17 @@
        which was tuned for dark surfaces). --shadow-1 is the
        standard tile resting shadow. */
     box-shadow: var(--shadow-1);
-    transition: transform var(--t-fast) var(--ease-out),
-                border-color var(--t-fast) var(--ease-out),
-                box-shadow var(--t-fast) var(--ease-out),
-                opacity var(--t-fast) var(--ease-out);
+    transition: border-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+                box-shadow var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+                opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
+  /* The tile does NOT move on hover. It used to jump up by 3px, but
+     a tile that shifts leaves a gap under itself and overlaps the
+     row above — in a grid of photos that reads as a stutter, not a
+     response. The photo inside grows instead (see `.ph, .full`),
+     which is a change the eye reads as "this photo is closer"
+     without anything on the page moving. */
   .tile:hover {
-    transform: translateY(-3px);
     border-color: var(--glass-edge-strong);
     box-shadow: var(--shadow-3);
   }
@@ -360,7 +364,19 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transition: opacity var(--t-med) var(--ease-out);
+    transition: opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+                transform var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
+    /* The photo grows inside the tile on hover rather than the
+       tile growing. Scaling the TILE would push it over its
+       neighbours and break the grid's rhythm; scaling the photo
+       inside the clipped frame gives the same "leaning in" read
+       with nothing on the page shifting. */
+    transform: scale(1);
+    transform-origin: center;
+  }
+  .tile:hover .ph,
+  .tile:hover .full {
+    transform: scale(var(--grid-hover-zoom, 1.04));
   }
   .ph {
     z-index: 0;
@@ -398,7 +414,7 @@
     -webkit-backdrop-filter: var(--pill-blur);
     opacity: 0;
     z-index: 2;
-    transition: opacity var(--t-fast) var(--ease-out);
+    transition: opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
   .tile:hover .score,
   .tile.menu-open .score { opacity: 1; }
@@ -481,10 +497,10 @@
     opacity: 0;
     z-index: 2;
     transition:
-      opacity var(--t-fast) var(--ease-out),
-      background var(--t-fast) var(--ease-out),
-      border-color var(--t-fast) var(--ease-out),
-      transform var(--t-fast) var(--ease-out);
+      opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      background var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      border-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      transform var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
   .tile:hover .remove-btn,
   .tile:focus-within .remove-btn,
@@ -526,10 +542,10 @@
     box-shadow: var(--shadow-glass);
     opacity: 0;
     transition:
-      opacity var(--t-fast) var(--ease-out),
-      background var(--t-fast) var(--ease-out),
-      border-color var(--t-fast) var(--ease-out),
-      transform var(--t-fast) var(--ease-out);
+      opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      background var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      border-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      transform var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
   .tile:hover .vote-btn,
   .tile:focus-within .vote-btn,
