@@ -63,6 +63,11 @@
     upVoted?: Set<string>;
     /** Photo ids that were down-voted — highlights their down chip. */
     downVoted?: Set<string>;
+    /**
+     * Label on the up-vote chip. Forwarded to PhotoTile; defaults
+     * to "Add to album".
+     */
+    voteUpLabel?: string;
     albums?: { id: number; name: string }[];
     /**
      * Optional override for the default left-click behaviour
@@ -93,6 +98,7 @@
     onVote,
     upVoted,
     downVoted,
+    voteUpLabel,
     albums,
     onPhotoOpen,
     lightboxIndex = $bindable<number | null>(null)
@@ -436,6 +442,7 @@
                 onVote={onVote}
                 votedUp={upVoted?.has(item.id) ?? false}
                 votedDown={downVoted?.has(item.id) ?? false}
+                voteUpLabel={voteUpLabel}
               />
             </div>
           {/each}

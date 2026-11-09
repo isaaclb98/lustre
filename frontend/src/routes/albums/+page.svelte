@@ -244,6 +244,15 @@
         disabled={likesCount === 0}
         aria-label="Search by Favourites centroid"
       >Search</Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="search-btn"
+        href={resolve('/explore/favourites')}
+        disabled={likesCount === 0}
+        aria-label="Explore Favourites"
+        title="Vote down the photos that don't match and the next round leans away from them"
+      >Explore</Button>
     </div>
   </article>
   {#if loading}

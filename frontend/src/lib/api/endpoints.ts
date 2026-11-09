@@ -355,7 +355,29 @@ export interface ExploreRoundParams {
 }
 
 /**
- * Fetch a page of the current Explore round for an album.
+ * The source an Explore round runs against.
+ *
+ * `album:{id}` is a user album; `favourites` is the built-in album,
+ * whose members are the favourited photos. Same vocabulary the
+ * centroid registry uses, so one string means the same thing in both
+ * places.
+ */
+export type ExploreSource = string;
+
+/**
+ * Build the source key for a user album.
+ */
+export function albumExploreSource(albumId: number): ExploreSource {
+  return `album:${albumId}`;
+}
+
+/**
+ * The source key for the built-in Favourites album.
+ */
+export const FAVOURITES_EXPLORE_SOURCE: ExploreSource = 'favourites';
+
+/**
+ * Fetch a page of the current Explore round for a source.
  *
  * The server materialises the round once and slices it — the client
  * pages through the cached list rather than re-querying Qdrant,
@@ -363,7 +385,7 @@ export interface ExploreRoundParams {
  * the page boundaries.
  */
 export function exploreRound(
-  albumId: number,
+  source: ExploreSource,
   params: ExploreRoundParams = {},
   signal?: AbortSignal
 ) {
@@ -373,7 +395,7 @@ export function exploreRound(
   if (params.offset !== undefined) search.set('offset', String(params.offset));
   if (params.session !== undefined) search.set('session', params.session);
   return apiGet<SearchResponse>(
-    `/api/explore/album/${albumId}/round?${search.toString()}`,
+    `/api/explore/${encodeURIComponent(source)}/round?${search.toString()}`,
     { signal: sig, schema: Z.SearchResponse, schemaName: 'SearchResponse (explore)' }
   );
 }
@@ -381,19 +403,22 @@ export function exploreRound(
 /**
  * Record an Explore vote.
  *
- * `up` adds the photo to the album — it becomes a positive for every
- * later round. `down` adds the photo to the session's negative set;
- * it is temporary and never reaches the permanent dislikes table.
+ * `up` adds the photo to the source — it becomes a positive for every
+ * later round. On the built-in Favourites album that means marking
+ * the photo as a favourite, because that album's membership IS the
+ * favourites table. `down` adds the photo to the session's negative
+ * set; it is temporary and never reaches the permanent dislikes
+ * table.
  */
 export async function exploreVote(
-  albumId: number,
+  source: ExploreSource,
   session: string | undefined,
   photoId: string,
   vote: 'up' | 'down'
 ) {
   const search = new URLSearchParams();
   if (session !== undefined) search.set('session', session);
-  await apiPost(`/api/explore/album/${albumId}/vote?${search.toString()}`, {
+  await apiPost(`/api/explore/${encodeURIComponent(source)}/vote?${search.toString()}`, {
     photo_id: photoId,
     vote
   });

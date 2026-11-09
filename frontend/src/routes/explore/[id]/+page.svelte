@@ -16,6 +16,12 @@
    * - UP is permanent. The photo joins the album, which makes it a
    *   positive for every later round and every later session.
    *
+   * The route parameter is the album id, or the literal "favourites"
+   * for the built-in album. The built-in album is not a row in the
+   * albums table — its members are the favourited photos — so it
+   * needs its own source key, and its up-vote means "favourite this"
+   * rather than "add to the album".
+   *
    * The server materialises a round once and slices it; the client
    * pages through the cached list rather than re-querying Qdrant,
    * because offset-paging a recommend query returns duplicate rows at
@@ -25,7 +31,13 @@
   import { page } from '$app/stores';
   import { resolve } from '$app/paths';
   import { SvelteSet } from 'svelte/reactivity';
-  import { exploreRound, exploreVote, getAlbum } from '$lib/api/endpoints';
+  import {
+    FAVOURITES_EXPLORE_SOURCE,
+    albumExploreSource,
+    exploreRound,
+    exploreVote,
+    getAlbum
+  } from '$lib/api/endpoints';
   import { preferences } from '$lib/stores/preferences';
   import { currentPageSize } from '$lib/grid/geometry';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
@@ -42,7 +54,17 @@
     is_disliked?: boolean;
   };
 
-  const albumId = $derived(Number($page.params.id));
+  // The route param is an album id, or "favourites" for the built-in
+  // album. `albumId` is null for the built-in one, which has no row
+  // in the albums table.
+  const isFavourites = $derived($page.params.id === 'favourites');
+  const albumId = $derived(isFavourites ? null : Number($page.params.id));
+  // The source key the backend keys the round and its votes by.
+  const source = $derived(
+    isFavourites
+      ? FAVOURITES_EXPLORE_SOURCE
+      : albumExploreSource(Number($page.params.id))
+  );
 
   let items = $state<Item[]>([]);
   let loading = $state(false);
@@ -68,8 +90,12 @@
   }
 
   async function loadAlbumName() {
+    if (isFavourites) {
+      albumName = 'Favourites';
+      return;
+    }
     try {
-      const detail = (await getAlbum(albumId)) as { name?: string };
+      const detail = (await getAlbum(albumId as number)) as { name?: string };
       albumName = detail?.name ?? '';
     } catch {
       /* non-fatal — the header falls back to the generic title */
@@ -81,7 +107,7 @@
     try {
       const limit = pageLimit();
       const res = await exploreRound(
-        albumId,
+        source,
         {
           limit,
           offset,
@@ -142,7 +168,7 @@
       upVoted.delete(id);
     }
     try {
-      await exploreVote(albumId, sessionId ?? undefined, id, direction);
+      await exploreVote(source, sessionId ?? undefined, id, direction);
       // Rebuild the round with the new signal.
       items = [];
       nextOffset = 0;
@@ -172,7 +198,9 @@
 
 <PageHeader
   title={albumName ? `Explore ${albumName}` : 'Explore'}
-  subtitle="Vote down the photos that don't match, and the next round leans away from them. Voting up adds a photo to the album."
+  subtitle={isFavourites
+    ? "Vote down the photos that don't match, and the next round leans away from them. Voting up favourites the photo."
+    : "Vote down the photos that don't match, and the next round leans away from them. Voting up adds a photo to the album."}
 />
 
 <div class="actions">
@@ -207,9 +235,14 @@
     onVote={onVote}
     {upVoted}
     {downVoted}
+    voteUpLabel={isFavourites ? 'Favourite this photo' : 'Add to album'}
   />
 {:else if !loading && !errorMsg}
-  <div class="error-msg">This album has no photos to explore yet.</div>
+  <div class="error-msg">
+    {isFavourites
+      ? 'No favourites to explore yet — like a photo and come back.'
+      : 'This album has no photos to explore yet.'}
+  </div>
 {/if}
 
 <style>

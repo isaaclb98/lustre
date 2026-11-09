@@ -1839,7 +1839,7 @@
     "/api/cache/refresh": {
       "get": {
         "description": "Purge user-state rows whose photo Qdrant no longer holds.\n\nThere is no derived cache to refresh any more. The photo\ncorpus, its metadata, and the native text index all live in\nQdrant; SQLite holds only the user's own state \u2014 favourites,\ndislikes, albums, memberships, saved searches, feedback.\n\nWhat this endpoint still does is the one thing that needed a\ntrigger: dropping user-state rows that point at photos the\nindexer has pruned. The purge checks liveness against\nQdrant, so a favourite is only dropped when the COLLECTION\nsays the photo is gone \u2014 never because a local mirror was\nstale.\n\nThe `full` parameter is accepted and ignored, so an old\ncaller does not break.",
-        "operationId": "api_cache_refresh_api_cache_refresh_get",
+        "operationId": "api_cache_refresh_api_cache_refresh_post_1",
         "parameters": [
           {
             "description": "Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant.",
@@ -1878,7 +1878,7 @@
       },
       "post": {
         "description": "Purge user-state rows whose photo Qdrant no longer holds.\n\nThere is no derived cache to refresh any more. The photo\ncorpus, its metadata, and the native text index all live in\nQdrant; SQLite holds only the user's own state \u2014 favourites,\ndislikes, albums, memberships, saved searches, feedback.\n\nWhat this endpoint still does is the one thing that needed a\ntrigger: dropping user-state rows that point at photos the\nindexer has pruned. The purge checks liveness against\nQdrant, so a favourite is only dropped when the COLLECTION\nsays the photo is gone \u2014 never because a local mirror was\nstale.\n\nThe `full` parameter is accepted and ignored, so an old\ncaller does not break.",
-        "operationId": "api_cache_refresh_api_cache_refresh_get_1",
+        "operationId": "api_cache_refresh_api_cache_refresh_post",
         "parameters": [
           {
             "description": "Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant.",
@@ -2345,18 +2345,18 @@
         "summary": "Mark Dislike"
       }
     },
-    "/api/explore/album/{album_id}/round": {
+    "/api/explore/{source}/round": {
       "get": {
-        "description": "Serve a page of the current Explore round for an album.",
-        "operationId": "explore_round_api_explore_album__album_id__round_get",
+        "description": "Serve a page of the current Explore round for a source.",
+        "operationId": "explore_round_api_explore__source__round_get",
         "parameters": [
           {
             "in": "path",
-            "name": "album_id",
+            "name": "source",
             "required": true,
             "schema": {
-              "title": "Album Id",
-              "type": "integer"
+              "title": "Source",
+              "type": "string"
             }
           },
           {
@@ -2430,18 +2430,18 @@
         "summary": "Explore Round"
       }
     },
-    "/api/explore/album/{album_id}/vote": {
+    "/api/explore/{source}/vote": {
       "post": {
         "description": "Record an up-vote or a down-vote for the current session.\n\nBody: `{\"photo_id\": \"...\", \"vote\": \"up\" | \"down\"}`.\n\nA down-vote is session-scoped: it joins the negative set and\ninvalidates the round, so the next request re-queries Qdrant\nwith the new negative. An up-vote is permanent: the photo\njoins the album, making it a positive for every later round\nand every later session.",
-        "operationId": "explore_vote_api_explore_album__album_id__vote_post",
+        "operationId": "explore_vote_api_explore__source__vote_post",
         "parameters": [
           {
             "in": "path",
-            "name": "album_id",
+            "name": "source",
             "required": true,
             "schema": {
-              "title": "Album Id",
-              "type": "integer"
+              "title": "Source",
+              "type": "string"
             }
           },
           {

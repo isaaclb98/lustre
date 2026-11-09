@@ -293,7 +293,7 @@ export interface paths {
          *     The `full` parameter is accepted and ignored, so an old
          *     caller does not break.
          */
-        get: operations["api_cache_refresh_api_cache_refresh_get"];
+        get: operations["api_cache_refresh_api_cache_refresh_post_1"];
         put?: never;
         /**
          * Api Cache Refresh
@@ -314,7 +314,7 @@ export interface paths {
          *     The `full` parameter is accepted and ignored, so an old
          *     caller does not break.
          */
-        post: operations["api_cache_refresh_api_cache_refresh_get_1"];
+        post: operations["api_cache_refresh_api_cache_refresh_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -465,7 +465,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/explore/album/{album_id}/round": {
+    "/api/explore/{source}/round": {
         parameters: {
             query?: never;
             header?: never;
@@ -474,9 +474,9 @@ export interface paths {
         };
         /**
          * Explore Round
-         * @description Serve a page of the current Explore round for an album.
+         * @description Serve a page of the current Explore round for a source.
          */
-        get: operations["explore_round_api_explore_album__album_id__round_get"];
+        get: operations["explore_round_api_explore__source__round_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -485,7 +485,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/explore/album/{album_id}/vote": {
+    "/api/explore/{source}/vote": {
         parameters: {
             query?: never;
             header?: never;
@@ -506,7 +506,7 @@ export interface paths {
          *     joins the album, making it a positive for every later round
          *     and every later session.
          */
-        post: operations["explore_vote_api_explore_album__album_id__vote_post"];
+        post: operations["explore_vote_api_explore__source__vote_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1887,7 +1887,7 @@ export interface operations {
             };
         };
     };
-    api_cache_refresh_api_cache_refresh_get: {
+    api_cache_refresh_api_cache_refresh_post_1: {
         parameters: {
             query?: {
                 /** @description Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant. */
@@ -1919,7 +1919,7 @@ export interface operations {
             };
         };
     };
-    api_cache_refresh_api_cache_refresh_get_1: {
+    api_cache_refresh_api_cache_refresh_post: {
         parameters: {
             query?: {
                 /** @description Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant. */
@@ -2185,7 +2185,7 @@ export interface operations {
             };
         };
     };
-    explore_round_api_explore_album__album_id__round_get: {
+    explore_round_api_explore__source__round_get: {
         parameters: {
             query?: {
                 /** @description Session id from a previous round response. Pass it back to keep the same down-vote set. A new session (or no session) starts a fresh round. */
@@ -2197,7 +2197,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                album_id: number;
+                source: string;
             };
             cookie?: never;
         };
@@ -2223,7 +2223,7 @@ export interface operations {
             };
         };
     };
-    explore_vote_api_explore_album__album_id__vote_post: {
+    explore_vote_api_explore__source__vote_post: {
         parameters: {
             query?: {
                 /** @description session id from a previous round response */
@@ -2231,7 +2231,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                album_id: number;
+                source: string;
             };
             cookie?: never;
         };

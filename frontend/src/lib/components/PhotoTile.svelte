@@ -76,6 +76,13 @@
     votedUp?: boolean;
     /** This photo was down-voted — highlights the down chip. */
     votedDown?: boolean;
+    /**
+     * Label on the up-vote chip. The default is "Add to album",
+     * which is what an up-vote does on a user album; the built-in
+     * Favourites album passes "Favourite this photo" because there
+     * the up-vote marks the photo as a favourite.
+     */
+    voteUpLabel?: string;
   };
   let {
     pointId,
@@ -92,7 +99,8 @@
     removeLabel = 'Remove',
     onVote,
     votedUp = false,
-    votedDown = false
+    votedDown = false,
+    voteUpLabel = 'Add to album'
   }: Props = $props();
 
   // Pre-computed data URL takes priority (caller already decoded
@@ -250,8 +258,8 @@
         class="vote-btn vote-up"
         class:voted={votedUp}
         data-no-open
-        title="Add to album"
-        aria-label="Add to album"
+        title={voteUpLabel}
+        aria-label={voteUpLabel}
         aria-pressed={votedUp}
         onclick={(e) => {
           e.preventDefault();
