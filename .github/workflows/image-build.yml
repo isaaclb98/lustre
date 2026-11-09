@@ -208,9 +208,9 @@ jobs:
           echo "Multi-arch index created at ${IMAGE}:latest (refs amd64 + arm64)"
           echo "Multi-arch index also tagged ${IMAGE}:sha-${SHORT_SHA}"
 
-      # ---------------------------------------------------------------------
+      # -----------------------------------------------------------------------
       # Prune old :sha-* tags after a successful push
-      # ---------------------------------------------------------------------
+      # -----------------------------------------------------------------------
       # The GHCR free tier gives 0.5 GB of container storage. Without
       # pruning, every successful push accumulates a new :sha-<7>
       # tag and the package runs out of space in a few weeks of
@@ -328,16 +328,29 @@ jobs:
       # When a per-arch build pushes :latest-amd64 (or :latest-arm64),
       # the previous manifest for that tag becomes untagged but is NOT
       # garbage-collected by the registry. Without this step every
-      # GHA run leaves an orphaned manifest behind; over a few weeks
-      # that piles up to ~90 versions and consumes the GHCR free-tier
-      # 0.5 GB quota.
+      # GHA run leaves an orphaned manifest behind.
       #
-      # Strategy: keep the N most recent untagged versions (defensive
-      # buffer in case a rollback path needs an in-flight per-arch
-      # image). N defaults to 2 (one per arch) — see KEEP_UNTAGGED.
+      # Which untagged manifests are actually orphans?
       #
-      # Reuses the same /versions endpoint, filtered to entries with
-      # empty tags, then deletes everything older than the Nth newest.
+      # The per-arch manifest of build N is referenced TWICE: by its own
+      # :latest-<arch> tag, and as a CHILD of build N's :sha-<n> index.
+      # The :sha-<n> index is what makes the build rollback-able — but
+      # only while its children still exist. An index whose children were
+      # deleted is a DANGLING index: the index manifest still resolves
+      # HTTP 200, but `docker pull` of it fails with "manifest unknown"
+      # because the per-arch manifest 404s.
+      #
+      # So an untagged manifest is NOT a zombie when a retained :sha-*
+      # index still points at it. Deleting one silently destroys that
+      # rollback path while leaving a plausible-looking :sha-* tag behind.
+      # Measured 2026-11-09: 3 of the 5 retained :sha-* tags were dead
+      # exactly this way, and the next build would have killed the last
+      # live one.
+      #
+      # Strategy: resolve the children of every retained index (:latest
+      # and each :sha-*), protect those digests, and delete only the
+      # untagged versions nothing points at. The :sha-* prune above has
+      # already run, so the retained set is exactly what it kept.
       - name: Prune untagged (zombie) versions
         if: success()
         env:
@@ -345,32 +358,60 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           PACKAGE_NAME: ${{ github.event.repository.name }}
           PACKAGE_OWNER: ${{ github.repository_owner }}
-          KEEP_UNTAGGED: "2"
         run: |
           set -euo pipefail
           gh auth status >/dev/null
 
           echo "Listing untagged versions for ${PACKAGE_OWNER}/${PACKAGE_NAME}..."
-          # Same endpoint, but select entries where tags is empty.
           mapfile -t UNTAGGED < <(gh api \
             --paginate \
-            -q '.[] | select((.metadata.container.tags // []) | length == 0) | "\(.id)\t\(.created_at)"' \
+            -q '.[] | select((.metadata.container.tags // []) | length == 0) | "\(.id)\t\(.name)"' \
             "/users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME}/versions")
-          echo "Found ${#UNTAGGED[@]} untagged versions (newest first)."
+          echo "Found ${#UNTAGGED[@]} untagged versions."
 
-          # Delete everything beyond the keep-window. Same tail-from-N+1
-          # pattern as the sha-* prune so the behaviour is predictable.
-          TO_DELETE=$(printf '%s\n' "${UNTAGGED[@]}" | tail -n +$((KEEP_UNTAGGED + 1)))
-          if [[ -z "$TO_DELETE" ]]; then
-            echo "Nothing to delete (${#UNTAGGED[@]} <= ${KEEP_UNTAGGED})."
+          if [[ ${#UNTAGGED[@]} -eq 0 ]]; then
+            echo "No untagged versions to prune."
             exit 0
           fi
 
+          # Every index we are keeping: the :latest multi-arch index and
+          # each retained :sha-* index. Their children are the per-arch
+          # manifests, and those digests must survive.
+          mapfile -t INDEX_TAGS < <(gh api \
+            --paginate \
+            -q '.[] | select((.metadata.container.tags // []) | length > 0) | .metadata.container.tags[] | select(startswith("sha-") or . == "latest")' \
+            "/users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME}/versions")
+          echo "Retained index tags: ${INDEX_TAGS[*]}"
+
+          PROTECTED=$(mktemp)
+          trap 'rm -f "$PROTECTED"' EXIT
+          for tag in "${INDEX_TAGS[@]}"; do
+            # `imagetools inspect --raw` prints the index manifest itself,
+            # so this needs no registry auth for the blob read. A tag
+            # whose children were already GC'd still resolves (the index
+            # manifest is intact), so a failure here means the tag is
+            # genuinely unreadable — skip it rather than abort the prune.
+            raw=$(docker buildx imagetools inspect --raw \
+              "ghcr.io/${PACKAGE_OWNER}/${PACKAGE_NAME}:${tag}" 2>/dev/null) || {
+              echo "::warning::could not resolve children of ${tag}; skipping it" >&2
+              continue
+            }
+            printf '%s\n' "$raw" | jq -r '.manifests[]?.digest' >> "$PROTECTED"
+          done
+          sort -u -o "$PROTECTED" "$PROTECTED"
+          echo "Protecting $(wc -l < "$PROTECTED") per-arch child manifests."
+
           count=0
-          for id in $TO_DELETE; do
+          for row in "${UNTAGGED[@]}"; do
+            id="${row%%$'\t'*}"
+            digest="${row#*$'\t'}"
+            if grep -qxF "$digest" "$PROTECTED"; then
+              echo "  keeping ${id} (${digest}) — referenced by a retained index"
+              continue
+            fi
             if gh api -X DELETE \
               "/users/${PACKAGE_OWNER}/packages/container/${PACKAGE_NAME}/versions/${id}"; then
               count=$((count + 1))
             fi
           done
-          echo "Pruned $count untagged versions (kept newest ${KEEP_UNTAGGED})."
+          echo "Pruned $count orphaned untagged versions (kept every child of a retained index)."
