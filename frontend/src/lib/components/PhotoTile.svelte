@@ -286,26 +286,45 @@
     position: relative;
     display: block;
     aspect-ratio: 1 / 1;
-    border-radius: var(--r-1);
+    /* Square corners. The grid is a continuous wall of photos that
+       touch pixel-to-pixel, so a rounded corner would leave the
+       background showing through at every intersection. The radius
+       is published from grid/config.ts so the loading skeleton
+       (a different component) matches. */
+    border-radius: var(--grid-tile-radius, 0px);
     overflow: hidden;
     background: var(--bg-1);
-    border: 1px solid var(--glass-edge);
+    /* No border. The tiles touch pixel-to-pixel, and a border is
+       part of the tile's own box — with border-box sizing a 1px
+       border on each of two neighbours leaves 2px of background
+       between the photos and insets each one from its own edge.
+       The photo has to reach the tile's edge for the wall to be
+       seamless. The state rings below use `outline` with a
+       negative offset instead: it paints inside the tile, over the
+       photo, and unlike a border it never changes the layout. */
     /* Round-38: lighter shadow on hover (was --shadow-glass-strong
        which was tuned for dark surfaces). --shadow-1 is the
        standard tile resting shadow. */
     box-shadow: var(--shadow-1);
-    transition: transform var(--t-fast) var(--ease-out),
-                border-color var(--t-fast) var(--ease-out),
-                box-shadow var(--t-fast) var(--ease-out),
-                opacity var(--t-fast) var(--ease-out);
+    transition: transform var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+                outline-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+                box-shadow var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+                opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
+  }
+  /* The focus ring follows the tile's own shape — the global
+     :focus-visible rule rounds corners, which would be wrong on a
+     square tile. */
+  .tile:focus-visible {
+    border-radius: var(--grid-tile-radius, 0px);
   }
   .tile:hover {
-    transform: translateY(-3px);
-    border-color: var(--glass-edge-strong);
+    outline: 1px solid var(--glass-edge-strong);
+    outline-offset: -1px;
     box-shadow: var(--shadow-3);
   }
   .tile.menu-open {
-    border-color: var(--accent);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
     box-shadow: var(--shadow-glass-strong);
   }
   /* Liked — only the floating fav badge remains (Round‑36 dropped
@@ -320,9 +339,10 @@
   .tile.disliked {
     /* Round-65: was #8ca0c8 - a custom blue-gray focus ring
        that did not match the rest of the app accent. Now
-       uses --accent for the focus state so the ring is
-       on-brand. */
-    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+       uses --accent for the focus state so the ring
+       is on-brand. */
+    outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    outline-offset: -1px;
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
     opacity: 0.72;
   }
@@ -342,7 +362,8 @@
        used only on the .disliked.favorite mixed state. Now
        derives from --accent so this rare state still reads
        as on-brand. */
-    border-color: var(--mixed-tile-border);
+    outline: 1px solid var(--mixed-tile-border);
+    outline-offset: -1px;
     box-shadow: 0 0 0 1px var(--mixed-tile-ring);
     opacity: 0.72;
   }
@@ -352,7 +373,18 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    transition: opacity var(--t-med) var(--ease-out);
+    transition: opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+                transform var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
+    /* The photo grows inside the tile on hover rather than the
+       tile growing. The tiles touch pixel-to-pixel, so scaling a
+       TILE would push it over its neighbours and break the wall —
+       the zoom has to happen inside the clipped frame. */
+    transform: scale(1);
+    transform-origin: center;
+  }
+  .tile:hover .ph,
+  .tile:hover .full {
+    transform: scale(var(--grid-hover-zoom, 1.04));
   }
   .ph {
     z-index: 0;
@@ -390,7 +422,7 @@
     -webkit-backdrop-filter: var(--pill-blur);
     opacity: 0;
     z-index: 2;
-    transition: opacity var(--t-fast) var(--ease-out);
+    transition: opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
   .tile:hover .score,
   .tile.menu-open .score { opacity: 1; }
@@ -473,10 +505,10 @@
     opacity: 0;
     z-index: 2;
     transition:
-      opacity var(--t-fast) var(--ease-out),
-      background var(--t-fast) var(--ease-out),
-      border-color var(--t-fast) var(--ease-out),
-      transform var(--t-fast) var(--ease-out);
+      opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      background var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      border-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      transform var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
   .tile:hover .remove-btn,
   .tile:focus-within .remove-btn,
@@ -518,10 +550,10 @@
     box-shadow: var(--shadow-glass);
     opacity: 0;
     transition:
-      opacity var(--t-fast) var(--ease-out),
-      background var(--t-fast) var(--ease-out),
-      border-color var(--t-fast) var(--ease-out),
-      transform var(--t-fast) var(--ease-out);
+      opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      background var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      border-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      transform var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
   }
   .tile:hover .vote-btn,
   .tile:focus-within .vote-btn,
