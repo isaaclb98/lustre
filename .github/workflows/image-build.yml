@@ -385,19 +385,31 @@ jobs:
 
           PROTECTED=$(mktemp)
           trap 'rm -f "$PROTECTED"' EXIT
+          unresolved=0
           for tag in "${INDEX_TAGS[@]}"; do
             # `imagetools inspect --raw` prints the index manifest itself,
-            # so this needs no registry auth for the blob read. A tag
-            # whose children were already GC'd still resolves (the index
-            # manifest is intact), so a failure here means the tag is
-            # genuinely unreadable — skip it rather than abort the prune.
+            # so this needs no registry auth for the blob read.
             raw=$(docker buildx imagetools inspect --raw \
-              "ghcr.io/${PACKAGE_OWNER}/${PACKAGE_NAME}:${tag}" 2>/dev/null) || {
-              echo "::warning::could not resolve children of ${tag}; skipping it" >&2
+              "ghcr.io/${PACKAGE_OWNER}/${PACKAGE_NAME}:${tag}" 2>/dev/null) || raw=''
+            if ! printf '%s\n' "$raw" | jq -e '.manifests | length > 0' >/dev/null 2>&1; then
+              echo "::warning::could not resolve the children of ${tag}" >&2
+              unresolved=$((unresolved + 1))
               continue
-            }
+            fi
             printf '%s\n' "$raw" | jq -r '.manifests[]?.digest' >> "$PROTECTED"
           done
+
+          # If any retained index could not be resolved we do not know
+          # which digests its children are, so we cannot tell a true
+          # zombie from a live child of that index. Deleting blind would
+          # break a rollback path — the exact failure this step exists
+          # to prevent. Leave the untagged versions alone this run; the
+          # next build retries with a full picture.
+          if [[ $unresolved -gt 0 ]]; then
+            echo "::warning::${unresolved} retained index(es) unresolved; skipping the untagged prune entirely rather than risk deleting a live child manifest" >&2
+            exit 0
+          fi
+
           sort -u -o "$PROTECTED" "$PROTECTED"
           echo "Protecting $(wc -l < "$PROTECTED") per-arch child manifests."
 
