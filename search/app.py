@@ -39,6 +39,7 @@ from search.diversity import (
     DiversityResultCache,
     DiversityStats,
 )
+from search.explore import album_source
 from search.image_resolver import guess_content_type, resolve_local, resolve_url
 from search.index_db import DEFAULT_INDEX_DB_PATH, IndexDB
 from search.models import (
@@ -379,7 +380,7 @@ def _invalidate_likes_centroid() -> None:
 
 def _album_centroid_name(album_id: int) -> str:
     """Centroid registry key for an album. Stable across renames."""
-    return f"album:{album_id}"
+    return album_source(album_id)
 
 
 def _make_album_centroid_spec(
@@ -1030,6 +1031,7 @@ def create_app(
         qdrant=qdrant,
         cfg=_cfg,
         invalidate_album_centroid=_invalidate_album_centroid,
+        invalidate_favourites_centroid=_invalidate_likes_centroid,
     ))
     app.include_router(build_centroids_reload_router(
         centroid_store=_centroid_store,

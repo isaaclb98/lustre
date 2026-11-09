@@ -52,18 +52,35 @@ EXPLORE_ROUND_SIZE = 240
 # and the For You deck cache.
 EXPLORE_SESSION_TTL_S = 30 * 60
 
+# The source-key vocabulary shared with the centroid registry.
+#
+# A user album is addressed as `album:{id}` — the id, not the name, so
+# renaming an album does not break a saved Explore link — and the
+# built-in Favourites album as `favourites`. The built-in album is
+# not a row in the `albums` table; its members are the rows in the
+# `favorites` table, which is why it needs its own key rather than
+# borrowing an album id.
+FAVOURITES_SOURCE = "favourites"
+
+
+def album_source(album_id: int) -> str:
+    """The source key for a user album."""
+    return f"album:{album_id}"
+
 
 @dataclass
 class ExploreSession:
-    """One Explore session against one album.
+    """One Explore session against one source.
 
-    `downvotes` and `seen` are sets for membership tests; both are
-    ordered lists on the wire (the negatives list goes to Qdrant, and
-    its order determines the seed order Qdrant averages), so the
-    downvotes are kept in an ordered list instead.
+    `source` is the source key — `album:{id}` for a user album,
+    `favourites` for the built-in one. `downvotes` and `seen` are
+    sets for membership tests; both are ordered lists on the wire (the
+    negatives list goes to Qdrant, and its order determines the seed
+    order Qdrant averages), so the downvotes are kept in an ordered
+    list instead.
     """
 
-    album_id: int
+    source: str
     downvotes: list[str] = field(default_factory=list)
     seen: set[str] = field(default_factory=set)
     round_ids: list[str] = field(default_factory=list)
@@ -142,10 +159,10 @@ class ExploreSessionStore:
             return None
         return session_id, sess
 
-    def put_new(self, album_id: int) -> tuple[str, ExploreSession]:
-        """Create a session for `album_id` with a fresh id."""
+    def put_new(self, source: str) -> tuple[str, ExploreSession]:
+        """Create a session for `source` with a fresh id."""
         new_id = secrets.token_urlsafe(16)
-        sess = ExploreSession(album_id=album_id, ttl_s=self._ttl_s)
+        sess = ExploreSession(source=source, ttl_s=self._ttl_s)
         self._sessions[new_id] = sess
         return new_id, sess
 
@@ -160,6 +177,8 @@ class ExploreSessionStore:
 __all__ = [
     "EXPLORE_ROUND_SIZE",
     "EXPLORE_SESSION_TTL_S",
+    "FAVOURITES_SOURCE",
     "ExploreSession",
     "ExploreSessionStore",
+    "album_source",
 ]

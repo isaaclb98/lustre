@@ -128,12 +128,108 @@ def _make_album(client, member_ids, name="Explore Test"):
     return album_id
 
 
+# ---------------- the built-in Favourites album ----------------
+
+
+def _favourite(client, point_id):
+    """Mark a photo as a favourite."""
+    res = client.post(f"/api/favorites/{point_id}")
+    assert res.status_code == 200, res.text
+
+
+def test_round_returns_results_for_the_favourites_album(explore_client):
+    """The built-in album explores the same way a user album does."""
+    for point_id in (CAT_ID, DOG_ID, BIRD_ID):
+        _favourite(explore_client, point_id)
+
+    res = explore_client.get("/api/explore/favourites/round")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["results"], "the round should serve photos"
+    # The favourites themselves are excluded — the round is "more
+    # like these", not a copy of them.
+    served = {r["id"] for r in body["results"]}
+    assert not served & {CAT_ID, DOG_ID, BIRD_ID}
+
+
+def test_an_upvote_on_the_favourites_album_favourites_the_photo(explore_client):
+    """An up-vote on the built-in album marks the photo a favourite.
+
+    The built-in album's membership IS the favourites table, so
+    "add it to the album" and "favourite it" are the same act.
+    """
+    for point_id in (CAT_ID, DOG_ID, BIRD_ID):
+        _favourite(explore_client, point_id)
+
+    res = explore_client.get("/api/explore/favourites/round?limit=1")
+    assert res.status_code == 200, res.text
+    served_id = res.json()["results"][0]["id"]
+
+    before = explore_client.get("/api/favorites?limit=99999").json()
+    assert served_id not in {
+        r["id"] for r in before.get("favorites", [])
+    }, "the served photo should not already be a favourite"
+
+    res = explore_client.post(
+        "/api/explore/favourites/vote",
+        json={"photo_id": served_id, "vote": "up"},
+    )
+    assert res.status_code == 200, res.text
+
+    after = explore_client.get("/api/favorites?limit=99999").json()
+    assert served_id in {r["id"] for r in after.get("favorites", [])}
+
+
+def test_a_downvote_on_the_favourites_album_never_reaches_the_favourites(explore_client):
+    """A down-vote stays session-scoped — it is not a favourite."""
+    for point_id in (CAT_ID, DOG_ID, BIRD_ID):
+        _favourite(explore_client, point_id)
+
+    res = explore_client.get("/api/explore/favourites/round?limit=1")
+    served_id = res.json()["results"][0]["id"]
+
+    res = explore_client.post(
+        "/api/explore/favourites/vote",
+        json={"photo_id": served_id, "vote": "down"},
+    )
+    assert res.status_code == 200, res.text
+
+    after = explore_client.get("/api/favorites?limit=99999").json()
+    assert served_id not in {r["id"] for r in after.get("favorites", [])}
+
+
+def test_an_unknown_explore_source_is_rejected(explore_client):
+    """A source key that names nothing gets a 400, not a crash."""
+    res = explore_client.get("/api/explore/nonsense/round")
+    assert res.status_code == 400
+    res = explore_client.post(
+        "/api/explore/nonsense/vote",
+        json={"photo_id": CAT_ID, "vote": "down"},
+    )
+    assert res.status_code == 400
+
+
+def test_a_favourites_session_is_not_reusable_for_an_album(explore_client):
+    """A session belongs to one source; it cannot be pointed at another."""
+    album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
+    for point_id in (CAT_ID, DOG_ID, BIRD_ID):
+        _favourite(explore_client, point_id)
+
+    res = explore_client.get("/api/explore/favourites/round")
+    session = res.json()["session_id"]
+
+    res = explore_client.get(
+        f"/api/explore/album%3A{album_id}/round?session={session}"
+    )
+    assert res.status_code == 400
+
+
 # ---------------- the round ----------------
 
 
 def test_round_returns_results_for_an_album(explore_client):
     album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
-    res = explore_client.get(f"/api/explore/album/{album_id}/round")
+    res = explore_client.get(f"/api/explore/album%3A{album_id}/round")
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["results"], "expected at least one result"
@@ -146,7 +242,7 @@ def test_round_returns_results_for_an_album(explore_client):
 
 def test_round_excludes_the_albums_own_members(explore_client):
     album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
-    res = explore_client.get(f"/api/explore/album/{album_id}/round")
+    res = explore_client.get(f"/api/explore/album%3A{album_id}/round")
     served = {r["id"] for r in res.json()["results"]}
     assert CAT_ID not in served
     assert DOG_ID not in served
@@ -155,7 +251,7 @@ def test_round_excludes_the_albums_own_members(explore_client):
 
 def test_round_rejects_an_empty_album(explore_client):
     album_id = _make_album(explore_client, [])
-    res = explore_client.get(f"/api/explore/album/{album_id}/round")
+    res = explore_client.get(f"/api/explore/album%3A{album_id}/round")
     assert res.status_code == 400
     assert "no photos" in res.json()["detail"].lower()
 
@@ -163,10 +259,10 @@ def test_round_rejects_an_empty_album(explore_client):
 def test_round_rejects_a_session_from_another_album(explore_client):
     album_a = _make_album(explore_client, [CAT_ID], name="Explore A")
     album_b = _make_album(explore_client, [DOG_ID], name="Explore B")
-    first = explore_client.get(f"/api/explore/album/{album_a}/round")
+    first = explore_client.get(f"/api/explore/album%3A{album_a}/round")
     session = first.json()["session_id"]
     res = explore_client.get(
-        f"/api/explore/album/{album_b}/round?session={session}"
+        f"/api/explore/album%3A{album_b}/round?session={session}"
     )
     assert res.status_code == 400
     assert "different album" in res.json()["detail"]
@@ -175,7 +271,7 @@ def test_round_rejects_a_session_from_another_album(explore_client):
 def test_round_pages_within_the_materialised_round(explore_client):
     album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
     first = explore_client.get(
-        f"/api/explore/album/{album_id}/round?limit=1"
+        f"/api/explore/album%3A{album_id}/round?limit=1"
     ).json()
     assert first["session_id"]
     session = first["session_id"]
@@ -185,7 +281,7 @@ def test_round_pages_within_the_materialised_round(explore_client):
     # server slices the cached id list rather than re-querying
     # Qdrant with an offset (which would duplicate rows).
     second = explore_client.get(
-        f"/api/explore/album/{album_id}/round?session={session}&limit=1&offset=1"
+        f"/api/explore/album%3A{album_id}/round?session={session}&limit=1&offset=1"
     ).json()
     assert second["results"]
     assert second["results"][0]["id"] != first["results"][0]["id"]
@@ -195,7 +291,7 @@ def test_round_pages_within_the_materialised_round(explore_client):
 def test_round_rejects_a_limit_out_of_range(explore_client):
     album_id = _make_album(explore_client, [CAT_ID])
     res = explore_client.get(
-        f"/api/explore/album/{album_id}/round?limit=0"
+        f"/api/explore/album%3A{album_id}/round?limit=0"
     )
     assert res.status_code == 422
 
@@ -205,12 +301,12 @@ def test_round_rejects_a_limit_out_of_range(explore_client):
 
 def test_downvote_is_session_scoped_and_not_a_dislike(explore_client):
     album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
-    round_res = explore_client.get(f"/api/explore/album/{album_id}/round")
+    round_res = explore_client.get(f"/api/explore/album%3A{album_id}/round")
     session = round_res.json()["session_id"]
     target = round_res.json()["results"][0]["id"]
 
     res = explore_client.post(
-        f"/api/explore/album/{album_id}/vote?session={session}",
+        f"/api/explore/album%3A{album_id}/vote?session={session}",
         json={"photo_id": target, "vote": "down"},
     )
     assert res.status_code == 200, res.text
@@ -226,19 +322,19 @@ def test_downvote_is_session_scoped_and_not_a_dislike(explore_client):
 def test_downvote_becomes_a_negative_for_the_next_round(explore_client):
     album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
     round_res = explore_client.get(
-        f"/api/explore/album/{album_id}/round?limit=2"
+        f"/api/explore/album%3A{album_id}/round?limit=2"
     )
     session = round_res.json()["session_id"]
     target = round_res.json()["results"][0]["id"]
 
     explore_client.post(
-        f"/api/explore/album/{album_id}/vote?session={session}",
+        f"/api/explore/album%3A{album_id}/vote?session={session}",
         json={"photo_id": target, "vote": "down"},
     )
     # The next round is rebuilt with the new negative, so the
     # down-voted photo is not served again.
     after = explore_client.get(
-        f"/api/explore/album/{album_id}/round?session={session}&limit=2"
+        f"/api/explore/album%3A{album_id}/round?session={session}&limit=2"
     ).json()
     served = {r["id"] for r in after["results"]}
     assert target not in served
@@ -248,18 +344,18 @@ def test_a_round_is_not_served_twice(explore_client):
     """The seen-set keeps a photo from coming back in a later round."""
     album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
     first = explore_client.get(
-        f"/api/explore/album/{album_id}/round?limit=3"
+        f"/api/explore/album%3A{album_id}/round?limit=3"
     ).json()
     session = first["session_id"]
     first_ids = {r["id"] for r in first["results"]}
 
     # A vote invalidates the round, so the next round is rebuilt.
     explore_client.post(
-        f"/api/explore/album/{album_id}/vote?session={session}",
+        f"/api/explore/album%3A{album_id}/vote?session={session}",
         json={"photo_id": next(iter(first_ids)), "vote": "down"},
     )
     second = explore_client.get(
-        f"/api/explore/album/{album_id}/round?session={session}&limit=3"
+        f"/api/explore/album%3A{album_id}/round?session={session}&limit=3"
     ).json()
     second_ids = {r["id"] for r in second["results"]}
     assert not (first_ids & second_ids)
@@ -267,12 +363,12 @@ def test_a_round_is_not_served_twice(explore_client):
 
 def test_upvote_adds_the_photo_to_the_album(explore_client):
     album_id = _make_album(explore_client, [CAT_ID])
-    round_res = explore_client.get(f"/api/explore/album/{album_id}/round")
+    round_res = explore_client.get(f"/api/explore/album%3A{album_id}/round")
     session = round_res.json()["session_id"]
     target = round_res.json()["results"][0]["id"]
 
     res = explore_client.post(
-        f"/api/explore/album/{album_id}/vote?session={session}",
+        f"/api/explore/album%3A{album_id}/vote?session={session}",
         json={"photo_id": target, "vote": "up"},
     )
     assert res.status_code == 200, res.text
@@ -285,7 +381,7 @@ def test_upvote_adds_the_photo_to_the_album(explore_client):
 def test_vote_rejects_an_unknown_action(explore_client):
     album_id = _make_album(explore_client, [CAT_ID])
     res = explore_client.post(
-        f"/api/explore/album/{album_id}/vote",
+        f"/api/explore/album%3A{album_id}/vote",
         json={"photo_id": CAT_ID, "vote": "sideways"},
     )
     assert res.status_code == 400
@@ -295,7 +391,7 @@ def test_vote_rejects_an_unknown_action(explore_client):
 def test_vote_requires_a_photo_id(explore_client):
     album_id = _make_album(explore_client, [CAT_ID])
     res = explore_client.post(
-        f"/api/explore/album/{album_id}/vote",
+        f"/api/explore/album%3A{album_id}/vote",
         json={"vote": "down"},
     )
     assert res.status_code == 400
@@ -313,6 +409,6 @@ def test_a_dead_album_member_does_not_break_the_round(explore_client):
     so one dead member must not take the feature down.
     """
     album_id = _make_album(explore_client, [CAT_ID, DEAD_ID])
-    res = explore_client.get(f"/api/explore/album/{album_id}/round")
+    res = explore_client.get(f"/api/explore/album%3A{album_id}/round")
     assert res.status_code == 200, res.text
     assert res.json()["results"]

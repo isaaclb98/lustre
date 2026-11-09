@@ -148,7 +148,7 @@ def test_the_album_members_are_the_positives():
     qdrant = _FakeQdrant(pool=["a", "b", "c", "x", "y", "z"])
     client = _client(_make_router(index_db, qdrant))
 
-    res = client.get("/api/explore/album/1/round")
+    res = client.get("/api/explore/album%3A1/round")
     assert res.status_code == 200, res.text
     call = qdrant.recommend_calls[0]
     assert call["positive"] == ["a", "b", "c"]
@@ -160,14 +160,14 @@ def test_the_downvotes_become_the_negatives():
     qdrant = _FakeQdrant(pool=["a", "b", "x", "y", "z"])
     client = _client(_make_router(index_db, qdrant))
 
-    first = client.get("/api/explore/album/1/round").json()
+    first = client.get("/api/explore/album%3A1/round").json()
     session = first["session_id"]
     target = first["results"][0]["id"]
     client.post(
-        f"/api/explore/album/1/vote?session={session}",
+        f"/api/explore/album%3A1/vote?session={session}",
         json={"photo_id": target, "vote": "down"},
     )
-    client.get(f"/api/explore/album/1/round?session={session}")
+    client.get(f"/api/explore/album%3A1/round?session={session}")
 
     second_call = qdrant.recommend_calls[1]
     assert target in second_call["negative"]
@@ -179,7 +179,7 @@ def test_the_seen_set_and_the_album_are_excluded():
     qdrant = _FakeQdrant(pool=["a", "b", "x", "y", "z"])
     client = _client(_make_router(index_db, qdrant))
 
-    client.get("/api/explore/album/1/round?limit=2")
+    client.get("/api/explore/album%3A1/round?limit=2")
     call = qdrant.recommend_calls[0]
     excluded = set(call["exclude_ids"])
     # The album's own members never appear in the results — the
@@ -199,7 +199,7 @@ def test_dead_member_ids_are_filtered_before_the_recommend():
     qdrant = _FakeQdrant(pool=["a", "b", "x", "y", "z"])
     client = _client(_make_router(index_db, qdrant))
 
-    res = client.get("/api/explore/album/1/round")
+    res = client.get("/api/explore/album%3A1/round")
     assert res.status_code == 200, res.text
     call = qdrant.recommend_calls[0]
     assert call["positive"] == ["a", "b"]
@@ -211,14 +211,14 @@ def test_dead_downvotes_are_filtered_too():
     qdrant = _FakeQdrant(pool=["a", "x", "y", "z"])
     client = _client(_make_router(index_db, qdrant))
 
-    first = client.get("/api/explore/album/1/round").json()
+    first = client.get("/api/explore/album%3A1/round").json()
     session = first["session_id"]
     # Down-vote a photo that is not in the collection.
     client.post(
-        f"/api/explore/album/1/vote?session={session}",
+        f"/api/explore/album%3A1/vote?session={session}",
         json={"photo_id": "ghost", "vote": "down"},
     )
-    client.get(f"/api/explore/album/1/round?session={session}")
+    client.get(f"/api/explore/album%3A1/round?session={session}")
     call = qdrant.recommend_calls[1]
     assert call["negative"] == []
 
@@ -228,7 +228,7 @@ def test_the_round_asks_for_the_configured_round_size():
     qdrant = _FakeQdrant(pool=["a", "x", "y", "z"])
     client = _client(_make_router(index_db, qdrant))
 
-    client.get("/api/explore/album/1/round")
+    client.get("/api/explore/album%3A1/round")
     assert qdrant.recommend_calls[0]["limit"] == EXPLORE_ROUND_SIZE
     assert EXPLORE_ROUND_SIZE == 240
 
@@ -238,7 +238,7 @@ def test_the_hnsw_breadth_is_pinned():
     qdrant = _FakeQdrant(pool=["a", "x", "y", "z"])
     client = _client(_make_router(index_db, qdrant))
 
-    client.get("/api/explore/album/1/round")
+    client.get("/api/explore/album%3A1/round")
     params = qdrant.recommend_calls[0]["search_params"]
     assert params is not None
     assert params.hnsw_ef == HNSW_EF
@@ -251,11 +251,11 @@ def test_an_upvote_adds_to_the_album_and_invalidates_the_centroid():
     invalidated: list[int] = []
     client = _client(_make_router(index_db, qdrant, invalidated))
 
-    first = client.get("/api/explore/album/1/round").json()
+    first = client.get("/api/explore/album%3A1/round").json()
     session = first["session_id"]
     target = first["results"][0]["id"]
     res = client.post(
-        f"/api/explore/album/1/vote?session={session}",
+        f"/api/explore/album%3A1/vote?session={session}",
         json={"photo_id": target, "vote": "up"},
     )
     assert res.status_code == 200, res.text
@@ -269,19 +269,19 @@ def test_the_round_is_reused_until_a_vote_invalidates_it():
     qdrant = _FakeQdrant(pool=["a", "x", "y", "z"])
     client = _client(_make_router(index_db, qdrant))
 
-    first = client.get("/api/explore/album/1/round").json()
+    first = client.get("/api/explore/album%3A1/round").json()
     session = first["session_id"]
     # Paging within the round does NOT re-query Qdrant — the round
     # is materialised once and sliced.
-    client.get(f"/api/explore/album/1/round?session={session}&offset=1&limit=1")
+    client.get(f"/api/explore/album%3A1/round?session={session}&offset=1&limit=1")
     assert len(qdrant.recommend_calls) == 1
 
     # A vote invalidates it, so the next request re-queries.
     client.post(
-        f"/api/explore/album/1/vote?session={session}",
+        f"/api/explore/album%3A1/vote?session={session}",
         json={"photo_id": "x", "vote": "down"},
     )
-    client.get(f"/api/explore/album/1/round?session={session}")
+    client.get(f"/api/explore/album%3A1/round?session={session}")
     assert len(qdrant.recommend_calls) == 2
 
 
@@ -299,7 +299,7 @@ def test_the_round_scores_survive_the_page_hydration():
     qdrant = _FakeQdrant(pool=["a", "x", "y", "z"])
     client = _client(_make_router(index_db, qdrant))
 
-    res = client.get("/api/explore/album/1/round?limit=3")
+    res = client.get("/api/explore/album%3A1/round?limit=3")
     assert res.status_code == 200, res.text
     body = res.json()
     results = body["results"]
@@ -325,10 +325,10 @@ def test_a_paged_result_keeps_its_round_score():
     qdrant = _FakeQdrant(pool=["a", "x", "y", "z", "w", "v"])
     client = _client(_make_router(index_db, qdrant))
 
-    first = client.get("/api/explore/album/1/round?limit=2").json()
+    first = client.get("/api/explore/album%3A1/round?limit=2").json()
     session = first["session_id"]
     second = client.get(
-        f"/api/explore/album/1/round?session={session}&limit=2&offset=2"
+        f"/api/explore/album%3A1/round?session={session}&limit=2&offset=2"
     ).json()
 
     # The album's own member "a" is excluded, so the round's five
