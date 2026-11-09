@@ -193,3 +193,43 @@ describe('the whole-row invariant', () => {
     expect(40 % 6).not.toBe(0);
   });
 });
+
+describe('the gapless wall', () => {
+  it('has no gutter at any size — the tiles touch pixel-to-pixel', () => {
+    // The grid is a continuous wall of photos. A gutter would show
+    // the background between every pair of touching photos, which
+    // is exactly what the look is meant to remove.
+    for (const size of SIZES) {
+      expect(GRID_SIZE_CONFIG[size].gap).toBe(0);
+    }
+  });
+
+  it('makes a full row exactly cols × tile wide', () => {
+    // With no gutter, the row's width is the sum of the tiles and
+    // nothing else — so the CSS track count and the JS column math
+    // agree without a correction term. This is what the row's
+    // max-width clamp is derived from.
+    for (const size of SIZES) {
+      const config = GRID_SIZE_CONFIG[size];
+      for (let cols = 1; cols <= config.maxCols; cols++) {
+        expect(widthForColumns(cols, config)).toBe(cols * config.tile);
+      }
+    }
+  });
+
+  it('derives the column count from the same floor the CSS uses', () => {
+    // The CSS renders `repeat(auto-fit, TILE)` tracks with no gap,
+    // so the track count is floor(width / tile). The fetch layer
+    // has to ask for the same number the renderer will draw.
+    for (const size of SIZES) {
+      const config = GRID_SIZE_CONFIG[size];
+      for (const width of WIDTHS) {
+        const expected = Math.max(
+          1,
+          Math.min(config.maxCols, Math.floor(width / config.tile))
+        );
+        expect(columnsForWidth(width, config)).toBe(expected);
+      }
+    }
+  });
+});

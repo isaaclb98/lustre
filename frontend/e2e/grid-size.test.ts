@@ -235,9 +235,10 @@ test.describe('Grid size preference', () => {
         gap: style.getPropertyValue('--grid-gutter-size').trim()
       };
     });
-    // Medium config: 192/8. The leading-zero trimmed values
-    // should be '192px' and '8px'.
+    // Medium config: 192px tile, and the gap is 0 for every size —
+    // the tiles touch pixel-to-pixel, so the gutter is always 0.
+    // The leading-zero trimmed values should be '192px' and '0px'.
     expect(vars.tile).toBe('192px');
-    expect(vars.gap).toBe('8px');
+    expect(vars.gap).toBe('0px');
   });
 });

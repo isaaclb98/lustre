@@ -170,13 +170,15 @@ describe('GRID_SIZE_CONFIG', () => {
     // The default must be one of the configured sizes.
     expect(configKeys).toContain(DEFAULT_GRID_SIZE);
     // Sanity-check the per-size numbers: tile + gap + maxCols
-    // are all positive integers, and the column density scales
+    // are all non-negative integers, and the column density scales
     // monotonically with the tile (smaller tile → more cols).
+    // The gap is 0 for every size — the tiles touch pixel-to-pixel
+    // — so it is allowed to be zero, but never negative.
     const sizes = ['large', 'medium', 'small'] as const;
     for (const s of sizes) {
       const c = GRID_SIZE_CONFIG[s];
       expect(c.tile).toBeGreaterThan(0);
-      expect(c.gap).toBeGreaterThan(0);
+      expect(c.gap).toBeGreaterThanOrEqual(0);
       expect(c.maxCols).toBeGreaterThan(0);
       expect(Number.isInteger(c.tile)).toBe(true);
       expect(Number.isInteger(c.gap)).toBe(true);
