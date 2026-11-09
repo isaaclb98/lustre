@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
-   * Likes — built-in non-deletable album. Reads from /api/favorites
-   * and renders them in the same grid the user-created albums use.
+   * Favourites — built-in non-deletable album. Reads from
+   * /api/favorites and renders them in the same grid the
+   * user-created albums use.
    *
    * "Unlike" goes through the grid's onRemove handler wired below.
    * Unlike drops the photo from the grid (optimistic, restored on
@@ -39,7 +40,7 @@
 
   // Phase 5: usePagedAlbumList owns the load/loadMore/remove
   // pattern. The useIndexMap flag enables an O(1) SvelteMap
-  // shadow of items (worth it on Likes at 1000+ items).
+  // shadow of items (worth it on Favourites at 1000+ items).
   const list = usePagedAlbumList<Item>({
     pageSize: () => pageLimit(),
     fetchPage: (limit, offset, signal) =>
@@ -65,11 +66,11 @@
 </script>
 
 <svelte:head>
-  <title>Likes · Lustre</title>
+  <title>Favourites · Lustre</title>
 </svelte:head>
 
 <PageHeader
-  title="Likes"
+  title="Favourites"
   subtitle="Photos you've liked. Built-in, always here."
   meta="{list.items.length} photo{list.items.length === 1 ? '' : 's'}"
 />
@@ -77,9 +78,9 @@
 {#if list.loading}
   <div class="state">Loading…</div>
 {:else if list.error}
-  <div class="state error">Couldn't load likes: {list.error}</div>
+  <div class="state error">Couldn't load favourites: {list.error}</div>
 {:else if list.items.length === 0}
-  <div class="state empty">No likes yet — tap the heart on any photo to save it here.</div>
+  <div class="state empty">No favourites yet — tap the heart on any photo to save it here.</div>
 {:else}
   <section>
     <PhotoGrid

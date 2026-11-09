@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
-   * Albums — list + create. One non-optional system album (Likes)
-   * is rendered first and cannot be deleted or renamed;
-   * user-created albums follow.
+   * Albums — list + create. One non-optional system album
+   * (Favourites) is rendered first and cannot be deleted or
+   * renamed; user-created albums follow.
    *
    * The built-in Dislikes album was removed — the Explore album
    * feature covers that ground, and a dislikes grid is a list of
@@ -13,9 +13,9 @@
    * for the built-in). The home page renders results inline using
    * that album's centroid.
    *
-   * Round‑29b: the Likes centroid is now registered under
-   * `likes` (was `favourites`). The backend keeps `favourites`
-   * as a back-compat alias so legacy URLs still resolve.
+   * The built-in album is named Favourites; its centroid key
+   * stays `likes` on the backend, with `favourites` as a
+   * back-compat alias, so saved searches keep resolving.
    *
    * Round‑92: the per-card "Surprise" button was removed. The
    * home page now exposes Surprise me (Gumbel-max deck with
@@ -43,11 +43,11 @@
   import Button from '$lib/components/Button.svelte';
   import type { AlbumSummary } from '$lib/api/endpoints';
 
-  // Round‑29b: renamed from 'favourites' to 'likes' to match
-  // the user-visible album label. The backend also registers
-  // 'favourites' as a back-compat alias so legacy URLs still
-  // resolve.
-  const LIKES_CENTROID = 'likes';
+  // The centroid key for the built-in album. `favourites` is the
+  // primary key on the backend, matching the album's name; `likes`
+  // stays registered as a back-compat alias so saved searches and
+  // shared links keep resolving.
+  const FAVOURITES_CENTROID = 'favourites';
 
   async function searchByAlbum(centroidName: string) {
     await goto(resolve(`/?centroid=${encodeURIComponent(centroidName)}`));
@@ -133,6 +133,22 @@
     }
   }
 
+  async function remove(id: number, name: string) {
+    const ok = await dialog.confirm({
+      title: 'Delete album',
+      body: `Delete album "${name}"? This can't be undone.`,
+      confirmLabel: 'Delete',
+      kind: 'danger'
+    });
+    if (!ok) return;
+    try {
+      await deleteAlbum(id);
+      albums = albums.filter((a) => a.id !== id);
+    } catch {
+      /* noop: keep current list if delete fails */
+    }
+  }
+
   /**
    * Rename a user album. The prompt is pre-filled with the current
    * name so the user edits rather than retypes it.
@@ -159,22 +175,6 @@
         e instanceof ApiError && e.status === 400
           ? `An album named "${trimmed}" already exists.`
           : 'Could not rename this album. Please try again.';
-    }
-  }
-
-  async function remove(id: number, name: string) {
-    const ok = await dialog.confirm({
-      title: 'Delete album',
-      body: `Delete album "${name}"? This can't be undone.`,
-      confirmLabel: 'Delete',
-      kind: 'danger'
-    });
-    if (!ok) return;
-    try {
-      await deleteAlbum(id);
-      albums = albums.filter((a) => a.id !== id);
-    } catch {
-      /* noop: keep current list if delete fails */
     }
   }
 
@@ -213,8 +213,8 @@
     {:else}
       <div class="cover cover-empty" aria-hidden="true"></div>
     {/if}
-    <a class="title" href={resolve('/albums/likes')}>
-      <span>Likes</span>
+    <a class="title" href={resolve('/albums/favourites')}>
+      <span>Favourites</span>
     </a>
     <!-- Round-61: removed the description ("Photos you've liked.
          Built-in, always here."). The title "Likes" already says
@@ -239,10 +239,10 @@
         variant="ghost"
         size="sm"
         class="search-btn"
-        data={{ 'data-centroid': LIKES_CENTROID }}
-        onclick={() => searchByAlbum(LIKES_CENTROID)}
+        data={{ 'data-centroid': FAVOURITES_CENTROID }}
+        onclick={() => searchByAlbum(FAVOURITES_CENTROID)}
         disabled={likesCount === 0}
-        aria-label="Search by Likes centroid"
+        aria-label="Search by Favourites centroid"
       >Search</Button>
     </div>
   </article>
@@ -319,10 +319,10 @@
     flex: 1 1 auto;
   }
 
-  /* The built-in album (Likes) lives in the same grid as the
+  /* The built-in album (Favourites) lives in the same grid as the
      user-created albums below. It is pinned to the top of the
      flow by virtue of being declared first in the template. */
-  /* Album cards (Likes + user albums) in a single auto-fit
+  /* Album cards (Favourites + user albums) in a single auto-fit
      grid. auto-fit collapses empty tracks when item count is below
      the column count, so a sparse row (e.g. 2 user albums) centers
      the filled cards rather than leaving an empty band on the right.
@@ -375,7 +375,7 @@
      Margins, not flex gap — gap is uniform across siblings. */
   /* Round-61: cover→title 16px (unchanged). Removed the
      title→desc 4px gap and desc→footer 12px gap because
-     Likes no longer renders a description. footer→search
+     Favourites no longer renders a description. footer→search
      stays 16px. search-row gets margin-top: auto so it pins to
      the bottom of the card — any leftover vertical space in a
      row-stretched card lands between footer and search-row, not
