@@ -219,7 +219,14 @@
   {#if scoreStr}
     <span class="score">{scoreStr}</span>
   {/if}
-  {#if isFavorite}
+  <!-- The favourite badge and the remove button share the top-right
+       corner slot, and the remove button is the one the user needs
+       to be able to reach. On a grid of favourites or album members
+       EVERY photo is a favourite by definition, so the badge marks
+       nothing — every tile would carry the same heart — while still
+       sitting on top of the control that does something. Where a
+       remove button is present, the corner belongs to it alone. -->
+  {#if isFavorite && !onRemove}
     <span class="fav" data-no-open title="Like">
       <Icon name="heart-filled" size={14} />
     </span>
@@ -495,6 +502,11 @@
     -webkit-backdrop-filter: var(--glass-light);
     box-shadow: var(--shadow-glass);
     opacity: 0;
+    /* A button hidden with opacity alone still swallows pointer
+       events. This one sits on top of the tile's own link, so a
+       click in the top-right corner would remove the photo from the
+       album without the user ever seeing the control that did it. */
+    pointer-events: none;
     z-index: 2;
     transition:
       opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
@@ -506,6 +518,7 @@
   .tile:focus-within .remove-btn,
   .remove-btn:focus-visible {
     opacity: 1;
+    pointer-events: auto;
   }
   .remove-btn:hover {
     background: color-mix(in srgb, var(--negative) 18%, transparent);
@@ -568,8 +581,17 @@
   }
   /* Mobile / touch: hover doesn't exist, so the chip is always
    * present so the user can see the affordance. */
-  @media (hover: none) {
+  /* Touch devices have no hover, so a hover-revealed control would
+     never appear and the remove button would be unreachable. Keep it
+     visible there. The query is `(hover: none) AND (pointer: coarse)`
+     rather than `(hover: none)` alone: a hybrid laptop whose primary
+     pointer is a mouse still reports `hover: none` on some setups,
+     and that device SHOULD get hover-only behaviour like any other
+     mouse. */
+  @media (hover: none) and (pointer: coarse) {
     .remove-btn { opacity: 1; }
+  }
+  @media (hover: none) {
     .vote-btn { opacity: 1; }
   }
 </style>
