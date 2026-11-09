@@ -45,6 +45,37 @@ export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
   small: { tile: 144, gap: 4, maxCols: 10, rows: 4 }
 };
 
+/**
+ * The hover zoom: how far the photo inside a tile scales up when
+ * the pointer is over it.
+ *
+ * The zoom is applied to the IMAGE, not the tile. Scaling the
+ * tile would push it over its neighbours and break the grid's
+ * rhythm, so the tile stays put and the photo grows inside the
+ * clipped frame instead.
+ */
+export const GRID_HOVER_ZOOM = 1.04;
+
+/**
+ * Motion timing for the grid's own transitions, in ms.
+ *
+ * The app-wide `--t-fast` / `--ease-out` tokens are referenced
+ * across the codebase but were never defined, so every transition
+ * that names them currently resolves to nothing and the browser
+ * applies the initial `0s` duration — the animations do not run.
+ * The grid carries its own pair rather than depending on tokens
+ * that do not exist, and rather than switching on transitions
+ * across the whole app as a side effect of a grid change.
+ */
+export const GRID_MOTION_MS = 100;
+
+/**
+ * Easing for the grid's transitions. The app's historical
+ * `--ease-out` curve (cubic-bezier(0.16, 0.84, 0.32, 1)), which
+ * is what the pre-redesign tokens used.
+ */
+export const GRID_MOTION_EASE = 'cubic-bezier(0.16, 0.84, 0.32, 1)';
+
 export const DEFAULT_GRID_SIZE: GridSize = 'large';
 
 /**
