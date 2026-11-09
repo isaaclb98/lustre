@@ -275,6 +275,15 @@
             disabled={(a.member_count ?? 0) === 0}
             aria-label="Search by {a.name} centroid"
           >Search</Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="search-btn"
+            href={resolve(`/explore/${a.id}`)}
+            disabled={(a.member_count ?? 0) === 0}
+            aria-label="Explore {a.name}"
+            title="Vote down the photos that don't match and the next round leans away from them"
+          >Explore</Button>
         </div>
       </article>
     {/each}
@@ -285,9 +294,10 @@
   /* Search button row at the bottom of each album card.
      Round‑92: the per-card "Surprise" button was removed
      (the home page now exposes Surprise me on every centroid
-     via the Additional options panel). The row now holds a
-     single Search button, which can stretch full-width
-     instead of competing for space with a sibling. */
+     via the Additional options panel). The row holds "Search"
+     and, for user albums, "Explore" — the feedback loop that
+     steers the album's results away from what the user
+     rejects. Both share the row via `flex: 1 1 auto`. */
   .search-row {
     margin-top: auto;
     display: flex;

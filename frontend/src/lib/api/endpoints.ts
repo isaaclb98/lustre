@@ -397,6 +397,77 @@ export async function listAlbumsForFavorite(pointId: string): Promise<AlbumSumma
   return r?.albums ?? [];
 }
 
+// ---------- Explore (per-album feedback loop) ----------
+
+/**
+ * Parameters for exploreRound.
+ *
+ * Explore is a per-album feedback loop: the album's photos are the
+ * positives of a Qdrant `recommend()` call, and the photos the user
+ * down-votes are the negatives. Each round re-queries with the
+ * accumulated down-votes, so the results drift away from what was
+ * rejected while staying anchored to the album.
+ *
+ * `session` is the opaque session id from a prior response. Pass it
+ * back to keep the same down-vote set; omit it to start a fresh
+ * session (which drops the down-votes).
+ */
+export interface ExploreRoundParams {
+  /** Photos per page. 1..240. Default 24. */
+  limit?: number;
+  /** Zero-based offset within the materialised round. */
+  offset?: number;
+  /** Session id from a prior response. */
+  session?: string;
+  /** Abort the request. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Fetch a page of the current Explore round for an album.
+ *
+ * The server materialises the round once and slices it — the client
+ * pages through the cached list rather than re-querying Qdrant,
+ * because offset-paging a recommend query returns duplicate rows at
+ * the page boundaries.
+ */
+export function exploreRound(
+  albumId: number,
+  params: ExploreRoundParams = {},
+  signal?: AbortSignal
+) {
+  const sig = signal ?? params.signal;
+  const search = new URLSearchParams();
+  if (params.limit !== undefined) search.set('limit', String(params.limit));
+  if (params.offset !== undefined) search.set('offset', String(params.offset));
+  if (params.session !== undefined) search.set('session', params.session);
+  return apiGet<SearchResponse>(
+    `/api/explore/album/${albumId}/round?${search.toString()}`,
+    { signal: sig, schema: Z.SearchResponse, schemaName: 'SearchResponse (explore)' }
+  );
+}
+
+/**
+ * Record an Explore vote.
+ *
+ * `up` adds the photo to the album — it becomes a positive for every
+ * later round. `down` adds the photo to the session's negative set;
+ * it is temporary and never reaches the permanent dislikes table.
+ */
+export async function exploreVote(
+  albumId: number,
+  session: string | undefined,
+  photoId: string,
+  vote: 'up' | 'down'
+) {
+  const search = new URLSearchParams();
+  if (session !== undefined) search.set('session', session);
+  await apiPost(`/api/explore/album/${albumId}/vote?${search.toString()}`, {
+    photo_id: photoId,
+    vote
+  });
+}
+
 // ---------- Misc ----------
 
 export function listCollections() {

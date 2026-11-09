@@ -59,6 +59,23 @@
     onRemove?: (id: string) => void;
     /** Visible label on the remove button + its title attribute. */
     removeLabel?: string;
+    /**
+     * Vote affordance — the Explore page's per-tile up/down pair.
+     *
+     * When set, two action chips appear over the tile: an up-vote
+     * (joins the album) and a down-vote (a temporary negative for
+     * the session's next round). The two are mutually exclusive in
+     * the caller, so only one is ever highlighted.
+     *
+     * Separate from `onRemove`: removing a photo drops it from a
+     * set permanently, whereas an Explore down-vote only steers the
+     * current round.
+     */
+    onVote?: (id: string, direction: 'up' | 'down') => void;
+    /** This photo was up-voted — highlights the up chip. */
+    votedUp?: boolean;
+    /** This photo was down-voted — highlights the down chip. */
+    votedDown?: boolean;
   };
   let {
     pointId,
@@ -72,7 +89,10 @@
     onOpen,
     onContextMenu,
     onRemove,
-    removeLabel = 'Remove'
+    removeLabel = 'Remove',
+    onVote,
+    votedUp = false,
+    votedDown = false
   }: Props = $props();
 
   // Pre-computed data URL takes priority (caller already decoded
@@ -216,6 +236,48 @@
     >
       <Icon name="minus" size={16} />
     </button>
+  {/if}
+  {#if onVote}
+    <!--
+      Explore's vote pair. Sits at the BOTTOM of the tile, unlike
+      the remove chip (top-right) and the score/fav badges (top) —
+      the bottom edge is otherwise unused, so the two vote chips
+      don't compete with the existing chrome for the same corner.
+    -->
+    <div class="vote-bar" data-no-open>
+      <button
+        type="button"
+        class="vote-btn vote-up"
+        class:voted={votedUp}
+        data-no-open
+        title="Add to album"
+        aria-label="Add to album"
+        aria-pressed={votedUp}
+        onclick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onVote?.(pointId, 'up');
+        }}
+      >
+        <Icon name="plus" size={16} />
+      </button>
+      <button
+        type="button"
+        class="vote-btn vote-down"
+        class:voted={votedDown}
+        data-no-open
+        title="Reject — steers the next round away from this"
+        aria-label="Reject this photo"
+        aria-pressed={votedDown}
+        onclick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onVote?.(pointId, 'down');
+        }}
+      >
+        <Icon name="minus" size={16} />
+      </button>
+    </div>
   {/if}
 </a>
 
@@ -425,6 +487,58 @@
     background: color-mix(in srgb, var(--negative) 18%, transparent);
     border-color: color-mix(in srgb, var(--negative) 65%, transparent);
   }
+  /* Explore's vote pair. Sits at the bottom edge, which the score
+     pill and the fav/dislike badges (both top) leave free. The
+     chips reuse the remove-btn glass treatment so they read as the
+     same family of control. */
+  .vote-bar {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    display: flex;
+    gap: 4px;
+    z-index: 2;
+  }
+  .vote-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--dialog-fill);
+    border: 1px solid var(--glass-edge);
+    color: var(--fg-1);
+    font-size: 18px;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: var(--glass-light);
+    -webkit-backdrop-filter: var(--glass-light);
+    box-shadow: var(--shadow-glass);
+    opacity: 0;
+    transition:
+      opacity var(--t-fast) var(--ease-out),
+      background var(--t-fast) var(--ease-out),
+      border-color var(--t-fast) var(--ease-out),
+      transform var(--t-fast) var(--ease-out);
+  }
+  .tile:hover .vote-btn,
+  .tile:focus-within .vote-btn,
+  .vote-btn:focus-visible,
+  .vote-btn.voted {
+    opacity: 1;
+  }
+  .vote-up:hover,
+  .vote-up.voted {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  }
+  .vote-down:hover,
+  .vote-down.voted {
+    background: color-mix(in srgb, var(--negative) 18%, transparent);
+    border-color: color-mix(in srgb, var(--negative) 65%, transparent);
+  }
   .remove-btn:active {
     transform: scale(0.92);
   }
@@ -432,5 +546,6 @@
    * present so the user can see the affordance. */
   @media (hover: none) {
     .remove-btn { opacity: 1; }
+    .vote-btn { opacity: 1; }
   }
 </style>

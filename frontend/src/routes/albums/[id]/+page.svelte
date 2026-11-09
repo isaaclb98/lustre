@@ -197,6 +197,13 @@
       <div class="actions">
         {#if detail && detail.id && (detail.member_total ?? members.length) > 0}
           <Button
+            variant="secondary"
+            href={resolve(`/explore/${detail.id}`)}
+            title="Vote down the photos that don't match and the next round leans away from them"
+          >
+            Explore
+          </Button>
+          <Button
             variant="primary"
             href="/albums/{detail.id}/download.zip"
             target="_blank"

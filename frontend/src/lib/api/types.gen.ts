@@ -293,7 +293,7 @@ export interface paths {
          *     The `full` parameter is accepted and ignored, so an old
          *     caller does not break.
          */
-        get: operations["api_cache_refresh_api_cache_refresh_get"];
+        get: operations["api_cache_refresh_api_cache_refresh_post_1"];
         put?: never;
         /**
          * Api Cache Refresh
@@ -314,7 +314,7 @@ export interface paths {
          *     The `full` parameter is accepted and ignored, so an old
          *     caller does not break.
          */
-        post: operations["api_cache_refresh_api_cache_refresh_get_1"];
+        post: operations["api_cache_refresh_api_cache_refresh_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -460,6 +460,54 @@ export interface paths {
         post: operations["mark_dislike_api_dislikes__point_id__post"];
         /** Unmark Dislike */
         delete: operations["unmark_dislike_api_dislikes__point_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/explore/album/{album_id}/round": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Explore Round
+         * @description Serve a page of the current Explore round for an album.
+         */
+        get: operations["explore_round_api_explore_album__album_id__round_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/explore/album/{album_id}/vote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Explore Vote
+         * @description Record an up-vote or a down-vote for the current session.
+         *
+         *     Body: `{"photo_id": "...", "vote": "up" | "down"}`.
+         *
+         *     A down-vote is session-scoped: it joins the negative set and
+         *     invalidates the round, so the next request re-queries Qdrant
+         *     with the new negative. An up-vote is permanent: the photo
+         *     joins the album, making it a positive for every later round
+         *     and every later session.
+         */
+        post: operations["explore_vote_api_explore_album__album_id__vote_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1878,7 +1926,7 @@ export interface operations {
             };
         };
     };
-    api_cache_refresh_api_cache_refresh_get: {
+    api_cache_refresh_api_cache_refresh_post_1: {
         parameters: {
             query?: {
                 /** @description Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant. */
@@ -1910,7 +1958,7 @@ export interface operations {
             };
         };
     };
-    api_cache_refresh_api_cache_refresh_get_1: {
+    api_cache_refresh_api_cache_refresh_post: {
         parameters: {
             query?: {
                 /** @description Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant. */
@@ -2164,6 +2212,84 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    explore_round_api_explore_album__album_id__round_get: {
+        parameters: {
+            query?: {
+                /** @description Session id from a previous round response. Pass it back to keep the same down-vote set. A new session (or no session) starts a fresh round. */
+                session?: string | null;
+                /** @description position within the current round */
+                offset?: number;
+                /** @description photos per page */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                album_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    explore_vote_api_explore_album__album_id__vote_post: {
+        parameters: {
+            query?: {
+                /** @description session id from a previous round response */
+                session?: string | null;
+            };
+            header?: never;
+            path: {
+                album_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
             };
             /** @description Validation Error */
             422: {

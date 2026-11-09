@@ -49,6 +49,12 @@ BASELINE: dict[str, int] = {
     # route makes two network calls on the request path — the facet
     # that sizes the deck, and the scroll that reads the page's ids.
     "random.py": 3,
+    # 3: the Explore round is one Qdrant recommend() whose seeds are
+    # the album's members and the session's down-votes, plus the
+    # page's payload fetch. The round build and the page hydration
+    # are each a single thread hop (the blocking calls are batched
+    # inside them), and the up-vote's album write is the third.
+    "explore.py": 3,
     "saved_searches.py": 4,
     "search.py": 5,  # 5: count_points wraps qdrant.count for pool-size clamp
     "similar.py": 4,
@@ -61,9 +67,9 @@ BASELINE: dict[str, int] = {
 # calls in non-zero routes are wrapping single SQLite reads —
 # acceptable until those IndexDB methods become async.
 NONZERO_ALLOWED: set[str] = {
-    "albums.py", "dislikes.py", "favorites.py", "for_you.py",
-    "random.py", "saved_searches.py", "search.py", "similar.py",
-    "system.py",
+    "albums.py", "dislikes.py", "explore.py", "favorites.py",
+    "for_you.py", "random.py", "saved_searches.py", "search.py",
+    "similar.py", "system.py",
 }
 
 

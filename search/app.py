@@ -1044,6 +1044,7 @@ def create_app(
     from search.routers.centroids_search import build_centroids_search_router
     from search.routers.collections import build_collections_router
     from search.routers.dislikes import build_dislikes_router
+    from search.routers.explore import build_explore_router
     from search.routers.favorites import build_favorites_router
     from search.routers.for_you import build_for_you_router
     from search.routers.random import build_random_router
@@ -1088,6 +1089,12 @@ def create_app(
         cfg=_cfg,
         register_album_centroid=_register_album_centroid,
         unregister_album_centroid=_unregister_album_centroid,
+        invalidate_album_centroid=_invalidate_album_centroid,
+    ))
+    app.include_router(build_explore_router(
+        index_db=index_db,
+        qdrant=qdrant,
+        cfg=_cfg,
         invalidate_album_centroid=_invalidate_album_centroid,
     ))
     app.include_router(build_centroids_reload_router(
