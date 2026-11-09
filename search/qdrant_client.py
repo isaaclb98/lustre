@@ -240,6 +240,7 @@ class QdrantSearch:
         score_threshold: float | None = None,
         offset: int = 0,
         with_payload: bool = True,
+        search_params: Any | None = None,
     ) -> list[SearchHit]:
         """
         Qdrant Recommend API: return the points nearest to
@@ -266,6 +267,16 @@ class QdrantSearch:
         score, so fetching the payload of every one of 20k-50k
         candidates is wasted time and memory on both sides.
 
+        `search_params` is passed through to Qdrant unchanged — it
+        carries the HNSW tuning (`SearchParams(hnsw_ef=...)`). The
+        Explore round query pins `hnsw_ef=256`: at limit=1000 the
+        default breadth leaves a long cold tail (p50 292ms, p90
+        655ms over distinct queries), and 256 pulls it to p50 68ms
+        at a cost of 11/1000 result-set differences.
+
+        Orphans are excluded from the result set, matching every
+        other read path — see `_orphan_must_not()`.
+
         Implementation note: qdrant-client 1.18 removed the
         direct `client.recommend(...)` method in favor of the
         universal `client.query_points(...)` endpoint, which
@@ -290,6 +301,11 @@ class QdrantSearch:
             must_not_conditions.append(
                 qmodels.HasIdCondition(has_id=cast("list[int|str|UUID]", exclude_ids))
             )
+        # Orphans are marked, not deleted, so they are still IN the
+        # collection and a query would otherwise return them. Every
+        # read path excludes them: a marked point must not be served
+        # while it waits for an operator to confirm its removal.
+        must_not_conditions.append(_orphan_must_not())
         if must_conditions or must_not_conditions:
             query_filter = qmodels.Filter(
                 must=must_conditions or None,
@@ -313,6 +329,7 @@ class QdrantSearch:
                 query_filter=query_filter,
                 with_payload=with_payload,
                 with_vectors=with_vector,
+                search_params=search_params,
                 # Use the dedicated, more generous timeout — the
                 # recommend path needs more headroom than the
                 # default search path on the 2M-point corpus.
