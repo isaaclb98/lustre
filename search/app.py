@@ -259,10 +259,10 @@ def _make_favourites_centroid_spec(
 ) -> DynamicCentroidSpec:
     """Build the registration spec for the favourites dynamic centroid.
 
-    Round‑29b: superseded by `_make_likes_centroid_spec` (the album
-    was renamed from Favourites to Likes). This one is still
-    registered as a back‑compat alias so old
-    `?centroid=favourites` URLs keep working.
+    The built-in album is named Favourites, so this is the primary
+    centroid key. `likes` is registered as a back-compat alias (see
+    `_make_likes_centroid_spec`) so old `?centroid=likes` URLs and
+    saved searches keep resolving.
     """
     import numpy as np
 
@@ -288,11 +288,10 @@ def _make_favourites_centroid_spec(
 
     return DynamicCentroidSpec(
         name="favourites",
-        label="Favourites (legacy alias)",
+        label="Favourites",
         description=(
             "Mean of every liked photo's embedding, re-normalised "
-            "to unit length. Back‑compat alias for the new 'likes' "
-            "centroid."
+            "to unit length. Updates as you like."
         ),
         compute_fn=compute,
         source="favourites",
@@ -308,11 +307,10 @@ def _make_likes_centroid_spec(
 ) -> DynamicCentroidSpec:
     """Build the registration spec for the likes dynamic centroid.
 
-    Round‑29b: renamed from `favourites` to `likes` to match the
-    user‑visible album label. Same compute shape — just a
-    different registry key. The old `favourites` name remains
-    registered as a back‑compat alias; see
-    `_make_favourites_centroid_spec`.
+    Back-compat alias: the built-in album is now named Favourites,
+    so `favourites` is the primary key (see
+    `_make_favourites_centroid_spec`). This keeps `?centroid=likes`
+    URLs and saved searches working.
     """
     import numpy as np
 
@@ -338,10 +336,11 @@ def _make_likes_centroid_spec(
 
     return DynamicCentroidSpec(
         name="likes",
-        label="Likes",
+        label="Likes (legacy alias)",
         description=(
             "Mean of every liked photo's embedding, "
-            "re-normalised to unit length. Updates as you like."
+            "re-normalised to unit length. Back-compat alias for "
+            "the 'favourites' centroid."
         ),
         compute_fn=compute,
         source="likes",
