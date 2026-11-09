@@ -461,10 +461,10 @@
           without being so tall it would force-scroll the page.
 
           Rows use the same `.grid-row` class so the column
-          structure (auto-fill, 384px tracks, 4px gutter,
-          centered) matches the real grid exactly. Tiles inherit
-          `.grid-tile`'s aspect-ratio: 1 and become the shimmer
-          surface via `.skeleton-tile`.
+          structure (auto-fill, `--grid-tile-size` tracks, no
+          gutter, centered) matches the real grid exactly. Tiles
+          inherit `.grid-tile`'s aspect-ratio: 1 and become the
+          shimmer surface via `.skeleton-tile`.
         -->
         <div class="skeleton-rows" aria-hidden="true">
           {#each Array(SKELETON_ROWS) as _, sr (sr)}
@@ -563,7 +563,7 @@
        because the `auto-fit` tracks grow with `1fr`. The cap
        forces the row to stay at its natural width and the
        `justify-content: center` above centers it. */
-    max-width: var(--grid-row-max-width, 1548px);
+    max-width: var(--grid-row-max-width, 1440px);
     /* No horizontal padding here — `.shell` already provides
        24px of side padding, and the row belongs to the wrapper
        which fills main's content area. Adding more here would
@@ -631,9 +631,9 @@
      fetching. Sits in normal flow below the virtualized grid so
      the visual height of the grid-wrapper grows during the fetch
      gap. Tiles inherit .grid-tile's aspect-ratio: 1 and pick up
-     the .grid-row column structure (auto-fill 384px, 4px gap,
-     centered), so the placeholder band aligns pixel-for-pixel
-     with the real tile grid above it.
+     the .grid-row column structure (auto-fill, --grid-tile-size
+     tracks, no gutter, centered), so the placeholder band aligns
+     pixel-for-pixel with the real tile grid above it.
 
      The shimmer is a diagonal gradient sweep across each tile.
      1.5s duration is slow enough to feel like a deliberate

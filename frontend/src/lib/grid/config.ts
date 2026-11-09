@@ -11,12 +11,6 @@
  * Tile size: 240/192/144 px. Large matches the Round-55 default;
  * medium and small pack progressively more photos per row.
  *
- * Gap: 14/8/4 px. Larger photos get more breathing room (the
- * Round-38 design intent — 14px reads as "personal photo library",
- * tighter gaps read as utilitarian). Smaller photos need a tighter
- * gap to read as a continuous wall instead of fragmenting into a
- * grid of small squares.
- *
  * Max cols: 6/8/10. The CSS grid uses `auto-fit` with the tile
  * size as the track width, so a narrow viewport shows fewer cols;
  * the max-cols cap kicks in only on wide monitors. This is the

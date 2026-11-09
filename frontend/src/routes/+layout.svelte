@@ -93,7 +93,7 @@
   // are derived so the ResizeObserver and any other reader see
   // the same values as PhotoGrid. Single source of truth.
   //
-  // Large is 240px tiles at 6 cols, 14px gap → a 1460px content
+  // Large is 240px tiles at 6 cols with no gap → a 1440px content
   // width. The 384px source WebP is downscaled to 240 at dpr
   // 1.53 — essentially 1:1 device-pixel mapping, which is the
   // crispest the single-variant setup gets without going to
