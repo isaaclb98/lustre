@@ -144,32 +144,6 @@ const AlbumDetailResponse = z.object({
   updated_at: z.string().optional()
 }).passthrough();
 
-// ---- for-you ----
-const ForYouFeedItem = z.object({
-  point_id: z.string().optional(),
-  id: z.string().optional(),
-  path: z.string().optional(),
-  url: z.string().optional(),
-  blurhash: z.string().nullable().optional(),
-  width: z.number().int().nullable().optional(),
-  height: z.number().int().nullable().optional(),
-  score: z.number().optional()
-}).passthrough();
-
-const ForYouFeedResponse = z.object({
-  results: z.array(ForYouFeedItem),
-  n_likes: z.number().int().optional(),
-  n_dislikes: z.number().int().optional(),
-  freshest_feedback_ts: z.union([z.string(), z.null()]).optional(),
-  ranker_state: z.record(z.string(), z.unknown()).optional()
-}).passthrough();
-
-const ForYouState = z.object({
-  n_likes: z.number().int().default(0),
-  n_dislikes: z.number().int().default(0),
-  freshest_feedback_ts: z.union([z.string(), z.null()]).optional()
-}).passthrough();
-
 // ---- system / admin telemetry (Phase 2) ----
 // Mirror the Pydantic models in search/models.py. Used by the
 // home page (corpus size for the Surprise Me pool label) and
@@ -298,9 +272,6 @@ export const Z = {
   AlbumDetailResponse,
   CollectionsList,
   CentroidList,
-  ForYouFeedItem,
-  ForYouFeedResponse,
-  ForYouState,
   SystemStatus,
   IndexerProgress,
   IndexerStatus,
