@@ -1,13 +1,17 @@
 <script lang="ts">
   /**
-   * Albums — list + create. Two non-optional system albums (Likes,
-   * Dislikes) are rendered first and cannot be deleted or renamed;
+   * Albums — list + create. One non-optional system album (Likes)
+   * is rendered first and cannot be deleted or renamed;
    * user-created albums follow.
    *
+   * The built-in Dislikes album was removed — the Explore album
+   * feature covers that ground, and a dislikes grid is a list of
+   * photos the user has told the system to stop showing them.
+   *
    * Round‑29: every card has a "Search" button that navigates to
-   * the home page with ?centroid=album:{id} (or ?centroid=likes /
-   * ?centroid=dislikes for the built-ins). The home page renders
-   * results inline using that album's centroid.
+   * the home page with ?centroid=album:{id} (or ?centroid=likes
+   * for the built-in). The home page renders results inline using
+   * that album's centroid.
    *
    * Round‑29b: the Likes centroid is now registered under
    * `likes` (was `favourites`). The backend keeps `favourites`
@@ -30,9 +34,7 @@
     deleteAlbum,
     updateAlbum,
     listFavorites,
-    listDislikes,
     getFavoriteCount,
-    getDislikeCount,
     thumbUrl
   } from '$lib/api/endpoints';
   import { dialog } from '$lib/components/Dialog.svelte';
@@ -46,7 +48,6 @@
   // 'favourites' as a back-compat alias so legacy URLs still
   // resolve.
   const LIKES_CENTROID = 'likes';
-  const DISLIKES_CENTROID = 'dislikes';
 
   async function searchByAlbum(centroidName: string) {
     await goto(resolve(`/?centroid=${encodeURIComponent(centroidName)}`));
@@ -65,11 +66,9 @@
   // otherwise the dialog closes and the card looks untouched.
   let errorMsg = $state<string | null>(null);
   let likesCount = $state(0);
-  let dislikesCount = $state(0);
   // First photo id in each built-in album — used as the card cover.
   // Empty string while loading or when the album is empty.
   let likesFirstId = $state('');
-  let dislikesFirstId = $state('');
 
   async function refresh() {
     loading = true;
@@ -85,33 +84,27 @@
 
   async function refreshSystemCounts() {
     try {
-      // Phase 2: getFavoriteCount / getDislikeCount wrap the
-      // raw `/api/favorites?limit=1` and `/api/dislikes?limit=1`
-      // endpoints with Zod validation. No need for a hand-rolled
-      // extractCount shim once the response is typed.
-      const [likes, dislikes] = await Promise.all([
-        getFavoriteCount(),
-        getDislikeCount()
-      ]);
-      likesCount = likes;
-      dislikesCount = dislikes;
+      // Phase 2: getFavoriteCount wraps the raw
+      // `/api/favorites?limit=1` endpoint with Zod validation. No
+      // need for a hand-rolled extractCount shim once the response
+      // is typed.
+      likesCount = await getFavoriteCount();
     } catch {
       // Counts are decorative; a 502 on count fetch shouldn't
       // blank the whole page.
     }
     // Cover photo for each built-in album. Fire-and-forget — the
     // card is already informative without a thumbnail.
-    Promise.all([
-      fetchCover(listFavorites).then((id) => (likesFirstId = id)),
-      fetchCover(listDislikes).then((id) => (dislikesFirstId = id))
-    ]).catch(() => {
-      /* non-fatal */
-    });
+    fetchCover(listFavorites)
+      .then((id) => (likesFirstId = id))
+      .catch(() => {
+        /* non-fatal */
+      });
   }
 
   /** Fetch one SearchResult from the list endpoint and return its id.
-   * With `as_results=1` (which is what listFavorites / listDislikes
-   * set), the backend returns a SearchResponse envelope — the
+   * With `as_results=1` (which is what listFavorites sets), the
+   * backend returns a SearchResponse envelope — the
    * array lives under `results`, not `favorites` / `items`. */
   async function fetchCover(
     list: (limit?: number, offset?: number) => Promise<unknown>
@@ -253,34 +246,6 @@
       >Search</Button>
     </div>
   </article>
-  <article class="card glass">
-    {#if dislikesFirstId}
-      <img class="cover" src={thumbUrl(dislikesFirstId)} alt="" loading="lazy" />
-    {:else}
-      <div class="cover cover-empty" aria-hidden="true"></div>
-    {/if}
-    <a class="title" href={resolve('/albums/dislikes')}>
-      <span>Dislikes</span>
-    </a>
-    <!-- Round-61: removed the description ("Photos you've
-         disliked. Built-in, always here.") and the "built-in"
-         pill. The title is self-explanatory. -->
-    <footer>
-      <span class="count">{dislikesCount} photo{dislikesCount === 1 ? '' : 's'}</span>
-    </footer>
-    <div class="search-row">
-      <Button
-        variant="ghost"
-        size="sm"
-        class="search-btn"
-        data={{ 'data-centroid': DISLIKES_CENTROID }}
-        onclick={() => searchByAlbum(DISLIKES_CENTROID)}
-        disabled={dislikesCount === 0}
-        aria-label="Search by Dislikes centroid"
-      >Search</Button>
-    </div>
-  </article>
-
   {#if loading}
     <div class="state state-wide">Loading albums…</div>
   {:else if albums.length > 0}
@@ -354,11 +319,10 @@
     flex: 1 1 auto;
   }
 
-  /* System albums (Likes, Dislikes) live in the same grid as the
-     user-created albums below. They are pinned to the top of the
-     flow by virtue of being declared first in the template; the
-     `built-in` pill in the footer marks them visually. */
-  /* Album cards (Likes/Dislikes + user albums) in a single auto-fit
+  /* The built-in album (Likes) lives in the same grid as the
+     user-created albums below. It is pinned to the top of the
+     flow by virtue of being declared first in the template. */
+  /* Album cards (Likes + user albums) in a single auto-fit
      grid. auto-fit collapses empty tracks when item count is below
      the column count, so a sparse row (e.g. 2 user albums) centers
      the filled cards rather than leaving an empty band on the right.
@@ -411,7 +375,7 @@
      Margins, not flex gap — gap is uniform across siblings. */
   /* Round-61: cover→title 16px (unchanged). Removed the
      title→desc 4px gap and desc→footer 12px gap because
-     Likes/Dislikes no longer render a description. footer→search
+     Likes no longer renders a description. footer→search
      stays 16px. search-row gets margin-top: auto so it pins to
      the bottom of the card — any leftover vertical space in a
      row-stretched card lands between footer and search-row, not
