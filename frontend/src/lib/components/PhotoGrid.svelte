@@ -106,6 +106,16 @@
      * photos touch pixel-to-pixel.
      */
     wall?: boolean;
+    /**
+     * A read-only surface: the tiles are pictures, not targets.
+     *
+     * Suppresses everything the grid would otherwise put on a
+     * tile — the lightbox, the right-click context menu — so a
+     * surface that must have no controls and no way to mutate
+     * anything cannot leak one in through the shared grid
+     * component.
+     */
+    readOnly?: boolean;
   };
 
   let {
@@ -125,7 +135,8 @@
     onPhotoOpen,
     lightboxIndex = $bindable<number | null>(null),
     tileConfig,
-    wall = false
+    wall = false,
+    readOnly = false
   }: Props = $props();
 
   // Grid config
@@ -419,6 +430,40 @@
     lightboxIndex = null;
   }
 
+  /**
+   * What a tile click and a right-click do.
+   *
+   * On a read-only surface both are undefined: there is no
+   * lightbox to open (the lightbox carries an action bar with
+   * favourite / dislike / add-to-album) and no context menu (it
+   * carries the same mutations). The tile renders as a plain
+   * picture, so nothing on the surface can be changed.
+   */
+  function tileOpen(item: Item, itemIndex: number) {
+    if (readOnly) return undefined;
+    return onPhotoOpen ? () => onPhotoOpen(item) : () => openLightbox(itemIndex);
+  }
+
+  function tileContextMenu(item: Item) {
+    if (readOnly) return undefined;
+    return (_id: string, e: MouseEvent) => openContextMenu(item, e);
+  }
+
+  /**
+   * The accessible name of a read-only tile.
+   *
+   * An interactive tile is named "Open photo" — the name of the
+   * action. A read-only tile has no action, so the name has to
+   * identify the PHOTO instead, or a screen reader announces a
+   * grid of anonymous images. The file name is the only identity
+   * the photo has.
+   */
+  function tileLabel(item: Item): string | undefined {
+    if (!readOnly) return undefined;
+    const name = item.path?.split('/').pop();
+    return name || undefined;
+  }
+
   // Round-37: removed the per-scroll and per-lightbox pageTint
   // effects. They were pushing the first-visible row's blurhash
   // (and the lightbox-active photo's URL) to a global backdrop
@@ -484,15 +529,17 @@
                 isFavorite={item.is_favorite}
                 isDisliked={item.is_disliked}
                 {eagerIndex}
-                onOpen={onPhotoOpen ? () => onPhotoOpen(item) : () => openLightbox(itemIndex)}
-                onContextMenu={(id, e) => openContextMenu(item, e)}
+                onOpen={tileOpen(item, itemIndex)}
+                onContextMenu={tileContextMenu(item)}
                 onRemove={onRemove}
                 removeLabel={removeLabel}
                 onVote={onVote}
                 votedUp={upVoted?.has(item.id) ?? false}
                 votedDown={downVoted?.has(item.id) ?? false}
                 voteUpLabel={voteUpLabel}
+                label={tileLabel(item)}
                 {wall}
+                {readOnly}
               />
             </div>
           {/each}

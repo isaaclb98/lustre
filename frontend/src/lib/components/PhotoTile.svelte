@@ -84,6 +84,30 @@
      */
     voteUpLabel?: string;
     /**
+     * Read-only tile: no link, no click, no context menu.
+     *
+     * The tile is a picture and nothing else. It does not open
+     * the photo, it does not open the app's context menu, and it
+     * is not focusable — so it cannot be the way out of a surface
+     * that is meant to have no way out, and it cannot mutate
+     * anything.
+     *
+     * The distinction from `wall` matters: `wall` is how the tile
+     * LOOKS (square, no gutter, no border). `readOnly` is what the
+     * tile DOES, which is nothing.
+     */
+    readOnly?: boolean;
+    /**
+     * Accessible name for the tile.
+     *
+     * An interactive tile is named "Open photo" — the name of the
+     * action. A read-only tile has no action, so the name has to
+     * identify the PHOTO instead, or a screen reader announces a
+     * grid of anonymous images. The presentation wall passes the
+     * file name, which is the only identity the photo has.
+     */
+    label?: string;
+    /**
      * Render as part of a continuous wall: square corners, no
      * gutter, and no border between tiles.
      *
@@ -115,7 +139,9 @@
     votedUp = false,
     votedDown = false,
     voteUpLabel = 'Add to album',
-    wall = false
+    wall = false,
+    readOnly = false,
+    label = ''
   }: Props = $props();
 
   // Pre-computed data URL takes priority (caller already decoded
@@ -202,17 +228,30 @@
   });
 </script>
 
-<a
+<!-- The tile is an anchor in every interactive grid — it links to
+     the photo's own page. On a read-only wall there is no photo
+     page to link to and no click to handle, so the element becomes
+     a plain div: not a link, not focusable, not a target.
+
+     The role follows the element for the same reason. An
+     interactive tile is a link ("Open photo" is the name of the
+     action). A read-only tile is a picture, so it announces as
+     one, named after the photo — otherwise a screen reader walks
+     a grid of anonymous images. -->
+<svelte:element
+  this={readOnly ? 'div' : 'a'}
   class="tile"
   class:loaded
   class:favorite={isFavorite}
   class:disliked={isDisliked}
   class:menu-open={contextMenuOpen}
   class:wall
-  href={`/photo/${encodeURIComponent(pointId)}`}
-  onclick={handleClick}
-  oncontextmenu={handleContext}
-  aria-label="Open photo"
+  role={readOnly ? 'img' : 'link'}
+  href={readOnly ? undefined : `/photo/${encodeURIComponent(pointId)}`}
+  data-photo-id={pointId}
+  onclick={readOnly ? undefined : handleClick}
+  oncontextmenu={readOnly ? undefined : handleContext}
+  aria-label={readOnly ? label || undefined : 'Open photo'}
 >
   {#if dataUrl}
     <img class="ph" src={dataUrl} alt="" aria-hidden="true" />
@@ -310,7 +349,7 @@
       </button>
     </div>
   {/if}
-</a>
+</svelte:element>
 
 <style>
   .tile {
