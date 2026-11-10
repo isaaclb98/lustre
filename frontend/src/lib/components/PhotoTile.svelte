@@ -83,6 +83,20 @@
      * the up-vote marks the photo as a favourite.
      */
     voteUpLabel?: string;
+    /**
+     * Render as part of a continuous wall: square corners, no
+     * gutter, and no border between tiles.
+     *
+     * The border is the reason this is a variant rather than just
+     * a radius change. A border is part of the tile's own box, so
+     * with border-box sizing two neighbours' 1px borders leave 2px
+     * of background between the photos AND inset each photo from
+     * its own edge. The photo has to reach the tile's edge for the
+     * wall to be seamless. The state rings move to an `outline` with
+     * a negative offset, which paints inside the tile over the
+     * photo and — unlike a border — never changes the layout.
+     */
+    wall?: boolean;
   };
   let {
     pointId,
@@ -100,7 +114,8 @@
     onVote,
     votedUp = false,
     votedDown = false,
-    voteUpLabel = 'Add to album'
+    voteUpLabel = 'Add to album',
+    wall = false
   }: Props = $props();
 
   // Pre-computed data URL takes priority (caller already decoded
@@ -193,6 +208,7 @@
   class:favorite={isFavorite}
   class:disliked={isDisliked}
   class:menu-open={contextMenuOpen}
+  class:wall
   href={`/photo/${encodeURIComponent(pointId)}`}
   onclick={handleClick}
   oncontextmenu={handleContext}
@@ -301,7 +317,12 @@
     position: relative;
     display: block;
     aspect-ratio: 1 / 1;
-    border-radius: var(--r-1);
+    /* The radius is published so the loading skeleton — a different
+       component — matches the tile's shape and cannot drift. The
+       wall overrides it to 0: its photos touch pixel-to-pixel, and
+       a rounded corner would leave the background showing through
+       at every intersection. */
+    border-radius: var(--grid-tile-radius, var(--r-1));
     overflow: hidden;
     background: var(--bg-1);
     border: 1px solid var(--glass-edge);
@@ -322,6 +343,41 @@
   .tile:hover {
     border-color: var(--glass-edge-strong);
     box-shadow: var(--shadow-3);
+  }
+
+  /* ---- the wall variant ----
+     A continuous wall of photos that touch pixel-to-pixel. Two
+     changes from the default tile:
+       1. No border. A border is part of the tile's own box, so
+          with border-box sizing two neighbours' 1px borders leave
+          2px of background between the photos and inset each one
+          from its own edge. The photo has to reach the tile's edge
+          for the wall to be seamless.
+       2. The state rings move from `border-color` to an `outline`
+          with a negative offset. An outline paints inside the tile
+          over the photo and — unlike a border — never changes the
+          layout, so a ring on one tile cannot shift its neighbours. */
+  .tile.wall {
+    border: none;
+    border-radius: var(--grid-tile-radius, 0px);
+  }
+  .tile.wall:focus-visible {
+    border-radius: var(--grid-tile-radius, 0px);
+  }
+  .tile.wall:hover {
+    outline: 1px solid var(--glass-edge-strong);
+    outline-offset: -1px;
+    box-shadow: var(--shadow-3);
+  }
+  .tile.wall.menu-open {
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+    box-shadow: var(--shadow-glass-strong);
+  }
+  .tile.wall.disliked {
+    outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    outline-offset: -1px;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
   }
   .tile.menu-open {
     border-color: var(--accent);
