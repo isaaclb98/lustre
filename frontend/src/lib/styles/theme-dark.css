@@ -1,0 +1,148 @@
+/**
+ * The dark theme.
+ *
+ * Isaac's brief: dark, sharp, minimal, and as unobtrusive as
+ * possible — the photos are the UI, the chrome recedes.
+ *
+ *   - three surfaces (near-black page, charcoal panel, one step up),
+ *     one accent, and neutrals derived from them;
+ *   - no rounded corners anywhere;
+ *   - the photo grid loses its gutter and its tile border, so the
+ *     photos read as one continuous surface;
+ *   - the light theme is untouched. Every rule here is scoped to
+ *     `html[data-theme='dark']`, the marker the backend stamps onto
+ *     the shell it serves (see search/theme.py).
+ *
+ * Contrast on the near-black base: primary text 16.1:1, secondary
+ * 8.3:1, tertiary 5.7:1, accent 6.1:1 — all past WCAG AA.
+ *
+ * This file is a token source of truth, exactly like tokens.css is
+ * for the light theme, which is why check-css-tokens.mjs exempts it.
+ */
+
+html[data-theme='dark'] {
+  /* surfaces — near-black page, charcoal panels */
+  --bg-0: #0a0a0b;
+  --bg-1: #16171a;
+  --bg-2: #212226;
+
+  /* glass — light-on-dark instead of white-on-light */
+  --glass-1: rgba(255, 255, 255, 0.04);
+  --glass-2: rgba(255, 255, 255, 0.08);
+  --glass-edge: rgba(255, 255, 255, 0.10);
+  --glass-edge-strong: rgba(255, 255, 255, 0.20);
+  --glass-inset: rgba(255, 255, 255, 0.06);
+  --glass-edge-bright: rgba(255, 255, 255, 0.06);
+
+  /* glass-fill — dark panels. The TopBar, dialogs and menus are
+     surfaces on the page, so they follow the page, not the photos. */
+  --glass-fill-light: rgba(22, 23, 26, 0.82);
+  --glass-fill-medium: rgba(22, 23, 26, 0.94);
+  --glass-fill-heavy: rgba(22, 23, 26, 1);
+
+  /* pill — the overlay badges that sit ON a photo. These stay light
+     in both themes: the photo behind them is the surface, and white
+     on a photo reads whether the photo is bright or dark. */
+  --pill-bg: rgba(255, 255, 255, 0.92);
+  --pill-bg-strong: rgba(255, 255, 255, 0.96);
+  --pill-bg-hover: rgba(255, 255, 255, 1);
+  --pill-fg: #14161a;
+  --pill-border: rgba(0, 0, 0, 0.12);
+
+  /* scrollbar — a light thumb on a dark track */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
+
+  /* scrim — the lightbox and modal dim the page behind them */
+  --scrim: rgba(0, 0, 0, 0.62);
+  --scrim-cell: rgba(0, 0, 0, 0.35);
+
+  /* skeleton — the shimmer reads as a faint lift off the page */
+  --skeleton-track: rgba(255, 255, 255, 0);
+  --skeleton-base: rgba(255, 255, 255, 0.05);
+  --skeleton-peak: rgba(255, 255, 255, 0.09);
+
+  /* text — near-white primary, two steps down for secondary */
+  --fg-1: #e8e8e6;
+  --fg-2: #a8a8a4;
+  --fg-3: #8a8a86;
+  --fg-on-accent: #0a0a0b;
+
+  /* accent — one blue, used for links, focus, selection */
+  --accent: #4f8ff0;
+  --accent-2: #6ba6f0;
+  --accent-soft: rgba(79, 143, 240, 0.14);
+  /* the halo is the same blue as the accent, so the home button's
+     glow and the dropdown hover stay one colour */
+  --halo: 79, 143, 240;
+
+  /* semantic — unchanged from the light theme; they are state, not
+     chrome, and both read well on the near-black base */
+  --negative: #ef4444;
+  --negative-soft: rgba(239, 68, 68, 0.14);
+  --success: #10b981;
+  --danger: #ef4444;
+  --warn: #f59e0b;
+
+  /* radii — sharp. Everything. */
+  --r-1: 0px;
+  --r-2: 0px;
+  --r-3: 0px;
+  --r-4: 0px;
+  --r-pill: 0px;
+
+  /* photo-tile chrome — borderless and flat.
+     The dark theme's grid is a continuous surface: the photos touch
+     pixel-to-pixel, so a border between them would read as a grid of
+     seams rather than as the edge of a photo. Same reasoning as the
+     presentation wall's borderless tile.
+
+     The state rings move INSIDE the tile (an inset outline paints
+     over the photo, and never changes the layout) so a disliked or
+     menu-open tile is marked without a ring appearing to sit on top
+     of its neighbour. */
+  --grid-tile-border-width: 0px;
+  --grid-tile-shadow: none;
+  --grid-tile-hover-shadow: none;
+  /* The context-menu-open marker moves inside the tile for the same
+     reason the state rings do: with no border, `border-color` has
+     nothing to paint, so the ring has to be the inset shadow. */
+  --grid-tile-menu-shadow: inset 0 0 0 1px var(--accent);
+  --grid-tile-dislike-ring: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  --grid-tile-mixed-ring: inset 0 0 0 1px var(--mixed-tile-ring);
+
+  /* shadows — on a near-black base a shadow is invisible, so depth
+     comes from the surfaces themselves. What is left is just enough
+     to lift a floating panel off the page. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 10px 28px rgba(0, 0, 0, 0.55);
+  --shadow-glass:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-glass-strong:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow-button: 0 4px 18px rgba(var(--halo), 0.25);
+
+  /* backdrop — a whisper of lift at the top, otherwise flat black */
+  --bg-mesh:
+    radial-gradient(ellipse 70% 55% at 50% -5%, rgba(255, 255, 255, 0.025), transparent 70%),
+    var(--bg-0);
+}
+
+/**
+ * No rounded corners, anywhere.
+ *
+ * The radius tokens above cover everything that reads one, but a
+ * handful of surfaces (the photo tile's badges, the scroll-to-top
+ * button, the toggle switch, the spinner) declare their roundness
+ * directly. "No rounded aspects at all" means all of them, so this
+ * one rule settles it for the whole theme — including anything
+ * added later.
+ */
+html[data-theme='dark'] *,
+html[data-theme='dark'] *::before,
+html[data-theme='dark'] *::after {
+  border-radius: 0 !important;
+}

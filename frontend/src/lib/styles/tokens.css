@@ -138,6 +138,22 @@
   --r-4: 24px;
   --r-pill: 9999px;
 
+  /* photo-tile chrome.
+     The tile's own border, shadow and state rings, as tokens rather
+     than literals, so a theme can restyle them. The dark theme sets
+     these to a borderless, flat tile — the photos touch pixel-to-
+     pixel there, so a border or a shadow would read as a seam
+     between two photos rather than as the edge of one.
+     The values here are the light theme's: a hairline border, a
+     resting shadow, and the rings that mark a disliked / mixed /
+     context-menu-open tile. */
+  --grid-tile-border-width: 1px;
+  --grid-tile-shadow: var(--shadow-1);
+  --grid-tile-hover-shadow: var(--shadow-3);
+  --grid-tile-menu-shadow: var(--shadow-glass-strong);
+  --grid-tile-dislike-ring: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  --grid-tile-mixed-ring: 0 0 0 1px var(--mixed-tile-ring);
+
   /* spacing — 4px grid */
   --s-0: 4px;
   --s-1: 8px;

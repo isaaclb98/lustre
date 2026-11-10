@@ -1,4 +1,11 @@
 @import './tokens.css';
+/* The dark theme — an optional second palette, selected by the
+   `data-theme` attribute the backend stamps onto the shell it
+   serves (see search/theme.py). It overrides the light tokens
+   rather than replacing them, so the light theme is untouched when
+   the attribute is absent. Imported after tokens.css because it
+   redefines the same token names. */
+@import './theme-dark.css';
 /* Roboto Flex (variable) — Google's updated UI font (2022).
    Variable axes: weight, width, optical size, grade. Single
    CSS import, full axis. Used on Android, Chrome OS, Google
