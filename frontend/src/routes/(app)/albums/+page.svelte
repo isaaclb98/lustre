@@ -44,6 +44,7 @@
   import { dialog } from '$lib/components/Dialog.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import Button from '$lib/components/Button.svelte';
+  import Icon from '$lib/components/Icon.svelte';
   import type { AlbumSummary } from '$lib/api/endpoints';
 
   // The centroid key for the built-in album. `favourites` is the
@@ -232,19 +233,28 @@
         {:else}
           <div class="cover cover-empty" aria-hidden="true"></div>
         {/if}
+        <!--
+          Delete lives in the card's top-right corner as a minus,
+          revealed on hover — the same affordance the photo tile
+          uses to remove a photo from an album (PhotoTile's
+          .remove-btn), so the two read as one family of control
+          rather than the card carrying a text button the grid
+          doesn't have anywhere else. The confirm dialog still
+          guards the delete; only the affordance moved.
+        -->
+        <button
+          type="button"
+          class="card-remove"
+          title="Delete {a.name}"
+          aria-label="Delete {a.name}"
+          onclick={() => remove(a.id, a.name)}
+        >
+          <Icon name="minus" size={16} />
+        </button>
         <a class="title" href={resolve(`/albums/${a.id}`)}>{a.name}</a>
         {#if a.description}<p class="desc">{a.description}</p>{/if}
         <footer>
           <span class="count">{a.member_count ?? 0} photos</span>
-          <div class="actions">
-            <Button
-              variant="ghost"
-              size="sm"
-              danger
-              onclick={() => remove(a.id, a.name)}
-              aria-label="Delete {a.name}"
-            >Delete</Button>
-          </div>
         </footer>
         <div class="search-row">
           <Button
@@ -318,6 +328,8 @@
     padding: 0 0 var(--s-2);
     display: flex;
     flex-direction: column;
+    /* Anchors .card-remove (the corner minus). */
+    position: relative;
     /* Round-49: per-section rhythm replaces the uniform 8px
        gap. Cover→title (16px) gets the most breathing room
        because the cover is the focal point and the text needs
@@ -415,12 +427,67 @@
     align-items: center;
     margin-top: auto;
   }
-  /* Delete sits on the right; the photo count stays on the left.
-     The wrapper keeps it there — without it the button would be
-     spread away by `justify-content: space-between`. */
-  .actions {
-    display: flex;
-    gap: var(--s-1);
+  /* The card's delete affordance: a minus in the top-right corner,
+     revealed on hover.
+     This is the photo tile's remove button (PhotoTile's
+     .remove-btn) transplanted to the card's corner, deliberately:
+     the two are the same gesture — "take this out of the
+     collection" — and they should look like one family of control
+     across the app. Same 28px glass chip, same hover tint, same
+     reveal.
+     The corner is the card's, not the cover's, so it clears the
+     cover image and never sits over the photo. */
+  .card-remove {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--dialog-fill);
+    border: 1px solid var(--glass-edge);
+    color: var(--fg-1);
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: var(--glass-light);
+    -webkit-backdrop-filter: var(--glass-light);
+    box-shadow: var(--shadow-glass);
+    opacity: 0;
+    /* Hidden with opacity alone, the button still swallows pointer
+       events — a click in the corner would delete the album
+       without the user ever seeing the control that did it. */
+    pointer-events: none;
+    z-index: 2;
+    transition:
+      opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      background var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
+      border-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
+  }
+  .card:hover .card-remove,
+  .card:focus-within .card-remove,
+  .card-remove:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .card-remove:hover {
+    background: color-mix(in srgb, var(--negative) 18%, transparent);
+    border-color: color-mix(in srgb, var(--negative) 65%, transparent);
+  }
+  /* Touch devices have no hover, so a hover-revealed control would
+     never appear and delete would be unreachable. Keep it visible
+     there. The query is `(hover: none) AND (pointer: coarse)`
+     rather than `(hover: none)` alone: a hybrid laptop whose
+     primary pointer is a mouse still reports `hover: none` on some
+     setups, and that device SHOULD get hover-only behaviour like
+     any other mouse. */
+  @media (hover: none) and (pointer: coarse) {
+    .card-remove {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
   .count {
     color: var(--fg-3);
