@@ -1,5 +1,8 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vitest/config';
+import { loadEnv } from 'vite';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Dev-server proxy target. In Isaac's local dev setup this points at
 // the FastAPI backend on localhost:8765; in the k8s cluster the
@@ -12,8 +15,40 @@ import { defineConfig } from 'vitest/config';
 // the ConfigMap update sits in transit.
 const API_PROXY_TARGET = process.env.API_PROXY_TARGET || 'http://localhost:8765';
 
+// The repo root — two levels up from frontend/. The .env the backend
+// reads lives there.
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..'
+);
+
+// Load the deployment's theme from the REPO-ROOT .env — the same
+// file the backend reads (search/config.py's load_dotenv walks up
+// from the repo root). The frontend dev server has to read it too,
+// or `npm run dev` would render the light theme while the backend
+// rendered the dark one, and the two would disagree about which
+// theme is live.
+//
+// loadEnv merges the .env files under `repoRoot` with the real
+// process env, the process env winning — the same precedence the
+// backend gives it.
+//
+// This runs in configResolved rather than at module scope because
+// the mode is only known once the config is resolved.
+function themeFromRootEnv() {
+  return {
+    name: 'lustre-theme-env',
+    configResolved(config: { mode: string }) {
+      const rootEnv = loadEnv(config.mode, repoRoot, 'LUSTRE_');
+      if (!process.env.LUSTRE_THEME && rootEnv.LUSTRE_THEME) {
+        process.env.LUSTRE_THEME = rootEnv.LUSTRE_THEME;
+      }
+    }
+  };
+}
+
 export default defineConfig({
-  plugins: [sveltekit()],
+  plugins: [themeFromRootEnv(), sveltekit()],
   // Svelte 5 ships separate server and client runtimes. jsdom is a
   // browser environment, so force the client bundle here. Without it,
   // @testing-library/svelte mounts the server bundle and explodes with
