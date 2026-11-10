@@ -1,15 +1,26 @@
 <script lang="ts">
   /**
-   * Presentation mode — the album as a gallery.
+   * Presentation mode — the album as a gallery, in the foreground.
    *
-   * A full-bleed wall of the album's photos, in a random order,
-   * with no page chrome. It is the album read as a whole rather
-   * than browsed a row at a time: the random order means the
-   * album's variety is what you perceive, not the sequence the
-   * photos were added in.
+   * This route breaks out of the app's layout hierarchy: it resets
+   * to the ROOT layout with `+page@.svelte`, so the app chrome (the
+   * top bar, the page shell, the floating scroll-to-top button) is
+   * not in its tree at all. Nothing is behind the wall and nothing
+   * is around it — the photos are the whole screen.
    *
-   * Read-only by design — there is no remove-from-album affordance
-   * here. The album page is one click away for curating.
+   * The surface has no controls either: no menu, no buttons, not
+   * even the tile chrome the rest of the app shows. A presentation
+   * is a thing you look at, and every control on it is a control
+   * that can be pressed by accident while the album is on screen.
+   * That also makes it read-only: the wall cannot favourite,
+   * dislike or re-file a photo, because it has no affordance for it.
+   *
+   * A random order, re-rolled on every open. An album in the order
+   * the photos were added reads as a sequence the user already
+   * knows; a random one shows the album's variety.
+   *
+   * The way out is the Escape key and the browser's own back
+   * button — the same gestures that leave any fullscreen surface.
    */
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
@@ -20,7 +31,6 @@
   import { GRID_SIZE_CONFIG, wallConfig } from '$lib/grid/config';
   import { shuffled } from '$lib/grid/shuffle';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
-  import Button from '$lib/components/Button.svelte';
   import type { AlbumDetail } from '$lib/api/endpoints';
 
   type Member = {
@@ -57,16 +67,16 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  // The order the wall renders. Re-rolled on every open and by the
-  // "Shuffle again" button. The members themselves are kept
-  // unshuffled so a re-shuffle does not need another fetch.
+  // The order the wall renders. Re-rolled on every open. The members
+  // themselves are kept unshuffled so a re-shuffle does not need
+  // another fetch.
   let order = $state<number[]>([]);
 
   let items = $derived<Item[]>(
     order.map((i) => {
       const m = members[i];
       return {
-        id: m.id,
+        id: m.point_id ?? m.id,
         path: m.path,
         blurhash: m.blurhash ?? null,
         is_favorite: m.is_favorite
@@ -79,10 +89,6 @@
   // pixel-to-pixel — but the size stays the user's choice so the
   // photos are as large as they asked for.
   let tileConfig = $derived(wallConfig(GRID_SIZE_CONFIG[$preferences.gridSize]));
-
-  function reshuffle() {
-    order = shuffled(members.map((_, i) => i));
-  }
 
   async function load() {
     const id = String($page.params.id);
@@ -102,7 +108,7 @@
       detail = res;
       members = (res.members ?? []) as Member[];
       error = null;
-      reshuffle();
+      order = shuffled(members.map((_, i) => i));
     } catch (e: unknown) {
       error = (e as Error).message ?? 'Failed to load album';
     } finally {
@@ -110,29 +116,29 @@
     }
   }
 
-  onMount(load);
+  /**
+   * Escape leaves the wall.
+   *
+   * The surface has no visible way out — no back button, no menu —
+   * so the keyboard carries it.
+   */
+  function onKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape') return;
+    void goto(resolve(`/albums/${$page.params.id}`));
+  }
+
+  onMount(() => {
+    void load();
+    window.addEventListener('keydown', onKeydown);
+    return () => window.removeEventListener('keydown', onKeydown);
+  });
 </script>
 
 <svelte:head>
   <title>{detail?.name ?? 'Album'} · Lustre</title>
 </svelte:head>
 
-<div class="present">
-  <!-- A minimal bar: the album name, and the way out. The wall is
-       the content, so nothing else competes with it. -->
-  <div class="bar">
-    <Button variant="secondary" onclick={() => goto(resolve(`/albums/${$page.params.id}`))}>
-      ← Back to album
-    </Button>
-    <h1>{detail?.name ?? 'Album'}</h1>
-    <div class="bar-right">
-      <span class="count">{members.length} photos</span>
-      <Button variant="secondary" onclick={reshuffle} title="Show them in a different order">
-        Shuffle again
-      </Button>
-    </div>
-  </div>
-
+<div class="present" data-photo-count={members.length}>
   {#if loading}
     <div class="state">Loading…</div>
   {:else if error || !detail}
@@ -144,60 +150,18 @@
       items={items}
       {tileConfig}
       wall
+      readOnly
     />
   {/if}
 </div>
 
 <style>
   .present {
-    /* Full-bleed horizontally: cancel the shell's side padding so
-       the wall runs to the viewport edges. Only the SIDES are
-       cancelled — pulling the top up as well would slide the wall
-       under the app's sticky TopBar. */
-    margin: 0 calc(-1 * var(--shell-pad-x));
-    padding: 0;
-  }
-  .bar {
-    display: flex;
-    align-items: center;
-    gap: var(--s-3);
-    padding: var(--s-3) var(--shell-pad-x);
-    background: color-mix(in srgb, var(--bg-0) 85%, transparent);
-    backdrop-filter: var(--pill-blur);
-    -webkit-backdrop-filter: var(--pill-blur);
-    border-bottom: 1px solid var(--glass-edge);
-    /* The app's TopBar is sticky at the top of the viewport, so this
-       bar has to stick BELOW it — otherwise it slides under the TopBar
-       as soon as the wall is scrolled, and the two overlap. The
-       TopBar's height is a published token, so this tracks it; the
-       extra 1px is the TopBar's own bottom border, which sits
-       outside its declared height. */
-    position: sticky;
-    top: calc(var(--topbar-h) + 1px);
-    /* Above the tile chrome (z:2) so the bar's own controls are
-       never covered by a photo, but below the TopBar (z:100) so the
-       app's navigation stays on top. */
-    z-index: 3;
-  }
-  .bar h1 {
-    margin: 0;
-    font-size: var(--fs-5, 1.25rem);
-    font-weight: 600;
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .bar-right {
-    display: flex;
-    align-items: center;
-    gap: var(--s-3);
-  }
-  .count {
-    color: var(--fg-2);
-    font-size: var(--fs-2, 0.875rem);
-    white-space: nowrap;
+    /* The wall is the whole screen. There is no shell padding to
+       cancel here (the route breaks out of the shell entirely) and
+       no top bar to slide under — the photos start at the very top
+       of the viewport and run to its edges. */
+    min-height: 100vh;
   }
   .state {
     padding: var(--s-6);

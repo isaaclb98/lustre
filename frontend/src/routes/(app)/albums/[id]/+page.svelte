@@ -217,7 +217,7 @@
           </Button>
           <Button
             variant="secondary"
-            href="/albums/{detail.id}/present"
+            href={resolve(`/albums/${detail.id}/present`)}
             title="Show the whole album as a gallery, in a random order"
           >
             Present
