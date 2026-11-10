@@ -399,19 +399,27 @@
   .tile.wall {
     border: none;
     border-radius: var(--grid-tile-radius, 0px);
+    /* No shadow either. A shadow is drawn OUTSIDE the tile's box,
+       so on a wall where the photos touch, every tile's shadow
+       lands on its neighbour's photo — a grid of shadows reads
+       as seams between the pictures. The wall has to be flat. */
+    box-shadow: none;
   }
   .tile.wall:focus-visible {
     border-radius: var(--grid-tile-radius, 0px);
   }
+  /* No hover chrome on the wall: no outline, no shadow. A
+     read-only wall is a picture, not a target, and an outline
+     drawn over the photo's edge breaks the continuous surface.
+     The photo itself still leans in on hover (see .tile:hover
+     .ph / .full) — motion, not furniture. */
   .tile.wall:hover {
-    outline: 1px solid var(--glass-edge-strong);
-    outline-offset: -1px;
-    box-shadow: var(--shadow-3);
+    outline: none;
+    box-shadow: none;
   }
   .tile.wall.menu-open {
-    outline: 1px solid var(--accent);
-    outline-offset: -1px;
-    box-shadow: var(--shadow-glass-strong);
+    outline: none;
+    box-shadow: none;
   }
   .tile.wall.disliked {
     outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
