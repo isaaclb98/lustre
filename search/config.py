@@ -539,7 +539,15 @@ class Config:
     # gives it purge coverage with no second place to configure.
     photos_roots: tuple[str, ...] = ()
     # (Single-user auth removed. Front the service with a reverse-proxy
-    # auth if access control is needed: caddy, oauth2-proxy, tailscale, etc.)
+    # auth if access control is needed (caddy, oauth2-proxy, tailscale, etc.)
+    # The frontend's colour scheme: "light" (the default) or "dark".
+    #
+    # The SPA is a single static build shared by every deployment, so
+    # the theme cannot be baked into it. The backend stamps the marker
+    # onto the <html> element of the shell it serves, and the
+    # frontend keys its palette AND its grid geometry off that same
+    # marker — switching themes is a redeploy, not a rebuild.
+    theme: str = "light"
 
 
 def _int(name: str, default: int) -> int:
@@ -574,6 +582,19 @@ def _str(name: str, default: str) -> str:
     """Read a string env var, falling back to default when unset/empty."""
     raw = os.environ.get(name, default)
     return raw if raw else default
+
+
+def _theme(name: str, default: str = "light") -> str:
+    """Read the theme env var. Only 'light' and 'dark' are accepted.
+
+    An unrecognised value is a startup error rather than a silent
+    fallback: a typo in the operator's .env would otherwise ship the
+    wrong theme with no sign that anything went wrong.
+    """
+    raw = _str(name, default).strip().lower()
+    if raw not in ("light", "dark"):
+        raise ValueError(f"env {name}={raw!r} must be 'light' or 'dark'")
+    return raw
 
 
 def _opt_str(name: str) -> str | None:
@@ -735,6 +756,7 @@ def load() -> Config:
         path_prefix=_str("PATH_PREFIX", ""),
         web_ui_url=_str("WEB_UI_URL", "http://localhost:8000"),
         log_level=_str("LOG_LEVEL", "INFO"),
+        theme=_theme("LUSTRE_THEME", "light"),
         test_mode=bool(
             os.environ.get("SEARCH_TEST_MODE")
             or os.environ.get("SEARCH_NO_MODEL")

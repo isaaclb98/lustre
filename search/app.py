@@ -50,6 +50,7 @@ from search.models import (
 from search.qdrant_client import QdrantSearch, SearchHit
 from search.random import RandomPicker
 from search.search_snapshot import SearchSnapshotCache
+from search.theme import shell_response
 
 logger = logging.getLogger(__name__)
 
@@ -1949,11 +1950,21 @@ def create_app(
         async def favicon() -> FileResponse:
             return FileResponse(static_dir / "favicon.svg")
 
+        def themed_shell(path: Path) -> Response:
+            """Serve the SPA shell with the deployment's theme stamped on.
+
+            The frontend is one static build shared by every
+            deployment, so the theme (LUSTRE_THEME) rides along as a
+            `data-theme` attribute on <html>. The SPA reads it back
+            and switches palette and grid geometry accordingly.
+            """
+            return shell_response(path, _cfg.theme)
+
         # SPA fallback — every non-API, non-asset path returns
         # index.html. API routes get proper 404 JSON instead of
         # being silently swallowed by the SPA catch-all.
         @app.get("/{full_path:path}", include_in_schema=False)
-        async def spa_shell(full_path: str) -> FileResponse:
+        async def spa_shell(full_path: str) -> Response:
             # Never serve SPA HTML for /api/* — those should 404
             # with a proper JSON detail so API clients can
             # distinguish "endpoint doesn't exist" from "got HTML".
@@ -1964,8 +1975,12 @@ def create_app(
             # directory traversal.
             safe = (static_dir / full_path).resolve()
             if safe.is_file() and safe.is_relative_to(static_dir.resolve()):
+                if safe.name == "index.html":
+                    # The shell itself — same themed bytes as the
+                    # fallback below, so /index.html and / agree.
+                    return themed_shell(safe)
                 return FileResponse(safe)
-            return FileResponse(static_dir / "index.html")
+            return themed_shell(static_dir / "index.html")
 
     return app
 
