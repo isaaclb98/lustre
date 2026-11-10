@@ -15,6 +15,7 @@ import {
 } from '$lib/grid/config';
 import {
   columnsForWidth,
+  wallColumnsForWidth,
   widthForColumns,
   pageSizeForColumns,
   pageSizeWithinColumns
@@ -84,6 +85,108 @@ describe('columnsForWidth', () => {
       expect(columnsForWidth(width, GRID_SIZE_CONFIG.small)).toBeGreaterThan(
         columnsForWidth(width, GRID_SIZE_CONFIG.large)
       );
+    }
+  });
+});
+
+describe('wallColumnsForWidth', () => {
+  it('never returns fewer than one column', () => {
+    for (const size of SIZES) {
+      const config = GRID_SIZE_CONFIG[size];
+      expect(wallColumnsForWidth(0, config)).toBe(1);
+      expect(wallColumnsForWidth(10, config)).toBe(1);
+    }
+  });
+
+  it('is never capped by maxCols — the wall fills the screen', () => {
+    // The app grid caps its column count so a wide monitor does
+    // not crowd the photo sizes the user chose. The wall has no
+    // row-width cap — its row IS the screen — so the count has to
+    // follow the width, or six tracks would stretch across 2560px
+    // and each photo would render at nearly twice the size the
+    // user picked.
+    const config = GRID_SIZE_CONFIG.large;
+    expect(wallColumnsForWidth(2560, config)).toBeGreaterThan(
+      config.maxCols
+    );
+  });
+
+  it('keeps the photo within half a tile of the user\'s choice', () => {
+    // The nearest fit: the tracks stretch, so the track width is
+    // what the photo actually renders at. It has to stay close to
+    // the size the user picked everywhere else in the app.
+    //
+    // The one exception is a single column on a narrow screen:
+    // there is no second photo to share the width with, so the
+    // one photo stretches to fill it. A phone showing one photo
+    // across the screen is right; showing it at 240px with a
+    // 135px gap beside it is not.
+    for (const size of SIZES) {
+      const config = GRID_SIZE_CONFIG[size];
+      for (const width of WIDTHS) {
+        const cols = wallColumnsForWidth(width, config);
+        const track = width / cols;
+        if (cols === 1) continue;
+        expect(Math.abs(track - config.tile)).toBeLessThanOrEqual(
+          config.tile / 2
+        );
+      }
+    }
+  });
+
+  it('fills the width exactly — there is no leftover band', () => {
+    // The property the wall exists for. The CSS lays the tracks
+    // out as 1fr, so they always sum to the container width; the
+    // JS count only has to be the number of tracks the browser
+    // lays out. What must not happen is a count that makes the
+    // photos a wildly different size — a leftover reappearing as
+    // one oversized hole instead of a thin margin.
+    for (const size of SIZES) {
+      const config = GRID_SIZE_CONFIG[size];
+      for (const width of WIDTHS) {
+        const cols = wallColumnsForWidth(width, config);
+        const track = width / cols;
+        // The track is the photo's width. It can never exceed the
+        // width it has to fit in.
+        expect(track).toBeLessThanOrEqual(width);
+        // And with more than one column it stays within a tile of
+        // the user's choice.
+        if (cols > 1) {
+          expect(track).toBeLessThanOrEqual(config.tile * 1.5);
+        }
+      }
+    }
+  });
+
+  it('grows monotonically with width', () => {
+    for (const size of SIZES) {
+      const config = GRID_SIZE_CONFIG[size];
+      let previous = 1;
+      for (const width of WIDTHS) {
+        const cols = wallColumnsForWidth(width, config);
+        expect(cols).toBeGreaterThanOrEqual(previous);
+        previous = cols;
+      }
+    }
+  });
+
+  it('is never further from the user\'s tile size than the app grid is', () => {
+    // The wall's count is the nearest fit; the app grid's is the
+    // largest that fits. The wall's track width is never FURTHER
+    // from the user's tile size than the app grid's — so a photo
+    // on the wall is never a different size than the same photo
+    // on the album page.
+    for (const size of SIZES) {
+      const config = GRID_SIZE_CONFIG[size];
+      for (const width of WIDTHS) {
+        const appCols = columnsForWidth(width, config);
+        const wallCols = wallColumnsForWidth(width, config);
+        const appTrack = width / appCols;
+        const wallTrack = width / wallCols;
+        expect(Math.abs(wallTrack - config.tile)).toBeLessThanOrEqual(
+          Math.abs(appTrack - config.tile)
+        );
+      }
     }
   });
 });
