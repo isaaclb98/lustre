@@ -30,7 +30,7 @@
   import Lightbox from './Lightbox.svelte';
   import { preferences } from '$lib/stores/preferences';
   import { GRID_SIZE_CONFIG, type GridSizeConfig } from '$lib/grid/config';
-  import { columnsForWidth } from '$lib/grid/geometry';
+  import { columnsForWidth, wallColumnsForWidth } from '$lib/grid/geometry';
 
   // Use the generated SearchResult shape so `url`, `width`,
   // `height`, `is_disliked` etc. stay in lockstep with the
@@ -220,9 +220,18 @@
   // ResizeObserver and the fetch layer also call, so the row count
   // the grid renders, the width the chrome publishes, and the
   // number of photos a request asks for can never drift apart.
+  //
+  // The wall asks a different question — how many columns divide
+  // the viewport evenly — so its tracks stretch to fill the screen
+  // instead of leaving a band of background beside them. The count
+  // is published as --grid-cols and the CSS uses it directly, so
+  // the tracks the browser lays out and the rows the virtualizer
+  // slices are the same rows by construction.
   let columns = $derived(
     tileSize > 0 && containerWidth > 0
-      ? columnsForWidth(containerWidth, config)
+      ? wall
+        ? wallColumnsForWidth(containerWidth, config)
+        : columnsForWidth(containerWidth, config)
       : ESTIMATED_COLUMNS
   );
 
@@ -244,13 +253,24 @@
   //
   // max-width mirrors the layout's formula: MAX_COLS * TILE +
   // (MAX_COLS - 1) * GAP.
+  //
+  // --grid-cols is the COLUMN COUNT the virtualizer slices rows by.
+  // The wall's CSS uses it directly (rather than letting the browser
+  // count tracks itself) so the two can never disagree: if the CSS
+  // rendered a different number of tracks than the JS assumed, the
+  // last columns of every row would stay empty.
   let rowMaxWidth = $derived(MAX_COLS * TILE + (MAX_COLS - 1) * GAP);
   let gridVars = $derived(
-    `--grid-tile-size:${TILE}px;--grid-gutter-size:${GAP}px;--grid-row-max-width:${rowMaxWidth}px;` +
+    `--grid-tile-size:${TILE}px;--grid-gutter-size:${GAP}px;--grid-row-max-width:${rowMaxWidth}px;--grid-cols:${columns};` +
       // The wall's tiles are square. Published on the wrapper so the
       // tile and the loading skeleton — which read the var — both
       // pick it up, and only for this grid.
-      (wall ? '--grid-tile-radius:0px;' : '')
+      //
+      // The wall also drops the row's max-width cap. The cap exists
+      // so the app grid keeps its natural width on a wide monitor
+      // (and centres the leftover); a presentation has no such
+      // business — the photos fill the screen.
+      (wall ? '--grid-tile-radius:0px;--grid-row-max-width:none;' : '')
   );
 
   // Virtualizer — created once, scrolls with window. Created at
@@ -500,6 +520,7 @@
 {:else}
   <div
     class="grid-wrapper"
+    class:wall
     data-grid-size={$preferences.gridSize}
     style={gridVars}
     bind:this={gridWrapper}
@@ -674,6 +695,35 @@
        double-inset the grid (48px total side padding) and make
        it look left-shifted on wide viewports where the wrapper
        is narrower than the viewport. */
+  }
+
+  /* The wall fills the screen.
+     Two changes from the app grid:
+       1. The track count is the published --grid-cols rather than
+          the browser's own auto-fit. The wall's columns are
+          computed to DIVIDE the viewport evenly (see
+          wallColumnsForWidth), so the browser has to lay out
+          exactly that many tracks — auto-fit would round them
+          down to the tile size and leave a band of background at
+          the edge.
+       2. The tracks are 1fr, so they stretch to fill the width.
+          With a fixed track size the leftover space stays empty
+          and the background shows through beside the photos; a
+          presentation with the page bleeding in at its edges is
+          not a presentation.
+     The tile's own aspect-ratio keeps every photo square
+     whatever the track width works out to, and the row height
+     comes from the measured tile width, so the virtualizer's
+     geometry follows the same number. */
+  .grid-wrapper.wall .grid-row {
+    grid-template-columns: repeat(var(--grid-cols, 6), 1fr);
+    justify-content: stretch;
+  }
+  .grid-wrapper.wall {
+    /* The wall is the screen: no shell padding, no grid-width
+       cap, and it spans the full viewport. */
+    width: 100%;
+    max-width: 100%;
   }
 
   .grid-tile {
