@@ -157,10 +157,10 @@
 
   /* variants */
   .primary {
-    background: var(--accent);
+    background: var(--accent-fill);
     color: var(--fg-on-accent);
   }
-  .primary:hover { background: var(--accent-2); }
+  .primary:hover { background: var(--accent-fill-2); }
 
   .secondary {
     background: var(--glass-2);

@@ -80,6 +80,11 @@ html[data-theme='dark'] {
      is the readable pairing (11.6:1). */
   --accent: #D3BBFF;
   --accent-2: #e1c9ff;
+  /* In the dark theme the accent is light enough to be BOTH the ink
+     and the fill — it reads as text on the near-black page and it
+     reads as a painted block. So the fill tokens just repeat it. */
+  --accent-fill: #D3BBFF;
+  --accent-fill-2: #e1c9ff;
   --accent-soft: rgba(211, 187, 255, 0.14);
   /* the halo is the same purple as the accent, so the home button's
      glow and the dropdown hover stay one colour */

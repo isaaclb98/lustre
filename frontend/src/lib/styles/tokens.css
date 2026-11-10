@@ -117,7 +117,8 @@
   --fg-1: #1a1a1a;          /* primary */
   --fg-2: #6b7280;          /* secondary */
   --fg-3: #9ca3af;          /* tertiary / placeholder */
-  --fg-on-accent: #ffffff;
+  --fg-on-accent: #28150e;   /* text on the accent FILL — the fill is a
+                          light peach, so the text on it is dark */
 
   /* accent — one terracotta, used for links, focus, selection.
      Held at oklch chroma 0.10, the same low chroma the dark theme
@@ -125,8 +126,17 @@
      It cannot be a literal pastel peach: `a { color: var(--accent) }`
      makes the accent link text on every page, so it has to clear
      4.5:1 against both the cream page and the white cards. */
+  /* The accent, in two tones of the same hue.
+     --accent is the INK: it is the colour of every link, every
+     focus ring, every state line, so it has to read as text on the
+     cream page (4.85:1). It cannot be a pastel peach — at that
+     lightness a link on cream is invisible.
+     --accent-fill is the FILL: a painted block that carries text
+     ON it, so it is free to be as light as it likes. */
   --accent: #a25c41;
-  --accent-2: #964b2c;    /* hover */
+  --accent-2: #964b2c;    /* the ink's hover */
+  --accent-fill: #fcae93;
+  --accent-fill-2: #f1a084;  /* the fill's hover */
   --accent-soft: rgba(162, 92, 65, 0.10);
 
   /* semantic */

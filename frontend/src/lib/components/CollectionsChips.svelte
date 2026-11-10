@@ -105,11 +105,11 @@
   }
   .chip:hover { background: var(--glass-1); }
   .chip.on {
-    background: var(--accent);
+    background: var(--accent-fill);
     color: var(--fg-on-accent);
-    border-color: var(--accent);
+    border-color: var(--accent-fill);
   }
-  .chip.on:hover { background: var(--accent-2); }
+  .chip.on:hover { background: var(--accent-fill-2); }
   .check {
     display: inline-flex;
     width: 14px;
