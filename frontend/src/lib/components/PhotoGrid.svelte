@@ -29,7 +29,7 @@
   import ImageContextMenu from './ImageContextMenu.svelte';
   import Lightbox from './Lightbox.svelte';
   import { preferences } from '$lib/stores/preferences';
-  import { GRID_SIZE_CONFIG } from '$lib/grid/config';
+  import { GRID_SIZE_CONFIG, type GridSizeConfig } from '$lib/grid/config';
   import { columnsForWidth } from '$lib/grid/geometry';
 
   // Use the generated SearchResult shape so `url`, `width`,
@@ -84,6 +84,28 @@
      * component manages its own lightboxIndex internally.
      */
     lightboxIndex?: number | null;
+    /**
+     * Optional override for the grid's geometry (tile size, gap,
+     * column cap). When absent the grid uses the user's grid-size
+     * preference — the app-wide behaviour every route relies on.
+     *
+     * The presentation wall passes one to get square tiles with no
+     * gutter. It has to be a prop rather than a CSS-only change
+     * because the gap is not just CSS: the virtualizer's row height
+     * is tileSize + GAP and the column count comes from
+     * columnsForWidth(), both read from the same config. If the CSS
+     * rendered a zero-gap grid while the JS still assumed a 14px
+     * one, every row would be 14px taller than it renders and the
+     * scroll would drift.
+     */
+    tileConfig?: GridSizeConfig;
+    /**
+     * Render the tiles as a continuous wall: square corners and no
+     * gutter. Forwarded to PhotoTile, which drops the tile border
+     * and moves the state rings to a negative-offset outline so the
+     * photos touch pixel-to-pixel.
+     */
+    wall?: boolean;
   };
 
   let {
@@ -101,7 +123,9 @@
     voteUpLabel,
     albums,
     onPhotoOpen,
-    lightboxIndex = $bindable<number | null>(null)
+    lightboxIndex = $bindable<number | null>(null),
+    tileConfig,
+    wall = false
   }: Props = $props();
 
   // Grid config
@@ -115,7 +139,7 @@
   // `--grid-tile-size`, `--grid-gutter-size`, and
   // `--grid-row-max-width` on `:root`. The CSS uses those vars;
   // the virtualizer uses the JS derived values directly.
-  const config = $derived(GRID_SIZE_CONFIG[$preferences.gridSize]);
+  const config = $derived(tileConfig ?? GRID_SIZE_CONFIG[$preferences.gridSize]);
   const TILE = $derived(config.tile);
   const GAP = $derived(config.gap);
   const MAX_COLS = $derived(config.maxCols);
@@ -196,6 +220,26 @@
     Array.from({ length: Math.ceil(items.length / columns) }, (_, i) =>
       items.slice(i * columns, (i + 1) * columns)
     )
+  );
+
+  // The three numbers the CSS grid renders from, re-published on
+  // this grid's own wrapper so an override applies HERE and nowhere
+  // else. The layout publishes the app-wide values on :root from
+  // the user's preference; when a caller passes its own config
+  // (the presentation wall), the row's gap, tile size and max width
+  // must follow the OVERRIDE instead — otherwise the CSS would
+  // render a zero-gap wall while the virtualizer still assumed the
+  // preference's 14px, and every row would be the wrong height.
+  //
+  // max-width mirrors the layout's formula: MAX_COLS * TILE +
+  // (MAX_COLS - 1) * GAP.
+  let rowMaxWidth = $derived(MAX_COLS * TILE + (MAX_COLS - 1) * GAP);
+  let gridVars = $derived(
+    `--grid-tile-size:${TILE}px;--grid-gutter-size:${GAP}px;--grid-row-max-width:${rowMaxWidth}px;` +
+      // The wall's tiles are square. Published on the wrapper so the
+      // tile and the loading skeleton — which read the var — both
+      // pick it up, and only for this grid.
+      (wall ? '--grid-tile-radius:0px;' : '')
   );
 
   // Virtualizer — created once, scrolls with window. Created at
@@ -409,7 +453,12 @@
 {:else if items.length === 0 && !loading}
   <div class="empty">No results</div>
 {:else}
-  <div class="grid-wrapper" data-grid-size={$preferences.gridSize} bind:this={gridWrapper}>
+  <div
+    class="grid-wrapper"
+    data-grid-size={$preferences.gridSize}
+    style={gridVars}
+    bind:this={gridWrapper}
+  >
     <div
       class="grid-virtual"
       style="height: {totalSize}px; position: relative;"
@@ -443,6 +492,7 @@
                 votedUp={upVoted?.has(item.id) ?? false}
                 votedDown={downVoted?.has(item.id) ?? false}
                 voteUpLabel={voteUpLabel}
+                {wall}
               />
             </div>
           {/each}
@@ -660,7 +710,10 @@
   .skeleton-tile {
     /* Inherits aspect-ratio: 1 from .grid-tile. */
     background: var(--skeleton-base);
-    border-radius: var(--r-md, 8px);
+    /* The same published radius the real tile reads, so the
+       placeholder does not change shape when the photo arrives.
+       The fallback is the tile's own radius (--r-1). */
+    border-radius: var(--grid-tile-radius, var(--r-1));
     overflow: hidden;
     position: relative;
   }
