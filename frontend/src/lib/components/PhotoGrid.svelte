@@ -29,8 +29,8 @@
   import ImageContextMenu from './ImageContextMenu.svelte';
   import Lightbox from './Lightbox.svelte';
   import { preferences } from '$lib/stores/preferences';
-  import { GRID_SIZE_CONFIG } from '$lib/grid/config';
-  import { columnsForWidth } from '$lib/grid/geometry';
+  import { GRID_SIZE_CONFIG, type GridSizeConfig } from '$lib/grid/config';
+  import { columnsForWidth, wallColumnsForWidth } from '$lib/grid/geometry';
 
   // Use the generated SearchResult shape so `url`, `width`,
   // `height`, `is_disliked` etc. stay in lockstep with the
@@ -84,6 +84,38 @@
      * component manages its own lightboxIndex internally.
      */
     lightboxIndex?: number | null;
+    /**
+     * Optional override for the grid's geometry (tile size, gap,
+     * column cap). When absent the grid uses the user's grid-size
+     * preference — the app-wide behaviour every route relies on.
+     *
+     * The presentation wall passes one to get square tiles with no
+     * gutter. It has to be a prop rather than a CSS-only change
+     * because the gap is not just CSS: the virtualizer's row height
+     * is tileSize + GAP and the column count comes from
+     * columnsForWidth(), both read from the same config. If the CSS
+     * rendered a zero-gap grid while the JS still assumed a 14px
+     * one, every row would be 14px taller than it renders and the
+     * scroll would drift.
+     */
+    tileConfig?: GridSizeConfig;
+    /**
+     * Render the tiles as a continuous wall: square corners and no
+     * gutter. Forwarded to PhotoTile, which drops the tile border
+     * and moves the state rings to a negative-offset outline so the
+     * photos touch pixel-to-pixel.
+     */
+    wall?: boolean;
+    /**
+     * A read-only surface: the tiles are pictures, not targets.
+     *
+     * Suppresses everything the grid would otherwise put on a
+     * tile — the lightbox, the right-click context menu — so a
+     * surface that must have no controls and no way to mutate
+     * anything cannot leak one in through the shared grid
+     * component.
+     */
+    readOnly?: boolean;
   };
 
   let {
@@ -101,7 +133,10 @@
     voteUpLabel,
     albums,
     onPhotoOpen,
-    lightboxIndex = $bindable<number | null>(null)
+    lightboxIndex = $bindable<number | null>(null),
+    tileConfig,
+    wall = false,
+    readOnly = false
   }: Props = $props();
 
   // Grid config
@@ -115,7 +150,7 @@
   // `--grid-tile-size`, `--grid-gutter-size`, and
   // `--grid-row-max-width` on `:root`. The CSS uses those vars;
   // the virtualizer uses the JS derived values directly.
-  const config = $derived(GRID_SIZE_CONFIG[$preferences.gridSize]);
+  const config = $derived(tileConfig ?? GRID_SIZE_CONFIG[$preferences.gridSize]);
   const TILE = $derived(config.tile);
   const GAP = $derived(config.gap);
   const MAX_COLS = $derived(config.maxCols);
@@ -185,9 +220,18 @@
   // ResizeObserver and the fetch layer also call, so the row count
   // the grid renders, the width the chrome publishes, and the
   // number of photos a request asks for can never drift apart.
+  //
+  // The wall asks a different question — how many columns divide
+  // the viewport evenly — so its tracks stretch to fill the screen
+  // instead of leaving a band of background beside them. The count
+  // is published as --grid-cols and the CSS uses it directly, so
+  // the tracks the browser lays out and the rows the virtualizer
+  // slices are the same rows by construction.
   let columns = $derived(
     tileSize > 0 && containerWidth > 0
-      ? columnsForWidth(containerWidth, config)
+      ? wall
+        ? wallColumnsForWidth(containerWidth, config)
+        : columnsForWidth(containerWidth, config)
       : ESTIMATED_COLUMNS
   );
 
@@ -196,6 +240,37 @@
     Array.from({ length: Math.ceil(items.length / columns) }, (_, i) =>
       items.slice(i * columns, (i + 1) * columns)
     )
+  );
+
+  // The three numbers the CSS grid renders from, re-published on
+  // this grid's own wrapper so an override applies HERE and nowhere
+  // else. The layout publishes the app-wide values on :root from
+  // the user's preference; when a caller passes its own config
+  // (the presentation wall), the row's gap, tile size and max width
+  // must follow the OVERRIDE instead — otherwise the CSS would
+  // render a zero-gap wall while the virtualizer still assumed the
+  // preference's 14px, and every row would be the wrong height.
+  //
+  // max-width mirrors the layout's formula: MAX_COLS * TILE +
+  // (MAX_COLS - 1) * GAP.
+  //
+  // --grid-cols is the COLUMN COUNT the virtualizer slices rows by.
+  // The wall's CSS uses it directly (rather than letting the browser
+  // count tracks itself) so the two can never disagree: if the CSS
+  // rendered a different number of tracks than the JS assumed, the
+  // last columns of every row would stay empty.
+  let rowMaxWidth = $derived(MAX_COLS * TILE + (MAX_COLS - 1) * GAP);
+  let gridVars = $derived(
+    `--grid-tile-size:${TILE}px;--grid-gutter-size:${GAP}px;--grid-row-max-width:${rowMaxWidth}px;--grid-cols:${columns};` +
+      // The wall's tiles are square. Published on the wrapper so the
+      // tile and the loading skeleton — which read the var — both
+      // pick it up, and only for this grid.
+      //
+      // The wall also drops the row's max-width cap. The cap exists
+      // so the app grid keeps its natural width on a wide monitor
+      // (and centres the leftover); a presentation has no such
+      // business — the photos fill the screen.
+      (wall ? '--grid-tile-radius:0px;--grid-row-max-width:none;' : '')
   );
 
   // Virtualizer — created once, scrolls with window. Created at
@@ -375,6 +450,40 @@
     lightboxIndex = null;
   }
 
+  /**
+   * What a tile click and a right-click do.
+   *
+   * On a read-only surface both are undefined: there is no
+   * lightbox to open (the lightbox carries an action bar with
+   * favourite / dislike / add-to-album) and no context menu (it
+   * carries the same mutations). The tile renders as a plain
+   * picture, so nothing on the surface can be changed.
+   */
+  function tileOpen(item: Item, itemIndex: number) {
+    if (readOnly) return undefined;
+    return onPhotoOpen ? () => onPhotoOpen(item) : () => openLightbox(itemIndex);
+  }
+
+  function tileContextMenu(item: Item) {
+    if (readOnly) return undefined;
+    return (_id: string, e: MouseEvent) => openContextMenu(item, e);
+  }
+
+  /**
+   * The accessible name of a read-only tile.
+   *
+   * An interactive tile is named "Open photo" — the name of the
+   * action. A read-only tile has no action, so the name has to
+   * identify the PHOTO instead, or a screen reader announces a
+   * grid of anonymous images. The file name is the only identity
+   * the photo has.
+   */
+  function tileLabel(item: Item): string | undefined {
+    if (!readOnly) return undefined;
+    const name = item.path?.split('/').pop();
+    return name || undefined;
+  }
+
   // Round-37: removed the per-scroll and per-lightbox pageTint
   // effects. They were pushing the first-visible row's blurhash
   // (and the lightbox-active photo's URL) to a global backdrop
@@ -409,7 +518,13 @@
 {:else if items.length === 0 && !loading}
   <div class="empty">No results</div>
 {:else}
-  <div class="grid-wrapper" data-grid-size={$preferences.gridSize} bind:this={gridWrapper}>
+  <div
+    class="grid-wrapper"
+    class:wall
+    data-grid-size={$preferences.gridSize}
+    style={gridVars}
+    bind:this={gridWrapper}
+  >
     <div
       class="grid-virtual"
       style="height: {totalSize}px; position: relative;"
@@ -435,14 +550,17 @@
                 isFavorite={item.is_favorite}
                 isDisliked={item.is_disliked}
                 {eagerIndex}
-                onOpen={onPhotoOpen ? () => onPhotoOpen(item) : () => openLightbox(itemIndex)}
-                onContextMenu={(id, e) => openContextMenu(item, e)}
+                onOpen={tileOpen(item, itemIndex)}
+                onContextMenu={tileContextMenu(item)}
                 onRemove={onRemove}
                 removeLabel={removeLabel}
                 onVote={onVote}
                 votedUp={upVoted?.has(item.id) ?? false}
                 votedDown={downVoted?.has(item.id) ?? false}
                 voteUpLabel={voteUpLabel}
+                label={tileLabel(item)}
+                {wall}
+                {readOnly}
               />
             </div>
           {/each}
@@ -579,6 +697,35 @@
        is narrower than the viewport. */
   }
 
+  /* The wall fills the screen.
+     Two changes from the app grid:
+       1. The track count is the published --grid-cols rather than
+          the browser's own auto-fit. The wall's columns are
+          computed to DIVIDE the viewport evenly (see
+          wallColumnsForWidth), so the browser has to lay out
+          exactly that many tracks — auto-fit would round them
+          down to the tile size and leave a band of background at
+          the edge.
+       2. The tracks are 1fr, so they stretch to fill the width.
+          With a fixed track size the leftover space stays empty
+          and the background shows through beside the photos; a
+          presentation with the page bleeding in at its edges is
+          not a presentation.
+     The tile's own aspect-ratio keeps every photo square
+     whatever the track width works out to, and the row height
+     comes from the measured tile width, so the virtualizer's
+     geometry follows the same number. */
+  .grid-wrapper.wall .grid-row {
+    grid-template-columns: repeat(var(--grid-cols, 6), 1fr);
+    justify-content: stretch;
+  }
+  .grid-wrapper.wall {
+    /* The wall is the screen: no shell padding, no grid-width
+       cap, and it spans the full viewport. */
+    width: 100%;
+    max-width: 100%;
+  }
+
   .grid-tile {
     aspect-ratio: 1;
     min-width: 0;
@@ -660,7 +807,10 @@
   .skeleton-tile {
     /* Inherits aspect-ratio: 1 from .grid-tile. */
     background: var(--skeleton-base);
-    border-radius: var(--r-md, 8px);
+    /* The same published radius the real tile reads, so the
+       placeholder does not change shape when the photo arrives.
+       The fallback is the tile's own radius (--r-1). */
+    border-radius: var(--grid-tile-radius, var(--r-1));
     overflow: hidden;
     position: relative;
   }

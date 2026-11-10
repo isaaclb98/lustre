@@ -1,8 +1,8 @@
 /**
  * usePhotoFeedback — consolidate the like/dislike mutation
  * pattern that was duplicated across Lightbox.svelte,
- * routes/+page.svelte, routes/albums/favourites/+page.svelte, and
- * routes/photo/[id]/+page.svelte.
+ * routes/(app)/+page.svelte, routes/(app)/albums/favourites/+page.svelte,
+ * and routes/(app)/photo/[id]/+page.svelte.
  *
  * The shared shape:
  *   1. Optimistic local update (flip the flag, clear the

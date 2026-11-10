@@ -57,6 +57,39 @@ export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
 export const GRID_HOVER_ZOOM = 1.04;
 
 /**
+ * Corner radius of a tile, in px.
+ *
+ * Published as `--grid-tile-radius` so the tile and the loading
+ * skeleton — rendered by two different components — cannot drift
+ * apart in shape.
+ *
+ * The default matches the app's `--r-1` (rounded tiles). The
+ * presentation wall overrides it to 0: its photos touch
+ * pixel-to-pixel, and a rounded corner would leave the background
+ * showing through at every intersection.
+ */
+export const GRID_TILE_RADIUS = 10;
+
+/**
+ * The presentation wall's grid config: square tiles, no gutter.
+ *
+ * This is a SEPARATE config from GRID_SIZE_CONFIG rather than a
+ * mutation of it, because the wall is one surface's look while
+ * GRID_SIZE_CONFIG is the app-wide grid every other route renders.
+ * The wall takes its tile SIZE from the user's grid-size
+ * preference (so the photos stay as large as they asked for) and
+ * overrides only the gap — and the gap is the whole point.
+ *
+ * Because the gap is 0, the column math in grid/geometry.ts
+ * collapses to floor(width / tile), and a full row is exactly
+ * cols × tile px — the row's max width and the CSS track count
+ * agree with the JS without a correction term.
+ */
+export function wallConfig(base: GridSizeConfig): GridSizeConfig {
+  return { ...base, gap: 0 };
+}
+
+/**
  * Motion timing for the grid's own transitions, in ms.
  *
  * The app-wide `--t-fast` / `--ease-out` tokens are referenced

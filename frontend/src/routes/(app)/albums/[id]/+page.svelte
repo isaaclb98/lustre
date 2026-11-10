@@ -216,6 +216,13 @@
             Explore
           </Button>
           <Button
+            variant="secondary"
+            href={resolve(`/albums/${detail.id}/present`)}
+            title="Show the whole album as a gallery, in a random order"
+          >
+            Present
+          </Button>
+          <Button
             variant="primary"
             href="/albums/{detail.id}/download.zip"
             target="_blank"

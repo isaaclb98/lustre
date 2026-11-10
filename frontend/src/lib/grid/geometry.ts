@@ -57,7 +57,27 @@ import {
  */
 export const GRID_CONTAINER_SELECTOR = '.shell';
 
-/** Columns the CSS grid renders inside `width` px of container. */
+/**
+ * Columns the CSS grid renders inside `width` px of container.
+ *
+ * The app grid asks "how many TILE-sized tracks fit?" and leaves
+ * the remainder empty. The wall asks "how many tracks divide the
+ * width evenly?" — the nearest fit to the tile size — and lets
+ * them stretch to fill it.
+ *
+ * The difference is the leftover. A fixed-size grid on a 1270px
+ * viewport fits five 240px tiles and leaves 70px of background
+ * beside them; a presentation with a background bleeding in at its
+ * edges is not a presentation. Dividing the width evenly leaves
+ * nothing over.
+ *
+ * The nearest fit (rather than the largest that fits) keeps the
+ * tile size CLOSE to the user's choice. The largest that fits
+ * would put five 240px tiles on a 1270px screen and leave a
+ * 240px-wide gap — the leftover reappearing as one hole instead
+ * of a thin margin, and the wall's photos no longer matching the
+ * size the user picked everywhere else.
+ */
 export function columnsForWidth(width: number, config: GridSizeConfig): number {
   return Math.max(
     1,
@@ -66,6 +86,28 @@ export function columnsForWidth(width: number, config: GridSizeConfig): number {
       Math.floor((width + config.gap) / (config.tile + config.gap))
     )
   );
+}
+
+/**
+ * Columns the presentation wall renders inside `width` px.
+ *
+ * The count that divides the width most evenly at the user's tile
+ * size. The CSS uses the SAME number (published as
+ * `--grid-cols`), so the tracks the browser lays out and the rows
+ * the virtualizer slices are the same rows by construction.
+ *
+ * No maxCols cap, and that is the one deliberate difference from
+ * the app grid. The cap exists there to keep the row from
+ * becoming absurdly dense on a wide monitor — the row is capped in
+ * width too, so the extra columns would just crowd the photo
+ * sizes the user chose. The wall has no row-width cap: its row
+ * IS the screen. Applying the cap there would stretch six tracks
+ * across 2560px and render each photo at 426px — nearly twice the
+ * size the user picked, on the one surface whose entire point is
+ * that the photos are the size they asked for.
+ */
+export function wallColumnsForWidth(width: number, config: GridSizeConfig): number {
+  return Math.max(1, Math.round(width / (config.tile + config.gap)));
 }
 
 /** Pixel width of a row of `cols` columns. */

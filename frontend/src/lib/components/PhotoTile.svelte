@@ -83,6 +83,44 @@
      * the up-vote marks the photo as a favourite.
      */
     voteUpLabel?: string;
+    /**
+     * Read-only tile: no link, no click, no context menu.
+     *
+     * The tile is a picture and nothing else. It does not open
+     * the photo, it does not open the app's context menu, and it
+     * is not focusable — so it cannot be the way out of a surface
+     * that is meant to have no way out, and it cannot mutate
+     * anything.
+     *
+     * The distinction from `wall` matters: `wall` is how the tile
+     * LOOKS (square, no gutter, no border). `readOnly` is what the
+     * tile DOES, which is nothing.
+     */
+    readOnly?: boolean;
+    /**
+     * Accessible name for the tile.
+     *
+     * An interactive tile is named "Open photo" — the name of the
+     * action. A read-only tile has no action, so the name has to
+     * identify the PHOTO instead, or a screen reader announces a
+     * grid of anonymous images. The presentation wall passes the
+     * file name, which is the only identity the photo has.
+     */
+    label?: string;
+    /**
+     * Render as part of a continuous wall: square corners, no
+     * gutter, and no border between tiles.
+     *
+     * The border is the reason this is a variant rather than just
+     * a radius change. A border is part of the tile's own box, so
+     * with border-box sizing two neighbours' 1px borders leave 2px
+     * of background between the photos AND inset each photo from
+     * its own edge. The photo has to reach the tile's edge for the
+     * wall to be seamless. The state rings move to an `outline` with
+     * a negative offset, which paints inside the tile over the
+     * photo and — unlike a border — never changes the layout.
+     */
+    wall?: boolean;
   };
   let {
     pointId,
@@ -100,7 +138,10 @@
     onVote,
     votedUp = false,
     votedDown = false,
-    voteUpLabel = 'Add to album'
+    voteUpLabel = 'Add to album',
+    wall = false,
+    readOnly = false,
+    label = ''
   }: Props = $props();
 
   // Pre-computed data URL takes priority (caller already decoded
@@ -187,16 +228,30 @@
   });
 </script>
 
-<a
+<!-- The tile is an anchor in every interactive grid — it links to
+     the photo's own page. On a read-only wall there is no photo
+     page to link to and no click to handle, so the element becomes
+     a plain div: not a link, not focusable, not a target.
+
+     The role follows the element for the same reason. An
+     interactive tile is a link ("Open photo" is the name of the
+     action). A read-only tile is a picture, so it announces as
+     one, named after the photo — otherwise a screen reader walks
+     a grid of anonymous images. -->
+<svelte:element
+  this={readOnly ? 'div' : 'a'}
   class="tile"
   class:loaded
   class:favorite={isFavorite}
   class:disliked={isDisliked}
   class:menu-open={contextMenuOpen}
-  href={`/photo/${encodeURIComponent(pointId)}`}
-  onclick={handleClick}
-  oncontextmenu={handleContext}
-  aria-label="Open photo"
+  class:wall
+  role={readOnly ? 'img' : 'link'}
+  href={readOnly ? undefined : `/photo/${encodeURIComponent(pointId)}`}
+  data-photo-id={pointId}
+  onclick={readOnly ? undefined : handleClick}
+  oncontextmenu={readOnly ? undefined : handleContext}
+  aria-label={readOnly ? label || undefined : 'Open photo'}
 >
   {#if dataUrl}
     <img class="ph" src={dataUrl} alt="" aria-hidden="true" />
@@ -294,14 +349,19 @@
       </button>
     </div>
   {/if}
-</a>
+</svelte:element>
 
 <style>
   .tile {
     position: relative;
     display: block;
     aspect-ratio: 1 / 1;
-    border-radius: var(--r-1);
+    /* The radius is published so the loading skeleton — a different
+       component — matches the tile's shape and cannot drift. The
+       wall overrides it to 0: its photos touch pixel-to-pixel, and
+       a rounded corner would leave the background showing through
+       at every intersection. */
+    border-radius: var(--grid-tile-radius, var(--r-1));
     overflow: hidden;
     background: var(--bg-1);
     border: 1px solid var(--glass-edge);
@@ -322,6 +382,49 @@
   .tile:hover {
     border-color: var(--glass-edge-strong);
     box-shadow: var(--shadow-3);
+  }
+
+  /* ---- the wall variant ----
+     A continuous wall of photos that touch pixel-to-pixel. Two
+     changes from the default tile:
+       1. No border. A border is part of the tile's own box, so
+          with border-box sizing two neighbours' 1px borders leave
+          2px of background between the photos and inset each one
+          from its own edge. The photo has to reach the tile's edge
+          for the wall to be seamless.
+       2. The state rings move from `border-color` to an `outline`
+          with a negative offset. An outline paints inside the tile
+          over the photo and — unlike a border — never changes the
+          layout, so a ring on one tile cannot shift its neighbours. */
+  .tile.wall {
+    border: none;
+    border-radius: var(--grid-tile-radius, 0px);
+    /* No shadow either. A shadow is drawn OUTSIDE the tile's box,
+       so on a wall where the photos touch, every tile's shadow
+       lands on its neighbour's photo — a grid of shadows reads
+       as seams between the pictures. The wall has to be flat. */
+    box-shadow: none;
+  }
+  .tile.wall:focus-visible {
+    border-radius: var(--grid-tile-radius, 0px);
+  }
+  /* No hover chrome on the wall: no outline, no shadow. A
+     read-only wall is a picture, not a target, and an outline
+     drawn over the photo's edge breaks the continuous surface.
+     The photo itself still leans in on hover (see .tile:hover
+     .ph / .full) — motion, not furniture. */
+  .tile.wall:hover {
+    outline: none;
+    box-shadow: none;
+  }
+  .tile.wall.menu-open {
+    outline: none;
+    box-shadow: none;
+  }
+  .tile.wall.disliked {
+    outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    outline-offset: -1px;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
   }
   .tile.menu-open {
     border-color: var(--accent);
