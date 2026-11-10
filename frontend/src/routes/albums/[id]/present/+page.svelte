@@ -150,9 +150,11 @@
 
 <style>
   .present {
-    /* Full-bleed: the wall runs to the viewport edges, so the
-       photos are the whole page. */
-    margin: calc(-1 * var(--shell-pad-y)) calc(-1 * var(--shell-pad-x));
+    /* Full-bleed horizontally: cancel the shell's side padding so
+       the wall runs to the viewport edges. Only the SIDES are
+       cancelled — pulling the top up as well would slide the wall
+       under the app's sticky TopBar. */
+    margin: 0 calc(-1 * var(--shell-pad-x));
     padding: 0;
   }
   .bar {
@@ -160,15 +162,21 @@
     align-items: center;
     gap: var(--s-3);
     padding: var(--s-3) var(--shell-pad-x);
-    /* The bar floats over the wall's top edge rather than pushing
-       the photos down — the wall is the content, and a solid bar
-       across the top would crop the first row. */
     background: color-mix(in srgb, var(--bg-0) 85%, transparent);
     backdrop-filter: var(--pill-blur);
     -webkit-backdrop-filter: var(--pill-blur);
     border-bottom: 1px solid var(--glass-edge);
+    /* The app's TopBar is sticky at the top of the viewport, so this
+       bar has to stick BELOW it — otherwise it slides under the TopBar
+       as soon as the wall is scrolled, and the two overlap. The
+       TopBar's height is a published token, so this tracks it; the
+       extra 1px is the TopBar's own bottom border, which sits
+       outside its declared height. */
     position: sticky;
-    top: 0;
+    top: calc(var(--topbar-h) + 1px);
+    /* Above the tile chrome (z:2) so the bar's own controls are
+       never covered by a photo, but below the TopBar (z:100) so the
+       app's navigation stays on top. */
     z-index: 3;
   }
   .bar h1 {

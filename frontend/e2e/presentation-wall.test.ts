@@ -142,6 +142,28 @@ test.describe('presentation wall', () => {
     expect(await albumCount(page)).toBe(countBefore);
   });
 
+  test('the bar sits below the app TopBar, not under it', async ({ page }) => {
+    // The app's TopBar is sticky at the top of the viewport. The
+    // wall's own bar is sticky too, so if it sticks at top:0 it
+    // slides UNDER the TopBar as soon as the wall is scrolled and
+    // the two overlap. This pins the bar below it.
+    await page.goto(`${APP}/albums/5/present`);
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    for (const scroll of [0, 400, 1200]) {
+      await page.evaluate((y) => window.scrollTo(0, y), scroll);
+      await page.waitForTimeout(300);
+      const overlap = await page.evaluate(() => {
+        const bar = document.querySelector('.present .bar')!.getBoundingClientRect();
+        const top = document.querySelector('.topbar')!.getBoundingClientRect();
+        return bar.top < top.bottom && bar.bottom > top.top;
+      });
+      expect(overlap, `the wall's bar must not overlap the TopBar at scroll ${scroll}`).toBe(
+        false
+      );
+    }
+  });
+
   test('is read-only — no remove affordance on the wall', async ({ page }) => {
     await page.goto(`${APP}/albums/5/present`);
     await page.waitForSelector('.tile', { timeout: 30000 });
