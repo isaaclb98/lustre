@@ -16,12 +16,16 @@
   import AppChrome from '$lib/components/AppChrome.svelte';
   import { onMount } from 'svelte';
   import { preferences } from '$lib/stores/preferences';
-  import { GRID_SIZE_CONFIG } from '$lib/grid/config';
+  import { theme } from '$lib/theme';
+  import { gridConfigFor } from '$lib/grid/config';
   import { columnsForWidth, widthForColumns } from '$lib/grid/geometry';
 
   let { children } = $props();
 
-  const config = $derived(GRID_SIZE_CONFIG[$preferences.gridSize]);
+  // Theme-aware: the dark theme's grid has no gutter, so the column
+  // count and the row width it publishes differ from the light
+  // theme's for the same viewport.
+  const config = $derived(gridConfigFor($preferences.gridSize, $theme));
 
   // Round-8: Cmd/Ctrl+K focuses the search composer input.
   // The convention is shared with GitHub, Linear, Vercel, and
