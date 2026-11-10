@@ -4,6 +4,11 @@
    * (Favourites) is rendered first and cannot be deleted or
    * renamed; user-created albums follow.
    *
+   * Renaming lives on the album's own page, not here. The list is
+   * a directory: a card is a name and a photo count, and every
+   * album on it carries the same pair of actions. Naming an album
+   * belongs where the album is — open it, and rename it there.
+   *
    * The built-in Dislikes album was removed — the Explore album
    * feature covers that ground, and a dislikes grid is a list of
    * photos the user has told the system to stop showing them.
@@ -32,13 +37,11 @@
     listAlbums,
     createAlbum,
     deleteAlbum,
-    updateAlbum,
     listFavorites,
     getFavoriteCount,
     thumbUrl
   } from '$lib/api/endpoints';
   import { dialog } from '$lib/components/Dialog.svelte';
-  import { ApiError } from '$lib/api/client';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import Button from '$lib/components/Button.svelte';
   import type { AlbumSummary } from '$lib/api/endpoints';
@@ -62,9 +65,6 @@
 
   let albums = $state<AlbumSummary[]>([]);
   let loading = $state(true);
-  // Non-fatal error banner — a failed rename needs to be visible,
-  // otherwise the dialog closes and the card looks untouched.
-  let errorMsg = $state<string | null>(null);
   let likesCount = $state(0);
   // First photo id in each built-in album — used as the card cover.
   // Empty string while loading or when the album is empty.
@@ -149,35 +149,6 @@
     }
   }
 
-  /**
-   * Rename a user album. The prompt is pre-filled with the current
-   * name so the user edits rather than retypes it.
-   *
-   * A duplicate name is rejected by the backend's UNIQUE constraint
-   * (HTTP 400) — surface that message instead of failing silently,
-   * because the user has no other way to tell that "Rename" did
-   * nothing. Any other failure falls back to a generic message.
-   */
-  async function rename(album: AlbumSummary) {
-    const name = await dialog.prompt({
-      title: 'Rename album',
-      label: 'Album name',
-      confirmLabel: 'Rename',
-      defaultValue: album.name
-    });
-    const trimmed = (name ?? '').trim();
-    if (!trimmed || trimmed === album.name) return;
-    try {
-      await updateAlbum(album.id, { name: trimmed });
-      await refresh();
-    } catch (e) {
-      errorMsg =
-        e instanceof ApiError && e.status === 400
-          ? `An album named "${trimmed}" already exists.`
-          : 'Could not rename this album. Please try again.';
-    }
-  }
-
   onMount(() => {
     // Both fetch from independent endpoints; run them in parallel
     // so the page reaches a fully-populated state in max(t1, t2)
@@ -201,10 +172,6 @@
     <Button variant="primary" onclick={create}>+ New album</Button>
   {/snippet}
 </PageHeader>
-
-{#if errorMsg}
-  <div class="error-msg">{errorMsg}</div>
-{/if}
 
 <div class="grid" aria-label="Albums">
   <article class="card glass">
@@ -270,12 +237,6 @@
         <footer>
           <span class="count">{a.member_count ?? 0} photos</span>
           <div class="actions">
-            <Button
-              variant="ghost"
-              size="sm"
-              onclick={() => rename(a)}
-              aria-label="Rename {a.name}"
-            >Rename</Button>
             <Button
               variant="ghost"
               size="sm"
@@ -454,9 +415,9 @@
     align-items: center;
     margin-top: auto;
   }
-  /* Rename + Delete sit together on the right; the photo count
-     stays on the left. Without this wrapper the two buttons would
-     be spread apart by `justify-content: space-between`. */
+  /* Delete sits on the right; the photo count stays on the left.
+     The wrapper keeps it there — without it the button would be
+     spread away by `justify-content: space-between`. */
   .actions {
     display: flex;
     gap: var(--s-1);
@@ -464,14 +425,5 @@
   .count {
     color: var(--fg-3);
     font-size: var(--fs-sm);
-  }
-  /* Non-fatal error banner — a failed rename has to be visible,
-     otherwise the dialog closes and nothing looks different. */
-  .error-msg {
-    max-width: var(--grid-width, 1200px);
-    margin: 0 auto var(--s-3);
-    padding: var(--s-2) var(--s-3);
-    color: var(--accent);
-    text-align: center;
   }
 </style>
