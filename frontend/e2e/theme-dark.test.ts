@@ -55,6 +55,27 @@ function rootToken(page: Page, name: string): Promise<string> {
 }
 
 /**
+ * The id of an album that actually has photos.
+ *
+ * Discovered from the API rather than hardcoded: the id depends on
+ * what the backend was seeded with, and the CI's demo data does not
+ * use the same ids as a local library. A hardcoded id makes the test
+ * pass on one dataset and time out on another.
+ */
+async function albumWithPhotos(page: Page): Promise<number> {
+  const res = await page.request.get(`${APP}/api/albums`);
+  expect(res.ok(), 'the albums list must be reachable').toBeTruthy();
+  const body = (await res.json()) as {
+    albums?: { id: number; member_count: number }[];
+  };
+  const album = (body.albums ?? [])
+    .filter((a) => a.member_count > 0)
+    .sort((a, b) => b.member_count - a.member_count)[0];
+  expect(album, 'the backend must expose an album with photos').toBeTruthy();
+  return album!.id;
+}
+
+/**
  * The grid's geometry, measured off the DOM.
  *
  * The row's own `gap` and the space between two neighbours' boxes
@@ -105,7 +126,8 @@ test.describe('dark theme', () => {
     const theme = await servedTheme(page);
     expect(['light', 'dark']).toContain(theme);
 
-    await page.goto(`${APP}/albums/5`);
+    const albumId = await albumWithPhotos(page);
+    await page.goto(`${APP}/albums/${albumId}`);
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     // The marker the server sent is the marker the browser has.
@@ -113,7 +135,8 @@ test.describe('dark theme', () => {
   });
 
   test('the theme decides the palette', async ({ page }) => {
-    await page.goto(`${APP}/albums/5`);
+    const albumId = await albumWithPhotos(page);
+    await page.goto(`${APP}/albums/${albumId}`);
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     const theme = await documentTheme(page);
@@ -132,7 +155,8 @@ test.describe('dark theme', () => {
   });
 
   test('the theme decides the grid geometry', async ({ page }) => {
-    await page.goto(`${APP}/albums/5`);
+    const albumId = await albumWithPhotos(page);
+    await page.goto(`${APP}/albums/${albumId}`);
     const geom = await waitForGrid(page);
     const theme = await documentTheme(page);
 
@@ -157,7 +181,8 @@ test.describe('dark theme', () => {
   });
 
   test('switching the marker switches the rendering', async ({ page }) => {
-    await page.goto(`${APP}/albums/5`);
+    const albumId = await albumWithPhotos(page);
+    await page.goto(`${APP}/albums/${albumId}`);
     await waitForGrid(page);
 
     // Flip to whichever theme is NOT currently active, so this
@@ -216,7 +241,8 @@ test.describe('dark theme', () => {
     // The wall was already square, gapless and borderless. The dark
     // theme must not change its behaviour — it is a standalone
     // read-only surface, and its own rules are its own.
-    await page.goto(`${APP}/albums/5/present`);
+    const albumId = await albumWithPhotos(page);
+    await page.goto(`${APP}/albums/${albumId}/present`);
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     const geom = await gridGeometry(page);
