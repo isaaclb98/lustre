@@ -135,8 +135,8 @@
      ON it, so it is free to be as light as it likes. */
   --accent: #a25c41;
   --accent-2: #964b2c;    /* the ink's hover */
-  --accent-fill: #fcae93;
-  --accent-fill-2: #f1a084;  /* the fill's hover */
+  --accent-fill: #ffc1a7;
+  --accent-fill-2: #f4b397;  /* the fill's hover */
   --accent-soft: rgba(162, 92, 65, 0.10);
 
   /* semantic */
