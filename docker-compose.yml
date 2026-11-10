@@ -88,6 +88,13 @@ services:
 
       # Thumbnail storage path (inside container)
       THUMBNAIL_DIR: /app/data/thumbnails
+
+      # UI theme — 'light' (default) or 'dark'. The frontend is one
+      # static build, so the theme is chosen at request time: the
+      # backend stamps it onto the SPA shell it serves. An unknown
+      # value fails at startup rather than silently serving the
+      # wrong theme.
+      LUSTRE_THEME: ${LUSTRE_THEME:-light}
     ports:
       - "8000:8000"
     volumes:
