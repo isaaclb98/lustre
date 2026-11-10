@@ -9,12 +9,17 @@
  *   - no rounded corners anywhere;
  *   - the photo grid loses its gutter and its tile border, so the
  *     photos read as one continuous surface;
- *   - the light theme is untouched. Every rule here is scoped to
- *     `html[data-theme='dark']`, the marker the backend stamps onto
- *     the shell it serves (see search/theme.py).
+ *   - the light theme keeps its own accent and its own surfaces.
+ *     Every rule here is scoped to `html[data-theme='dark']`, the
+ *     marker the backend stamps onto the shell it serves (see
+ *     search/theme.py).
+ *
+ * The accent is a pale purple, deliberately a different hue from
+ * the light theme's terracotta: the two themes read as a pair at a
+ * glance, and neither is the blue the app used to carry.
  *
  * Contrast on the near-black base: primary text 16.1:1, secondary
- * 8.3:1, tertiary 5.7:1, accent 6.1:1 — all past WCAG AA.
+ * 8.3:1, tertiary 5.7:1, accent 11.6:1 — all past WCAG AA.
  *
  * This file is a token source of truth, exactly like tokens.css is
  * for the light theme, which is why check-css-tokens.mjs exempts it.
@@ -68,13 +73,17 @@ html[data-theme='dark'] {
   --fg-3: #8a8a86;
   --fg-on-accent: #0a0a0b;
 
-  /* accent — one blue, used for links, focus, selection */
-  --accent: #4f8ff0;
-  --accent-2: #6ba6f0;
-  --accent-soft: rgba(79, 143, 240, 0.14);
-  /* the halo is the same blue as the accent, so the home button's
+  /* accent — one pale purple, used for links, focus, selection.
+     Immich's own deep-purple dark primary, held at their chroma
+     (0.097 in oklch) so it reads as lavender rather than neon.
+     Dark text sits on it, not white: at this lightness, near-black
+     is the readable pairing (11.6:1). */
+  --accent: #D3BBFF;
+  --accent-2: #e1c9ff;
+  --accent-soft: rgba(211, 187, 255, 0.14);
+  /* the halo is the same purple as the accent, so the home button's
      glow and the dropdown hover stay one colour */
-  --halo: 79, 143, 240;
+  --halo: 211, 187, 255;
 
   /* semantic — unchanged from the light theme; they are state, not
      chrome, and both read well on the near-black base */

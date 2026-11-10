@@ -27,14 +27,14 @@
   /* glass — borders (Linear/Immich subtlety, now dark hairlines) */
   --glass-edge: rgba(0,0,0,0.06);        /* hairline */
   --glass-edge-strong: rgba(0,0,0,0.12);  /* hover/focus border */
-  /* accent-cyan — the "halo" / highlight blue used by:
-     - the home search button's cyan glow (--shadow-button)
+  /* accent-tint — the "halo" / highlight tint used by:
+     - the home search button's glow (--shadow-button)
      - Dropdown item hover and selected backgrounds
      - PhotoTile skeleton loader gradient
-     A lighter, more cyan blue than --accent (#2563eb, rgb 37,99,235).
-     Use --halo for the rgb tuple, then rgba(var(--halo), α) for
-     custom alphas. */
-  --halo: 108, 198, 255;
+     A lighter, more chromatic tint of --accent than the accent
+     itself (#a25c41). Use --halo for the rgb tuple, then
+     rgba(var(--halo), α) for custom alphas. */
+  --halo: 224, 141, 93;
 
   /* glass-fill — white-with-alpha panel fills.
      Used for the same purpose as --glass-* backdrop-filter tiers
@@ -119,10 +119,15 @@
   --fg-3: #9ca3af;          /* tertiary / placeholder */
   --fg-on-accent: #ffffff;
 
-  /* accent — Immich blue */
-  --accent: #2563eb;        /* primary blue */
-  --accent-2: #1d4ed8;      /* hover */
-  --accent-soft: rgba(37, 99, 235, 0.10);
+  /* accent — one terracotta, used for links, focus, selection.
+     Held at oklch chroma 0.10, the same low chroma the dark theme
+     uses, so the orange reads as peach rather than traffic cone.
+     It cannot be a literal pastel peach: `a { color: var(--accent) }`
+     makes the accent link text on every page, so it has to clear
+     4.5:1 against both the cream page and the white cards. */
+  --accent: #a25c41;
+  --accent-2: #964b2c;    /* hover */
+  --accent-soft: rgba(162, 92, 65, 0.10);
 
   /* semantic */
   --negative: #ef4444;

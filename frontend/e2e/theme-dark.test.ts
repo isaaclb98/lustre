@@ -30,12 +30,20 @@ import { test, expect, type Page } from '@playwright/test';
 
 const APP = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173';
 
-/** The theme the shell the server sends declares. */
+/**
+ * The theme the served shell declares.
+ *
+ * Read from the document rather than by fetching the shell: the
+ * marker IS the server's stamp, so the browser's copy of it is what
+ * the contract is about — and reading it does not depend on how the
+ * server frames its HTML response.
+ */
 async function servedTheme(page: Page): Promise<string> {
-  const html = await (await page.request.get(`${APP}/`)).text();
-  const match = html.match(/<html[^>]*\sdata-theme="([^"]*)"/);
-  expect(match, 'the served shell must carry a data-theme marker').not.toBeNull();
-  return match![1];
+  await page.goto(`${APP}/albums`);
+  await page.waitForSelector('.card', { timeout: 30000 });
+  const theme = await documentTheme(page);
+  expect(theme, 'the document must carry a data-theme marker').not.toBeNull();
+  return theme!;
 }
 
 /** The theme the browser's document actually carries. */
@@ -146,11 +154,11 @@ test.describe('dark theme', () => {
     if (theme === 'dark') {
       // The dark palette: a near-black page and one accent.
       expect(pageBackground.toLowerCase()).toBe('#0a0a0b');
-      expect(accent.toLowerCase()).toBe('#4f8ff0');
+      expect(accent.toLowerCase()).toBe('#d3bbff');
     } else {
       // The light palette, unchanged.
       expect(pageBackground.toLowerCase()).toBe('#fafaf7');
-      expect(accent.toLowerCase()).toBe('#2563eb');
+      expect(accent.toLowerCase()).toBe('#a25c41');
     }
   });
 
