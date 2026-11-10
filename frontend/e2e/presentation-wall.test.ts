@@ -134,7 +134,12 @@ test.describe('presentation wall', () => {
         scrollWidth: document.documentElement.scrollWidth,
         // clientWidth excludes the vertical scrollbar; innerWidth
         // includes it. The wall fills the content box.
-        clientWidth: document.documentElement.clientWidth
+        clientWidth: document.documentElement.clientWidth,
+        // The scrollbar reserves a gutter at the right of the
+        // viewport. If the wall kept it, the strip beside the last
+        // column would show the page background instead of photo.
+        innerWidth: window.innerWidth,
+        lastRight: Math.round(last.right)
       };
     });
 
@@ -144,6 +149,42 @@ test.describe('presentation wall', () => {
     expect(edges.right).toBe(0);
     // And the page does not scroll sideways.
     expect(edges.scrollWidth).toBe(edges.clientWidth);
+    // The wall reaches the far right of the VIEWPORT, not just the
+    // content box: the last photo's edge is the window's edge.
+    expect(edges.lastRight).toBe(edges.innerWidth);
+  });
+
+  test('the scrollbar is hidden while the wall is up', async ({ page }) => {
+    await page.goto(`${APP}/albums/5/present`);
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    // A visible scrollbar reserves a gutter, and the wall would
+    // stop short of it — a strip of background beside the photos.
+    // The computed scrollbar-width is the signal that works
+    // everywhere: Chromium's overlay scrollbars never reserve a
+    // gutter, so the widths alone cannot tell the two apart.
+    const hidden = await page.evaluate(() => ({
+      className: document.documentElement.className,
+      scrollbarWidth: getComputedStyle(document.documentElement).scrollbarWidth
+    }));
+
+    expect(hidden.className).toContain('wall-scroll-hidden');
+    expect(hidden.scrollbarWidth).toBe('none');
+  });
+
+  test('the scrollbar comes back on an ordinary route', async ({ page }) => {
+    await page.goto(`${APP}/albums/5`);
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    // The class is removed when the wall unmounts, so the rest of
+    // the app keeps its scrollbar.
+    const state = await page.evaluate(() => ({
+      className: document.documentElement.className,
+      scrollbarWidth: getComputedStyle(document.documentElement).scrollbarWidth
+    }));
+
+    expect(state.className).not.toContain('wall-scroll-hidden');
+    expect(state.scrollbarWidth).not.toBe('none');
   });
 
   test('the wall look does not leak into other routes', async ({ page }) => {
