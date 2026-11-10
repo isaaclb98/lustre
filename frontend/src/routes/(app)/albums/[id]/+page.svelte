@@ -13,11 +13,17 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { getAlbum, removePhotoFromAlbum, deleteAlbum } from '$lib/api/endpoints';
+  import {
+    getAlbum,
+    removePhotoFromAlbum,
+    deleteAlbum,
+    updateAlbum
+  } from '$lib/api/endpoints';
   import { preferences } from '$lib/stores/preferences';
   import { currentPageSize } from '$lib/grid/geometry';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
   import { dialog } from '$lib/components/Dialog.svelte';
+  import { ApiError } from '$lib/api/client';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import Button from '$lib/components/Button.svelte';
   import type { AlbumDetail } from '$lib/api/endpoints';
@@ -55,6 +61,10 @@
   let loading = $state(true);
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
+  // Non-fatal error banner — a failed rename has to be visible,
+  // otherwise the dialog closes and the header still shows the
+  // old name with no explanation.
+  let renameError = $state<string | null>(null);
   let offset = $state(0);
   let hasMore = $state(false);
 
@@ -170,6 +180,39 @@
     }
   }
 
+  /**
+   * Rename this album. The prompt is pre-filled with the current
+   * name so the user edits rather than retypes it.
+   *
+   * A duplicate name is rejected by the backend's UNIQUE constraint
+   * (HTTP 400) — surface that message instead of failing silently,
+   * because the user has no other way to tell that "Rename" did
+   * nothing. Any other failure falls back to a generic message.
+   */
+  async function onRenameAlbum() {
+    if (!detail) return;
+    const name = await dialog.prompt({
+      title: 'Rename album',
+      label: 'Album name',
+      confirmLabel: 'Rename',
+      defaultValue: detail.name
+    });
+    const trimmed = (name ?? '').trim();
+    if (!trimmed || trimmed === detail.name) return;
+    try {
+      await updateAlbum(detail.id, { name: trimmed });
+      // Update the cached detail so the header and the document
+      // title follow the new name without a refetch.
+      detail = { ...detail, name: trimmed };
+      renameError = null;
+    } catch (e) {
+      renameError =
+        e instanceof ApiError && e.status === 400
+          ? `An album named "${trimmed}" already exists.`
+          : 'Could not rename this album. Please try again.';
+    }
+  }
+
   /** Delete the current album. Same dialog pattern as the list
    * page's remove() — confirm the destructive action, then
    * navigate back to /albums once the backend acknowledges. */
@@ -231,12 +274,22 @@
             Download zip
           </Button>
         {/if}
+        <Button
+          variant="secondary"
+          onclick={onRenameAlbum}
+          title={`Rename album ${detail?.name ?? ''}`}
+        >
+          Rename
+        </Button>
         <Button danger onclick={onDeleteAlbum} title={`Delete album ${detail?.name ?? ''}`}>
           Delete album
         </Button>
       </div>
     {/snippet}
   </PageHeader>
+  {#if renameError}
+    <div class="rename-error">{renameError}</div>
+  {/if}
   {#if items().length === 0 && !loadingMore}
     <div class="state empty">No photos in this album yet. Open a photo to add it from the lightbox.</div>
   {:else}
@@ -262,5 +315,13 @@
     display: flex;
     gap: var(--s-2);
     align-items: center;
+  }
+  /* Non-fatal error banner — a failed rename has to be visible,
+     otherwise the dialog closes and the header still shows the
+     old name with no explanation. */
+  .rename-error {
+    padding: var(--s-2) var(--s-3);
+    color: var(--accent);
+    text-align: center;
   }
 </style>
