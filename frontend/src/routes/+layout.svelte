@@ -11,7 +11,8 @@
     GRID_HOVER_ZOOM,
     GRID_MOTION_EASE,
     GRID_MOTION_MS,
-    GRID_SIZE_CONFIG
+    GRID_SIZE_CONFIG,
+    GRID_TILE_RADIUS
   } from '$lib/grid/config';
   import { columnsForWidth, widthForColumns } from '$lib/grid/geometry';
 
@@ -140,6 +141,11 @@
       document.documentElement.style.setProperty('--grid-hover-zoom', String(GRID_HOVER_ZOOM));
       document.documentElement.style.setProperty('--grid-motion-ms', GRID_MOTION_MS + 'ms');
       document.documentElement.style.setProperty('--grid-motion-ease', GRID_MOTION_EASE);
+      // The tile radius is published so the tile and the loading
+      // skeleton (two different components) cannot drift apart in
+      // shape. The presentation wall overrides it on its own grid
+      // wrapper to 0, so its photos touch pixel-to-pixel.
+      document.documentElement.style.setProperty('--grid-tile-radius', GRID_TILE_RADIUS + 'px');
     };
     publishSizeVars();
     const unsub = preferences.subscribe(() => publishSizeVars());
