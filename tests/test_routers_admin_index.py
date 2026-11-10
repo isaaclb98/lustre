@@ -144,17 +144,38 @@ def test_post_rebuild_wipes_sqlite_side_store(client):
 
 def test_concurrent_start_returns_409(client):
     http, runner, _db = client
-    # Easier: start with the short fixture, but the job finishes too
-    # fast. We'll instead check the IndexConflictError by directly
-    # faking the runner — the route-level test is below.
-    runner.start("incremental")
+    # A job has to still be RUNNING when the second start arrives.
+    # The shared fixture's fake indexer exits immediately
+    # (seconds=0), so the runner can fall back to IDLE before the
+    # POST lands and the route then accepts a second start with
+    # 202 instead of rejecting it with 409. That made this test a
+    # race: it passed locally and failed under CI's parallel load.
+    #
+    # The route-level test below (test_cancel_running_job) builds
+    # its own long-running indexer for the same reason. Do the same
+    # here — a job that runs for 30s cannot finish mid-assertion.
+    long_script_path = Path("/tmp") / "admin_test_concurrent_indexer.py"  # noqa: S108 — test scratch dir
+    long_script_path.write_text(SCRIPT_TEMPLATE.format(seconds=30))
+    runner_long = IndexerRunner(
+        command_factory=lambda mode: [sys.executable, str(long_script_path)],
+    )
+
+    from fastapi import FastAPI
+    from search.routers.admin_index import build_admin_index_router
+    app = FastAPI()
+    app.include_router(build_admin_index_router(
+        indexer_runner=runner_long, index_db=None,
+    ))
+    http2 = TestClient(app)
+
+    runner_long.start("incremental")
     try:
-        r = http.post("/api/admin/index", json={"mode": "incremental"})
+        r = http2.post("/api/admin/index", json={"mode": "incremental"})
         assert r.status_code == 409
         assert "already running" in r.json()["detail"].lower()
     finally:
-        runner.cancel()
-        runner.wait_idle(timeout=5)
+        runner_long.cancel()
+        runner_long.wait_idle(timeout=10)
 
 
 def test_cancel_running_job(client):
