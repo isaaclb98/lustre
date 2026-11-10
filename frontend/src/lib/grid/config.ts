@@ -3,19 +3,24 @@
  * "Large / Medium / Small" choice.
  *
  * This module owns the static numbers only: no DOM, no store, no
- * imports. Everything that needs to reason about the grid — the CSS
- * vars, the layout-level ResizeObserver, the virtualizer's row
- * slicing, the request sizing — reads from here so those four
+ * runtime imports. Everything that needs to reason about the grid —
+ * the CSS vars, the layout-level ResizeObserver, the virtualizer's
+ * row slicing, the request sizing — reads from here so those four
  * consumers can never drift apart.
+ *
+ * The one exception is the Theme type, which is imported as a type
+ * only: it names which palette the numbers belong to, and importing
+ * it costs nothing at runtime.
  *
  * Tile size: 240/192/144 px. Large matches the Round-55 default;
  * medium and small pack progressively more photos per row.
  *
- * Gap: 14/8/4 px. Larger photos get more breathing room (the
- * Round-38 design intent — 14px reads as "personal photo library",
- * tighter gaps read as utilitarian). Smaller photos need a tighter
- * gap to read as a continuous wall instead of fragmenting into a
- * grid of small squares.
+ * Gap: 14/8/4 px in the light theme. Larger photos get more
+ * breathing room (the Round-38 design intent — 14px reads as
+ * "personal photo library", tighter gaps read as utilitarian).
+ * Smaller photos need a tighter gap to read as a continuous wall
+ * instead of fragmenting into a grid of small squares. The dark
+ * theme has no gutter at all — see gridConfigFor.
  *
  * Max cols: 6/8/10. The CSS grid uses `auto-fit` with the tile
  * size as the track width, so a narrow viewport shows fewer cols;
@@ -29,6 +34,8 @@
  * part of the promise, and every page holds at least this many
  * rows once aligned to whole rows.
  */
+import type { Theme } from '$lib/theme';
+
 export type GridSize = 'large' | 'medium' | 'small';
 
 export interface GridSizeConfig {
@@ -69,6 +76,36 @@ export const GRID_HOVER_ZOOM = 1.04;
  * showing through at every intersection.
  */
 export const GRID_TILE_RADIUS = 10;
+
+/**
+ * The grid configuration for a size under a theme.
+ *
+ * The dark theme draws the same tiles with no gutter at all: its
+ * photos touch, exactly as the presentation wall's do. Everything
+ * else — tile size, column cap, rows per page — is the user's
+ * grid-size preference in either theme, so the two differ only in
+ * how much space sits between the photos.
+ *
+ * The theme is a parameter rather than a lookup so this module
+ * stays free of the DOM: it owns numbers, and the caller owns the
+ * theme. The four consumers that must agree on these numbers (the
+ * layout's published CSS vars, the grid's virtualizer, the column
+ * math, the request sizing) all call this one function.
+ */
+export function gridConfigFor(size: GridSize, theme: Theme): GridSizeConfig {
+  const base = GRID_SIZE_CONFIG[size];
+  return theme === 'dark' ? { ...base, gap: 0 } : base;
+}
+
+/**
+ * The tile's corner radius under a theme.
+ *
+ * The dark theme is square: no rounded corners anywhere, so a photo
+ * meets its neighbour at a right angle.
+ */
+export function tileRadiusFor(theme: Theme): number {
+  return theme === 'dark' ? 0 : GRID_TILE_RADIUS;
+}
 
 /**
  * The presentation wall's grid config: square tiles, no gutter.
