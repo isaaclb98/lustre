@@ -130,7 +130,15 @@
   onMount(() => {
     void load();
     window.addEventListener('keydown', onKeydown);
-    return () => window.removeEventListener('keydown', onKeydown);
+    // Hide the scrollbar while the wall is up, so the photos reach
+    // the right edge of the viewport instead of stopping short of
+    // the scrollbar's gutter. The class goes on <html> because the
+    // scrollbar belongs to the document, not to the wall.
+    document.documentElement.classList.add('wall-scroll-hidden');
+    return () => {
+      window.removeEventListener('keydown', onKeydown);
+      document.documentElement.classList.remove('wall-scroll-hidden');
+    };
   });
 </script>
 

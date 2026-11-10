@@ -176,6 +176,25 @@ input, textarea {
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
 
+/* The presentation wall hides the scrollbar.
+   The wall's photos run edge to edge, and a scrollbar reserves a
+   10px gutter at the right of the viewport — a strip of page
+   background beside the last column, which reads as a white gap
+   against the photos. Letting the wall run UNDER the scrollbar
+   instead (width: 100vw) would push the grid past the viewport
+   and give the wall its own horizontal overflow, so the scrollbar
+   goes instead. The wall still scrolls: the wheel, the trackpad
+   and the keyboard all drive it, and the scrollbar was only ever
+   a thin strip on the right. */
+html.wall-scroll-hidden {
+  scrollbar-width: none;
+}
+html.wall-scroll-hidden::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* focus — single visible style */
 :focus-visible {
   outline: 2px solid var(--accent);
