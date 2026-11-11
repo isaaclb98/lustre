@@ -102,19 +102,22 @@ html[data-theme='dark'] {
      shiny dome with a bright band on top and a dark band at the
      bottom. Modern dark glass has almost no contrast in it at all.
 
-     The rim is 7% white on the top lip only. Glass has an edge
-     because light catches it; that is the material, not a box drawn
-     around a thing. The wide shadow is what lifts the slab off the
-     page — on a near-black page it is nearly invisible, but over a
-     photograph it is what separates the glass from the image. */
+     There is NO rim. The first version of the modern recipe carried
+     a 7% white lip along the top, the way glass catches light, and
+     it was the last thing left that read as an edge rather than as a
+     material. The film and the wide shadow are enough: the control
+     separates by the tone of its own surface, and nothing is drawn
+     around it.
+
+     The wide shadow is what lifts the slab off the page — on a
+     near-black page it is nearly invisible, but over a photograph it
+     is what separates the glass from the image. */
   --control-film: linear-gradient(
     rgba(255, 255, 255, 0.075),
     rgba(255, 255, 255, 0.075)
   );
   --control-blur: blur(24px) saturate(1.6);
-  --control-texture:
-    0 1px 0 rgba(255, 255, 255, 0.07),
-    0 12px 28px -14px rgba(0, 0, 0, 0.60);
+  --control-texture: 0 12px 28px -14px rgba(0, 0, 0, 0.60);
   /* The secondary button already carried a blur of its own; in the
      dark theme that becomes the glass blur, so every control in the
      theme refracts the same way. The light theme keeps its 6px. */

@@ -194,7 +194,11 @@ test.describe('dark theme surfaces', () => {
       const el = document.querySelector('.preset');
       if (!el) return null;
       const cs = getComputedStyle(el);
-      return { image: cs.backgroundImage, blur: cs.backdropFilter };
+      return {
+        image: cs.backgroundImage,
+        blur: cs.backdropFilter,
+        shadow: cs.boxShadow
+      };
     });
     expect(film, 'the settings page must render a preset control').not.toBeNull();
 
@@ -217,6 +221,21 @@ test.describe('dark theme surfaces', () => {
     expect(film!.blur, 'the film must frost what is behind it').not.toBe(
       'none'
     );
+
+    // No rim. A rim is a shadow layer, not a border, so the "no
+    // neutral border" test above never saw it — this one does. The
+    // control separates by the tone of its own surface; nothing is
+    // drawn around it.
+    const lightLayers = [
+      ...film!.shadow.matchAll(/rgba?\((\d+),\s*(\d+),\s*(\d+)/g)
+    ]
+      .map((m) => [+m[1], +m[2], +m[3]])
+      .filter(([r, g, b]) => Math.min(r, g, b) > 180);
+    expect(
+      lightLayers,
+      'the glass must not carry a rim — a light lip on a control reads ' +
+        'as an edge, which is what the dark theme stopped drawing'
+    ).toEqual([]);
   });
 
   test('the panel is a real step above the page', async ({ page }) => {
