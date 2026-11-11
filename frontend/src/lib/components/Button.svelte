@@ -140,7 +140,7 @@
        shape and reads as inert through a NEUTRAL fill and a muted
        label instead, which is what the text inputs already do. */
     opacity: 1;
-    color: var(--fg-2);
+    color: var(--disabled-fg);
     cursor: not-allowed;
     pointer-events: none;
   }

@@ -29,9 +29,12 @@
      heaviest thing on the light page. This is the panel tier:
      white on cream, and the dark theme's own --glass-2 on near-black. */
   --glass-raised: rgba(255, 255, 255, 0.94);
-  /* A disabled control's slot — neutral, so it reads as inert
-     whatever the accent is doing. */
-  --disabled-bg: rgba(0, 0, 0, 0.10);
+  /* A disabled control keeps the accent's HUE, muted toward the
+     page — a pale peach on cream, a dim violet on near-black.
+     One rule, both themes; "quieter" on a dark page means dimmer,
+     not brighter. */
+  --disabled-bg: color-mix(in srgb, var(--accent-fill) 42%, var(--bg-0));
+  --disabled-fg: color-mix(in srgb, var(--accent) 70%, var(--disabled-bg));
   --glass-tint: transparent;
 
   /* glass — borders (Linear/Immich subtlety, now dark hairlines) */
