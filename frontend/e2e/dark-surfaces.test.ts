@@ -198,10 +198,11 @@ test.describe('dark theme surfaces', () => {
     });
     expect(film, 'the settings page must render a preset control').not.toBeNull();
 
-    // The film is a gradient, not a flat tint. A flat tint gives a
-    // control a fill but no falloff, and the falloff is what reads as
-    // light landing on a slab — a hard stop at either end is a line,
-    // and a line is what the dark theme stopped drawing.
+    // The film is FLAT. A gradient across a small control is the old
+    // iOS recipe — a shiny dome with a bright band on top and a dark
+    // band at the bottom — and that is what made the first attempt
+    // look old-school rather than like glass. Modern dark glass has
+    // almost no contrast in it, so the film must not fall off.
     expect(film!.image).toContain('linear-gradient');
     const alphas = [
       ...film!.image.matchAll(/rgba?\([^)]*?,\s*([\d.]+)\)/g)
@@ -209,8 +210,8 @@ test.describe('dark theme surfaces', () => {
     expect(alphas.length).toBeGreaterThan(1);
     expect(
       new Set(alphas).size,
-      'the film must fall off from top to bottom, not be a flat tint'
-    ).toBeGreaterThan(1);
+      'the film must be flat — a gradient across it is the old iOS dome'
+    ).toBe(1);
 
     // And it frosts whatever is behind it.
     expect(film!.blur, 'the film must frost what is behind it').not.toBe(

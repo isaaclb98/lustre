@@ -96,23 +96,29 @@ html[data-theme='dark'] {
      transparent gets the film, a button that had a fill keeps it and
      gains the film on top.
 
-     The specular is a GRADIENT, not a shadow. A shadow's edge is a
-     line, and a line is exactly what made the dark theme read as a
-     wireframe: the first attempt at this used `inset 0 18px 20px
-     -18px` and the chips came out looking like outlined boxes with
-     a lit rim. A gradient falls off smoothly, so the control reads
-     as light landing on a slab rather than as a shape with a border.
+     The film is FLAT. The first version ran a vertical gradient
+     across it, and that is what made the result read as old-school:
+     a gradient across a small control is the old iOS recipe — a
+     shiny dome with a bright band on top and a dark band at the
+     bottom. Modern dark glass has almost no contrast in it at all.
 
-     Only the drop shadow is left in --control-texture: on a near-black
-     page the lift is nearly invisible, but over a photograph it is
-     what separates the glass from the image behind it. */
+     The rim is 7% white on the top lip only. Glass has an edge
+     because light catches it; that is the material, not a box drawn
+     around a thing. The wide shadow is what lifts the slab off the
+     page — on a near-black page it is nearly invisible, but over a
+     photograph it is what separates the glass from the image. */
   --control-film: linear-gradient(
-    rgba(255, 255, 255, 0.115) 0%,
-    rgba(255, 255, 255, 0.060) 42%,
-    rgba(255, 255, 255, 0.025) 100%
+    rgba(255, 255, 255, 0.075),
+    rgba(255, 255, 255, 0.075)
   );
-  --control-blur: blur(14px) saturate(1.15);
-  --control-texture: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --control-blur: blur(24px) saturate(1.6);
+  --control-texture:
+    0 1px 0 rgba(255, 255, 255, 0.07),
+    0 12px 28px -14px rgba(0, 0, 0, 0.60);
+  /* The secondary button already carried a blur of its own; in the
+     dark theme that becomes the glass blur, so every control in the
+     theme refracts the same way. The light theme keeps its 6px. */
+  --glass-medium: var(--control-blur);
 
   /* glass-fill — dark panels. The TopBar, dialogs and menus are
      surfaces on the page, so they follow the page, not the photos. */
