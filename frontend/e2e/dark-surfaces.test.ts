@@ -80,14 +80,24 @@ function lightness(colour: string): number {
 
 /**
  * Flip the marker the way the backend stamps it, and wait for it to
- * land.
+ * take effect.
  *
- * The wait is not just for the marker: a custom property on the root
- * changes the instant the attribute does, but the DESCENDANTS' computed
- * styles pick it up on the next style recalc. Measuring straight
- * after the flip reads the old border colours — the root already says
- * "transparent" while every element below it still says "6% black".
- * Two frames is enough for that recalc to run.
+ * The wait is not a frame count. Two things settle after the flip,
+ * and they settle on different clocks:
+ *
+ *   1. The root's custom properties change the instant the
+ *      attribute does, but the DESCENDANTS' computed styles pick
+ *      them up on the next style recalc.
+ *   2. The controls' border-colour is TRANSITIONED. Flipping the
+ *      theme does not change a border instantly — it animates from
+ *      the old colour to the new one over --t-fast. Measured on the
+ *      albums page: the border went 0.06 → 0.024 → 0.008 → 0 over
+ *      about 90ms, so a frame or two after the flip the border is
+ *      caught MID-FADE, at an alpha of 0.024, which reads as a
+ *      painted neutral border.
+ *
+ * So the wait polls until the painted border colours stop changing,
+ * rather than guessing how many frames that takes.
  */
 async function goDark(page: Page) {
   await page.evaluate(() => {
@@ -102,12 +112,31 @@ async function goDark(page: Page) {
       )
     )
     .toBe('#0a0a0b');
-  await page.evaluate(
-    () =>
-      new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-      )
-  );
+  await settle(page);
+}
+
+/**
+ * Wait until the page stops changing.
+ *
+ * Two consecutive identical snapshots of every painted border, 50ms
+ * apart. Bounded, so a page with something that animates forever (a
+ * spinner) cannot hang the suite — it just falls through.
+ */
+async function settle(page: Page) {
+  let previous: string | null = null;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const snapshot = await page.evaluate(() => {
+      const parts: string[] = [];
+      for (const el of Array.from(document.querySelectorAll('*'))) {
+        const cs = getComputedStyle(el);
+        parts.push(`${cs.borderTopColor} ${cs.borderTopWidth}`);
+      }
+      return parts.join('|');
+    });
+    if (snapshot === previous) return;
+    previous = snapshot;
+    await page.waitForTimeout(50);
+  }
 }
 
 test.describe('dark theme surfaces', () => {
