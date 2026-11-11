@@ -37,6 +37,17 @@
   --disabled-fg: color-mix(in srgb, var(--accent) 70%, var(--disabled-bg));
   --glass-tint: transparent;
 
+  /* The glass material. A control separates from its neighbour by
+     being a translucent film with light catching its top lip and
+     thickness at its bottom — not by a line drawn around it.
+
+     The light theme leaves all of it off: its hairline does the
+     work, and it has no texture to borrow. The dark theme turns it
+     on (see theme-dark.css). */
+  --control-film: none;
+  --control-blur: none;
+  --control-texture: none;
+
   /* glass — borders (Linear/Immich subtlety, now dark hairlines) */
   --glass-edge: rgba(0,0,0,0.06);        /* hairline */
   --spinner-track: var(--glass-edge);     /* the loading ring's track */

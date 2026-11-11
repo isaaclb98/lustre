@@ -251,6 +251,10 @@
   .field input[type='text'] {
     background: var(--bg-1);
     border: 1px solid var(--edge-field-color);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
+    box-shadow: var(--control-texture);
     border-radius: var(--r-pill);
     padding: 0 var(--s-2);
     height: 36px;
@@ -321,6 +325,10 @@
     border-radius: 999px;
     background: var(--bg-1, rgba(0, 0, 0, 0.06));
     border: 1px solid var(--edge-control-color);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
+    box-shadow: var(--control-texture);
     transition: background var(--t-fast);
   }
   .surprise-toggle-thumb {

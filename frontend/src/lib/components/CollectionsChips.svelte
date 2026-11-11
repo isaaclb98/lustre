@@ -94,6 +94,10 @@
     color: var(--fg-1);
     border: 1px solid var(--edge-control-color);
     border-radius: var(--r-pill);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
+    box-shadow: var(--control-texture);
     padding: var(--s-0) var(--s-3) var(--s-0) var(--s-2);
     font-size: var(--fs-sm);
     line-height: 1;
@@ -103,7 +107,7 @@
       background var(--t-fast) var(--ease-out),
       border-color var(--t-fast) var(--ease-out);
   }
-  .chip:hover { background: var(--glass-1); }
+  .chip:hover { background-color: var(--glass-1); }
   .chip.on {
     background: var(--accent-fill);
     color: var(--fg-on-accent);

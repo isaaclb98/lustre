@@ -90,6 +90,30 @@ html[data-theme='dark'] {
   --glass-inset: transparent;
   --glass-edge-bright: rgba(255, 255, 255, 0.06);
 
+  /* The glass material.
+     The film is a background-IMAGE, so it layers over whatever fill
+     a control already has instead of replacing it — a chip that was
+     transparent gets the film, a button that had a fill keeps it and
+     gains the film on top.
+
+     The specular is a GRADIENT, not a shadow. A shadow's edge is a
+     line, and a line is exactly what made the dark theme read as a
+     wireframe: the first attempt at this used `inset 0 18px 20px
+     -18px` and the chips came out looking like outlined boxes with
+     a lit rim. A gradient falls off smoothly, so the control reads
+     as light landing on a slab rather than as a shape with a border.
+
+     Only the drop shadow is left in --control-texture: on a near-black
+     page the lift is nearly invisible, but over a photograph it is
+     what separates the glass from the image behind it. */
+  --control-film: linear-gradient(
+    rgba(255, 255, 255, 0.115) 0%,
+    rgba(255, 255, 255, 0.060) 42%,
+    rgba(255, 255, 255, 0.025) 100%
+  );
+  --control-blur: blur(14px) saturate(1.15);
+  --control-texture: 0 1px 3px rgba(0, 0, 0, 0.45);
+
   /* glass-fill — dark panels. The TopBar, dialogs and menus are
      surfaces on the page, so they follow the page, not the photos. */
   --glass-fill-light: rgba(30, 30, 33, 0.82);

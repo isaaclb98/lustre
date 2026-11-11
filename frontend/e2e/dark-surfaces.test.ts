@@ -185,6 +185,39 @@ test.describe('dark theme surfaces', () => {
     ).toEqual([]);
   });
 
+  test("the dark theme's controls carry the glass film", async ({ page }) => {
+    await page.goto(`${APP}/settings`);
+    await page.waitForSelector('.preset', { timeout: 30000 });
+    await goDark(page);
+
+    const film = await page.evaluate(() => {
+      const el = document.querySelector('.preset');
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { image: cs.backgroundImage, blur: cs.backdropFilter };
+    });
+    expect(film, 'the settings page must render a preset control').not.toBeNull();
+
+    // The film is a gradient, not a flat tint. A flat tint gives a
+    // control a fill but no falloff, and the falloff is what reads as
+    // light landing on a slab — a hard stop at either end is a line,
+    // and a line is what the dark theme stopped drawing.
+    expect(film!.image).toContain('linear-gradient');
+    const alphas = [
+      ...film!.image.matchAll(/rgba?\([^)]*?,\s*([\d.]+)\)/g)
+    ].map((m) => parseFloat(m[1]));
+    expect(alphas.length).toBeGreaterThan(1);
+    expect(
+      new Set(alphas).size,
+      'the film must fall off from top to bottom, not be a flat tint'
+    ).toBeGreaterThan(1);
+
+    // And it frosts whatever is behind it.
+    expect(film!.blur, 'the film must frost what is behind it').not.toBe(
+      'none'
+    );
+  });
+
   test('the panel is a real step above the page', async ({ page }) => {
     await page.goto(`${APP}/albums`);
     await page.waitForSelector('.card', { timeout: 30000 });

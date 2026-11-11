@@ -176,12 +176,14 @@
     background: var(--glass-raised);
     color: var(--fg-1);
     border-color: var(--edge-strong-color);
+    background-image: var(--control-film);
     backdrop-filter: var(--glass-medium);
     -webkit-backdrop-filter: var(--glass-medium);
+    box-shadow: var(--control-texture);
   }
   .secondary:hover {
     /* focus feedback: brighter glass + accent border hint */
-    background: color-mix(in srgb, var(--fg-1) 14%, transparent);
+    background-color: color-mix(in srgb, var(--fg-1) 14%, transparent);
     border-color: var(--accent-soft);
   }
 
@@ -189,9 +191,13 @@
     background: transparent;
     color: var(--fg-2);
     border-color: var(--edge-control-color);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
+    box-shadow: var(--control-texture);
   }
   .ghost:hover {
-    background: var(--glass-1);
+    background-color: var(--glass-1);
     color: var(--fg-1);
   }
 

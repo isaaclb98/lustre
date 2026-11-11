@@ -407,6 +407,10 @@
     color: var(--fg-1);
     border: 1px solid var(--edge-control-color);
     border-radius: var(--r-pill);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
+    box-shadow: var(--control-texture);
     padding: 0 var(--s-3);
     height: 32px;
     font: inherit;
