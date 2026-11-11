@@ -329,7 +329,7 @@
     align-items: center;
     gap: var(--s-2);
     padding: var(--s-2) var(--s-3);
-    background: var(--glass-2);
+    background: var(--glass-raised);
     border-radius: var(--r-2);
     font-size: var(--fs-sm);
     color: var(--fg-1);

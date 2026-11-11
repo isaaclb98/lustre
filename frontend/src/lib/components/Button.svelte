@@ -163,7 +163,7 @@
   .primary:hover { background: var(--accent-fill-2); }
 
   .secondary {
-    background: var(--glass-2);
+    background: var(--glass-raised);
     color: var(--fg-1);
     border-color: var(--glass-edge-strong);
     backdrop-filter: var(--glass-medium);

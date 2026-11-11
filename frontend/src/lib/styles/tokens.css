@@ -21,7 +21,14 @@
   --bg-2: #f3f1ed;          /* soft secondary surface */
   /* glass — alpha layers tuned for white-on-light (was white-on-dark) */
   --glass-1: rgba(255, 255, 255, 0.85);      /* default panel - mostly opaque white with a hint of translucency */
-  --glass-2: rgba(0,0,0,0.06);       /* raised panel / hovered */
+  --glass-2: rgba(0,0,0,0.06);       /* hover wash */
+  /* A RAISED PANEL — lighter than the page, in both themes.
+     --glass-2 is a black wash, so anything painted with it sits
+     BELOW the page; the dark theme's tiers both go above theirs.
+     A secondary button painted with --glass-2 was therefore the
+     heaviest thing on the light page. This is the panel tier:
+     white on cream, and the dark theme's own --glass-2 on near-black. */
+  --glass-raised: rgba(255, 255, 255, 0.94);
   --glass-tint: transparent;
 
   /* glass — borders (Linear/Immich subtlety, now dark hairlines) */
@@ -114,9 +121,13 @@
   --dialog-fill: var(--glass-fill-medium);
 
   /* text — dark on light */
-  --fg-1: #1a1a1a;          /* primary */
-  --fg-2: #6b7280;          /* secondary */
-  --fg-3: #9ca3af;          /* tertiary / placeholder */
+  /* The neutral ramp, on the same warm hue (106.5) the dark theme
+     uses — same lightnesses as before, so contrast is unchanged.
+     They were Tailwind's cool greys, which made the light theme
+     carry a second neutral family alongside the dark theme's. */
+  --fg-1: #1a1a18;          /* primary */
+  --fg-2: #72726f;          /* secondary */
+  --fg-3: #a3a39f;          /* tertiary / placeholder */
   --fg-on-accent: #28150e;   /* text on the accent FILL — the fill is a
                           light peach, so the text on it is dark */
 
@@ -312,13 +323,12 @@
   /* page header typography — bumped for editorial feel (round 38) */
   --page-title-size: 32px;
 
-  /* mesh-gradient backdrop — signature Immich visual.
-     Composed via four radial gradients on top of off-white base.
-     Apply via `background: var(--bg-mesh)` on body. */
+  /* backdrop — one whisper of the accent at the top, otherwise flat.
+     It used to be four radial gradients in four hues (pink, peach,
+     mint, periwinkle), which carried three more colours than the
+     dark theme's single wash. One hue, tied to the accent, in the
+     dark theme's shape. */
   --bg-mesh:
-    radial-gradient(ellipse 50% 40% at 8% 10%, rgba(255, 200, 220, 0.45), transparent 60%),
-    radial-gradient(ellipse 40% 35% at 92% 20%, rgba(255, 225, 175, 0.40), transparent 60%),
-    radial-gradient(ellipse 45% 40% at 85% 85%, rgba(190, 225, 215, 0.40), transparent 60%),
-    radial-gradient(ellipse 50% 45% at 15% 90%, rgba(210, 215, 250, 0.40), transparent 60%),
+    radial-gradient(ellipse 70% 55% at 50% -5%, rgba(255, 193, 167, 0.35), transparent 70%),
     var(--bg-0);
 }

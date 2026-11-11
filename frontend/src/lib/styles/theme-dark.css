@@ -34,6 +34,9 @@ html[data-theme='dark'] {
   /* glass — light-on-dark instead of white-on-light */
   --glass-1: rgba(255, 255, 255, 0.04);
   --glass-2: rgba(255, 255, 255, 0.08);
+  /* A raised panel, lighter than the page. Same value the light
+     theme's raised panels resolve to in their own terms. */
+  --glass-raised: rgba(255, 255, 255, 0.08);
   --glass-edge: rgba(255, 255, 255, 0.10);
   --glass-edge-strong: rgba(255, 255, 255, 0.20);
   --glass-inset: rgba(255, 255, 255, 0.06);
