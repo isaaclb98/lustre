@@ -134,9 +134,19 @@
     white-space: nowrap;
   }
   .btn:disabled, .btn[aria-disabled='true'] {
-    opacity: 0.45;
+    /* NOT opacity. Fading a button dissolves it — the fill and the
+       label fade together, and on the pale peach fill the whole
+       button vanished into the page. A disabled control keeps its
+       shape and reads as inert through a NEUTRAL fill and a muted
+       label instead, which is what the text inputs already do. */
+    opacity: 1;
+    color: var(--fg-2);
     cursor: not-allowed;
     pointer-events: none;
+  }
+  .btn.primary:disabled, .btn.primary[aria-disabled='true'],
+  .btn.secondary:disabled, .btn.secondary[aria-disabled='true'] {
+    background: var(--disabled-bg);
   }
 
   /* sizes */

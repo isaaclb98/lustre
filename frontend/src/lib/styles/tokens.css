@@ -29,6 +29,9 @@
      heaviest thing on the light page. This is the panel tier:
      white on cream, and the dark theme's own --glass-2 on near-black. */
   --glass-raised: rgba(255, 255, 255, 0.94);
+  /* A disabled control's slot — neutral, so it reads as inert
+     whatever the accent is doing. */
+  --disabled-bg: rgba(0, 0, 0, 0.10);
   --glass-tint: transparent;
 
   /* glass — borders (Linear/Immich subtlety, now dark hairlines) */

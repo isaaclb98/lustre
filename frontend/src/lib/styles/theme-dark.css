@@ -37,6 +37,9 @@ html[data-theme='dark'] {
   /* A raised panel, lighter than the page. Same value the light
      theme's raised panels resolve to in their own terms. */
   --glass-raised: rgba(255, 255, 255, 0.08);
+  /* A disabled control's slot — neutral, so it reads as inert
+     whatever the accent is doing. */
+  --disabled-bg: rgba(255, 255, 255, 0.08);
   --glass-edge: rgba(255, 255, 255, 0.10);
   --glass-edge-strong: rgba(255, 255, 255, 0.20);
   --glass-inset: rgba(255, 255, 255, 0.06);
