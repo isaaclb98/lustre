@@ -364,11 +364,16 @@
     border-radius: var(--grid-tile-radius, var(--r-1));
     overflow: hidden;
     background: var(--bg-1);
-    border: 1px solid var(--glass-edge);
+    /* The tile's own chrome — its border, its resting shadow, the
+       rings that mark a state — comes from tokens rather than from
+       literal values, so the dark theme can point them at inset
+       rings and no border and let the photos touch each other with
+       nothing between them. */
+    border: var(--grid-tile-border-width) solid var(--glass-edge);
     /* Round-38: lighter shadow on hover (was --shadow-glass-strong
        which was tuned for dark surfaces). --shadow-1 is the
        standard tile resting shadow. */
-    box-shadow: var(--shadow-1);
+    box-shadow: var(--grid-tile-shadow);
     transition: border-color var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
                 box-shadow var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease),
                 opacity var(--grid-motion-ms, 100ms) var(--grid-motion-ease, ease);
@@ -381,7 +386,7 @@
      without anything on the page moving. */
   .tile:hover {
     border-color: var(--glass-edge-strong);
-    box-shadow: var(--shadow-3);
+    box-shadow: var(--grid-tile-hover-shadow);
   }
 
   /* ---- the wall variant ----
@@ -428,7 +433,7 @@
   }
   .tile.menu-open {
     border-color: var(--accent);
-    box-shadow: var(--shadow-glass-strong);
+    box-shadow: var(--grid-tile-menu-shadow);
   }
   /* Liked — only the floating fav badge remains (Round‑36 dropped
      the persistent pink border + outer glow). The badge in the
@@ -445,7 +450,7 @@
        uses --accent for the focus state so the ring is
        on-brand. */
     border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+    box-shadow: var(--grid-tile-dislike-ring);
     opacity: 0.72;
   }
   .tile.disliked .full,
@@ -465,7 +470,7 @@
        derives from --accent so this rare state still reads
        as on-brand. */
     border-color: var(--mixed-tile-border);
-    box-shadow: 0 0 0 1px var(--mixed-tile-ring);
+    box-shadow: var(--grid-tile-mixed-ring);
     opacity: 0.72;
   }
   .ph, .full {

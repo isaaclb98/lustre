@@ -134,9 +134,19 @@
     white-space: nowrap;
   }
   .btn:disabled, .btn[aria-disabled='true'] {
-    opacity: 0.45;
+    /* NOT opacity. Fading a button dissolves it — the fill and the
+       label fade together, and on the pale peach fill the whole
+       button vanished into the page. A disabled control keeps its
+       shape and reads as inert through a NEUTRAL fill and a muted
+       label instead, which is what the text inputs already do. */
+    opacity: 1;
+    color: var(--disabled-fg);
     cursor: not-allowed;
     pointer-events: none;
+  }
+  .btn.primary:disabled, .btn.primary[aria-disabled='true'],
+  .btn.secondary:disabled, .btn.secondary[aria-disabled='true'] {
+    background: var(--disabled-bg);
   }
 
   /* sizes */
@@ -157,31 +167,37 @@
 
   /* variants */
   .primary {
-    background: var(--accent);
+    background: var(--accent-fill);
     color: var(--fg-on-accent);
   }
-  .primary:hover { background: var(--accent-2); }
+  .primary:hover { background: var(--accent-fill-2); }
 
   .secondary {
-    background: var(--glass-2);
+    background: var(--glass-raised);
     color: var(--fg-1);
-    border-color: var(--glass-edge-strong);
+    border-color: var(--edge-strong-color);
+    background-image: var(--control-film);
     backdrop-filter: var(--glass-medium);
     -webkit-backdrop-filter: var(--glass-medium);
+    box-shadow: var(--control-texture);
   }
   .secondary:hover {
     /* focus feedback: brighter glass + accent border hint */
-    background: color-mix(in srgb, var(--fg-1) 14%, transparent);
+    background-color: color-mix(in srgb, var(--fg-1) 14%, transparent);
     border-color: var(--accent-soft);
   }
 
   .ghost {
     background: transparent;
     color: var(--fg-2);
-    border-color: var(--glass-edge);
+    border-color: var(--edge-control-color);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
+    box-shadow: var(--control-texture);
   }
   .ghost:hover {
-    background: var(--glass-1);
+    background-color: var(--glass-1);
     color: var(--fg-1);
   }
 
@@ -209,7 +225,7 @@
   :is(.primary, .secondary, .ghost, .icon).danger {
     background: transparent;
     color: var(--fg-3);
-    border-color: var(--glass-edge);
+    border-color: var(--edge-control-color);
   }
   :is(.primary, .secondary, .ghost, .icon).danger:hover {
     background: var(--negative-soft);

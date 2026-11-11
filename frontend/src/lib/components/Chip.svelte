@@ -35,8 +35,12 @@
     gap: var(--s-1);
     background: var(--glass-1);
     color: var(--fg-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     border-radius: var(--r-pill);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
+    box-shadow: var(--control-texture);
     padding: var(--s-0) var(--s-2) var(--s-0) var(--s-3);
     font-size: var(--fs-sm);
     line-height: 1;
@@ -48,7 +52,7 @@
     background: var(--negative-soft);
     border-color: color-mix(in srgb, var(--negative) 30%, transparent);
   }
-  .chip:hover { background: var(--glass-2); }
+  .chip:hover { background-color: var(--glass-2); }
   .chip.neg:hover { background: color-mix(in srgb, var(--negative) 30%, transparent); }
   .minus {
     color: var(--negative);

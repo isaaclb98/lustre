@@ -40,6 +40,11 @@ const RGBA = /rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0\.0\d+\s*\)/g;
 // must obviously be excluded.
 const ALLOWED_PATHS = new Set([
   'lib/styles/tokens.css',
+  // theme-dark.css is the DARK theme's token source of truth, the
+  // same role tokens.css plays for the light theme. It defines the
+  // shadow tokens the dark palette uses, so it is exempt for the
+  // same reason tokens.css is.
+  'lib/styles/theme-dark.css',
   // PromptChips.svelte has a single-stop box-shadow that
   // doesn't match any --shadow-N token. Documented inline
   // with a comment tying it to --shadow-1's first stop.

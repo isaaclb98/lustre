@@ -95,7 +95,7 @@
     top: 0;
     z-index: 100;
     background-color: var(--glass-fill-light);
-    border-bottom: 1px solid var(--glass-edge);
+    border-bottom: 1px solid var(--edge-panel-color);
     /* Box-shadow gives the topbar the impression of a surface
        floating just above the page — without the backdrop-filter
        frost, this is what sells the "layer above content" read. */

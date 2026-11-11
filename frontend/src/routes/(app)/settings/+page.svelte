@@ -329,7 +329,7 @@
     align-items: center;
     gap: var(--s-2);
     padding: var(--s-2) var(--s-3);
-    background: var(--glass-2);
+    background: var(--glass-raised);
     border-radius: var(--r-2);
     font-size: var(--fs-sm);
     color: var(--fg-1);
@@ -378,8 +378,8 @@
   .log {
     margin: var(--s-2) 0 0 0;
     padding: var(--s-2);
-    background: var(--bg-1);
-    border: 1px solid var(--glass-edge);
+    background: var(--inset-bg);
+    border: 1px solid var(--edge-panel-color);
     border-radius: var(--r-2);
     color: var(--fg-2);
     font-size: var(--fs-xs);
@@ -405,8 +405,12 @@
     appearance: none;
     background: var(--glass-1);
     color: var(--fg-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     border-radius: var(--r-pill);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
+    box-shadow: var(--control-texture);
     padding: 0 var(--s-3);
     height: 32px;
     font: inherit;

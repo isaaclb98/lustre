@@ -21,20 +21,69 @@
   --bg-2: #f3f1ed;          /* soft secondary surface */
   /* glass — alpha layers tuned for white-on-light (was white-on-dark) */
   --glass-1: rgba(255, 255, 255, 0.85);      /* default panel - mostly opaque white with a hint of translucency */
-  --glass-2: rgba(0,0,0,0.06);       /* raised panel / hovered */
+  --glass-2: rgba(0,0,0,0.06);       /* hover wash */
+  /* A RAISED PANEL — lighter than the page, in both themes.
+     --glass-2 is a black wash, so anything painted with it sits
+     BELOW the page; the dark theme's tiers both go above theirs.
+     A secondary button painted with --glass-2 was therefore the
+     heaviest thing on the light page. This is the panel tier:
+     white on cream, and the dark theme's own --glass-2 on near-black. */
+  --glass-raised: rgba(255, 255, 255, 0.94);
+  /* A disabled control keeps the accent's HUE, muted toward the
+     page — a pale peach on cream, a dim violet on near-black.
+     One rule, both themes; "quieter" on a dark page means dimmer,
+     not brighter. */
+  --disabled-bg: color-mix(in srgb, var(--accent-fill) 42%, var(--bg-0));
+  --disabled-fg: color-mix(in srgb, var(--accent) 70%, var(--disabled-bg));
   --glass-tint: transparent;
+
+  /* The glass material. A control separates from its neighbour by
+     being a translucent film with light catching its top lip and
+     thickness at its bottom — not by a line drawn around it.
+
+     The light theme leaves all of it off: its hairline does the
+     work, and it has no texture to borrow. The dark theme turns it
+     on (see theme-dark.css). */
+  --control-film: none;
+  --control-blur: none;
+  --control-texture: none;
 
   /* glass — borders (Linear/Immich subtlety, now dark hairlines) */
   --glass-edge: rgba(0,0,0,0.06);        /* hairline */
+  --spinner-track: var(--glass-edge);     /* the loading ring's track */
+  /* A surface nested inside another one. In the light theme the
+     hairline did the separating, so this is the same white as the
+     card it sits on; the dark theme has no hairline to fall back on
+     and needs a step of its own (see theme-dark.css). */
+  --inset-bg: var(--bg-1);
+  /* The photo frame's blurhash backdrop. It fills the area around a
+     portrait photo inside the frame with a stretched, blurred tint
+     of the image. On the light theme it reads as a continuation of
+     the photo; on a near-black page it is the brightest thing on
+     screen, so the dark theme dims it (see theme-dark.css). */
+  --photo-backdrop-dim: 1;
   --glass-edge-strong: rgba(0,0,0,0.12);  /* hover/focus border */
-  /* accent-cyan — the "halo" / highlight blue used by:
-     - the home search button's cyan glow (--shadow-button)
+
+  /* Edge ROLES. A container's edge, a control's edge and a text
+     field's edge are different jobs, and the two themes want
+     different answers. The light theme can afford a hairline on all
+     three — 6% black on cream is a soft edge. The dark theme cannot:
+     10% white on near-black is a bright outline, and it turns a page
+     of panels into a wireframe. The dark theme therefore takes the
+     edge off its containers and controls, and lets the surface's own
+     lightness separate them instead (see theme-dark.css). */
+  --edge-panel-color: var(--glass-edge);
+  --edge-control-color: var(--glass-edge);
+  --edge-field-color: var(--glass-edge);
+  --edge-strong-color: var(--glass-edge-strong);
+  /* accent-tint — the "halo" / highlight tint used by:
+     - the home search button's glow (--shadow-button)
      - Dropdown item hover and selected backgrounds
      - PhotoTile skeleton loader gradient
-     A lighter, more cyan blue than --accent (#2563eb, rgb 37,99,235).
-     Use --halo for the rgb tuple, then rgba(var(--halo), α) for
-     custom alphas. */
-  --halo: 108, 198, 255;
+     A lighter, more chromatic tint of --accent than the accent
+     itself (#a25c41). Use --halo for the rgb tuple, then
+     rgba(var(--halo), α) for custom alphas. */
+  --halo: 224, 141, 93;
 
   /* glass-fill — white-with-alpha panel fills.
      Used for the same purpose as --glass-* backdrop-filter tiers
@@ -114,15 +163,34 @@
   --dialog-fill: var(--glass-fill-medium);
 
   /* text — dark on light */
-  --fg-1: #1a1a1a;          /* primary */
-  --fg-2: #6b7280;          /* secondary */
-  --fg-3: #9ca3af;          /* tertiary / placeholder */
-  --fg-on-accent: #ffffff;
+  /* The neutral ramp, on the same warm hue (106.5) the dark theme
+     uses — same lightnesses as before, so contrast is unchanged.
+     They were Tailwind's cool greys, which made the light theme
+     carry a second neutral family alongside the dark theme's. */
+  --fg-1: #1a1a18;          /* primary */
+  --fg-2: #72726f;          /* secondary */
+  --fg-3: #a3a39f;          /* tertiary / placeholder */
+  --fg-on-accent: #28150e;   /* text on the accent FILL — the fill is a
+                          light peach, so the text on it is dark */
 
-  /* accent — Immich blue */
-  --accent: #2563eb;        /* primary blue */
-  --accent-2: #1d4ed8;      /* hover */
-  --accent-soft: rgba(37, 99, 235, 0.10);
+  /* accent — one terracotta, used for links, focus, selection.
+     Held at oklch chroma 0.10, the same low chroma the dark theme
+     uses, so the orange reads as peach rather than traffic cone.
+     It cannot be a literal pastel peach: `a { color: var(--accent) }`
+     makes the accent link text on every page, so it has to clear
+     4.5:1 against both the cream page and the white cards. */
+  /* The accent, in two tones of the same hue.
+     --accent is the INK: it is the colour of every link, every
+     focus ring, every state line, so it has to read as text on the
+     cream page (4.85:1). It cannot be a pastel peach — at that
+     lightness a link on cream is invisible.
+     --accent-fill is the FILL: a painted block that carries text
+     ON it, so it is free to be as light as it likes. */
+  --accent: #a25c41;
+  --accent-2: #964b2c;    /* the ink's hover */
+  --accent-fill: #ffc1a7;
+  --accent-fill-2: #f4b397;  /* the fill's hover */
+  --accent-soft: rgba(162, 92, 65, 0.10);
 
   /* semantic */
   --negative: #ef4444;
@@ -137,6 +205,22 @@
   --r-3: 18px;
   --r-4: 24px;
   --r-pill: 9999px;
+
+  /* photo-tile chrome.
+     The tile's own border, shadow and state rings, as tokens rather
+     than literals, so a theme can restyle them. The dark theme sets
+     these to a borderless, flat tile — the photos touch pixel-to-
+     pixel there, so a border or a shadow would read as a seam
+     between two photos rather than as the edge of one.
+     The values here are the light theme's: a hairline border, a
+     resting shadow, and the rings that mark a disliked / mixed /
+     context-menu-open tile. */
+  --grid-tile-border-width: 1px;
+  --grid-tile-shadow: var(--shadow-1);
+  --grid-tile-hover-shadow: var(--shadow-3);
+  --grid-tile-menu-shadow: var(--shadow-glass-strong);
+  --grid-tile-dislike-ring: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  --grid-tile-mixed-ring: 0 0 0 1px var(--mixed-tile-ring);
 
   /* spacing — 4px grid */
   --s-0: 4px;
@@ -281,13 +365,12 @@
   /* page header typography — bumped for editorial feel (round 38) */
   --page-title-size: 32px;
 
-  /* mesh-gradient backdrop — signature Immich visual.
-     Composed via four radial gradients on top of off-white base.
-     Apply via `background: var(--bg-mesh)` on body. */
+  /* backdrop — one whisper of the accent at the top, otherwise flat.
+     It used to be four radial gradients in four hues (pink, peach,
+     mint, periwinkle), which carried three more colours than the
+     dark theme's single wash. One hue, tied to the accent, in the
+     dark theme's shape. */
   --bg-mesh:
-    radial-gradient(ellipse 50% 40% at 8% 10%, rgba(255, 200, 220, 0.45), transparent 60%),
-    radial-gradient(ellipse 40% 35% at 92% 20%, rgba(255, 225, 175, 0.40), transparent 60%),
-    radial-gradient(ellipse 45% 40% at 85% 85%, rgba(190, 225, 215, 0.40), transparent 60%),
-    radial-gradient(ellipse 50% 45% at 15% 90%, rgba(210, 215, 250, 0.40), transparent 60%),
+    radial-gradient(ellipse 70% 55% at 50% -5%, rgba(255, 193, 167, 0.35), transparent 70%),
     var(--bg-0);
 }

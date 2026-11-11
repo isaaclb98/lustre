@@ -420,7 +420,7 @@
          photo frame still reads as a contained surface against the
          mesh-gradient backdrop. */
       background: rgba(20, 22, 28, 0.06);
-      border: 1px solid var(--glass-edge);
+      border: 1px solid var(--edge-panel-color);
     }
 
   .blur {
@@ -433,6 +433,9 @@
        makes the blurhash look muddy. (Round‑31 fix.) */
     background-size: cover;
     background-position: center;
+    /* The dark theme dims this so the photograph, not the
+       placeholder, is the brightest thing on the page. */
+    opacity: var(--photo-backdrop-dim);
   }
 
   .hero {
@@ -477,7 +480,7 @@
     width: 100%;
     text-align: left;
     background: color-mix(in srgb, var(--fg-1) 4%, transparent);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     border-radius: var(--r-1);
     padding: var(--s-1) var(--s-2);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

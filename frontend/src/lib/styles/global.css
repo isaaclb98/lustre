@@ -1,4 +1,11 @@
 @import './tokens.css';
+/* The dark theme — an optional second palette, selected by the
+   `data-theme` attribute the backend stamps onto the shell it
+   serves (see search/theme.py). It overrides the light tokens
+   rather than replacing them, so the light theme is untouched when
+   the attribute is absent. Imported after tokens.css because it
+   redefines the same token names. */
+@import './theme-dark.css';
 /* Roboto Flex (variable) — Google's updated UI font (2022).
    Variable axes: weight, width, optical size, grade. Single
    CSS import, full axis. Used on Android, Chrome OS, Google
@@ -71,7 +78,7 @@ input, textarea {
   position: relative;
   isolation: isolate;
   background: var(--bg-1);
-  border: 1px solid var(--glass-edge);
+  border: 1px solid var(--edge-panel-color);
   border-radius: var(--r-3);
   overflow: hidden;
   /* Inset top highlight (the lit-from-above cue) + 1-2px drop
@@ -133,8 +140,8 @@ input, textarea {
   text-align: left;
   color: var(--fg-2);
   font-size: var(--fs-sm);
-  background: var(--bg-1);
-  border: 1px solid var(--glass-edge);
+  background: var(--inset-bg);
+  border: 1px solid var(--edge-panel-color);
   border-radius: var(--r-2);
   /* Round-58: cap state messages at the 5-tile grid width
      (var(--grid-width) = 1256px) so every loading / empty /

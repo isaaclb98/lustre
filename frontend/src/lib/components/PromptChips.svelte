@@ -145,21 +145,28 @@
     /* Round-38: white pill on light theme. Was rgba(14,15,20,0.45)
        dark fill — would now be a dark bar on the light backdrop. */
     background: var(--bg-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     border-radius: var(--r-pill);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
     padding: var(--s-0) var(--s-1) var(--s-0) var(--s-0);
     /* Single-stop subtle shadow. --shadow-1 is two-stop and
        would add an extra 1px halo that this element never
        had. The literal value matches --shadow-1's first
        stop exactly so it stays in lockstep if --shadow-1
        ever changes. */
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    box-shadow: var(--control-texture), 0 1px 2px rgba(0,0,0,0.04);
   }
   .toggle {
     display: inline-flex;
     background: var(--glass-1);
     border-radius: var(--r-pill);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
+    box-shadow: var(--control-texture);
     overflow: hidden;
   }
   .seg {

@@ -18,12 +18,13 @@
   import { onNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
   import { preferences } from '$lib/stores/preferences';
+  import { theme } from '$lib/theme';
   import {
     GRID_HOVER_ZOOM,
     GRID_MOTION_EASE,
     GRID_MOTION_MS,
-    GRID_SIZE_CONFIG,
-    GRID_TILE_RADIUS
+    gridConfigFor,
+    tileRadiusFor
   } from '$lib/grid/config';
   import { widthForColumns } from '$lib/grid/geometry';
 
@@ -60,7 +61,12 @@
   // 1.53 — essentially 1:1 device-pixel mapping, which is the
   // crispest the single-variant setup gets without going to
   // larger source files.
-  const config = $derived(GRID_SIZE_CONFIG[$preferences.gridSize]);
+  //
+  // The theme is the second half of that decision. The dark theme's
+  // grid has no gutter at all — its photos touch, like the
+  // presentation wall's — so the gap and the tile radius are read
+  // through the theme rather than off the size preset alone.
+  const config = $derived(gridConfigFor($preferences.gridSize, $theme));
   // Max row width = MAX_COLS * TILE + (MAX_COLS - 1) * GAP. Used
   // as `--grid-row-max-width` so the CSS grid's max-width clamp
   // matches the JS math — without it, auto-fit would let tracks
@@ -91,11 +97,21 @@
       // skeleton — two different components — cannot drift apart
       // in shape. The presentation wall overrides it on its own
       // grid wrapper to 0, so its photos touch pixel-to-pixel.
-      root.setProperty('--grid-tile-radius', GRID_TILE_RADIUS + 'px');
+      // The dark theme's radius is 0 everywhere: sharp, no rounded
+      // aspects at all.
+      root.setProperty('--grid-tile-radius', tileRadiusFor($theme) + 'px');
     };
     publishSizeVars();
     const unsub = preferences.subscribe(() => publishSizeVars());
-    return () => unsub();
+    // The theme is fixed per deployment — the marker is stamped
+    // onto the shell — so this rarely fires. But it must fire at
+    // all: the gutter and the radius are part of the theme, and a
+    // change to the attribute has to reach the published vars.
+    const unsubTheme = theme.subscribe(() => publishSizeVars());
+    return () => {
+      unsub();
+      unsubTheme();
+    };
   });
 
   // Round-6: View Transitions API crossfade between routes.

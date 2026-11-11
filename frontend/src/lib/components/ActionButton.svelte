@@ -81,7 +81,7 @@
     border-radius: var(--r-pill);
     background: var(--glass-1);
     color: var(--fg-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     transition:
       background var(--t-fast),
       border-color var(--t-fast),

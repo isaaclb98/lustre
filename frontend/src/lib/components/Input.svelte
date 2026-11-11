@@ -57,8 +57,12 @@
     align-items: center;
     gap: var(--s-1);
     background: var(--glass-2);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-field-color);
     border-radius: var(--r-pill);
+    background-image: var(--control-film);
+    backdrop-filter: var(--control-blur);
+    -webkit-backdrop-filter: var(--control-blur);
+    box-shadow: var(--control-texture);
     padding: 0 14px;
     height: 44px;
     backdrop-filter: var(--glass-medium);

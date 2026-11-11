@@ -1,0 +1,254 @@
+/**
+ * The dark theme.
+ *
+ * Isaac's brief: dark, sharp, minimal, and as unobtrusive as
+ * possible — the photos are the UI, the chrome recedes.
+ *
+ *   - three surfaces (near-black page, charcoal panel, one step up),
+ *     one accent, and neutrals derived from them;
+ *   - no rounded corners anywhere;
+ *   - the photo grid loses its gutter and its tile border, so the
+ *     photos read as one continuous surface;
+ *   - the light theme keeps its own accent and its own surfaces.
+ *     Every rule here is scoped to `html[data-theme='dark']`, the
+ *     marker the backend stamps onto the shell it serves (see
+ *     search/theme.py).
+ *
+ * The accent is a pale purple, deliberately a different hue from
+ * the light theme's terracotta: the two themes read as a pair at a
+ * glance, and neither is the blue the app used to carry.
+ *
+ * Contrast on the near-black base: primary text 16.1:1, secondary
+ * 8.3:1, tertiary 5.7:1, accent 11.6:1 — all past WCAG AA.
+ *
+ * This file is a token source of truth, exactly like tokens.css is
+ * for the light theme, which is why check-css-tokens.mjs exempts it.
+ */
+
+html[data-theme='dark'] {
+  /* surfaces — near-black page, charcoal panels */
+  --bg-0: #0a0a0b;
+  /* The page->panel step is what lets a panel read as a surface
+     without an outline. At 6% L (the old #16171a) it could not, and
+     the hairline had to stand in for it. These are oklch L 23.5% and
+     29.0% — a 9.1% step and a 5.5% step — which is enough to read as
+     a slab on its own. Same number of surfaces as before, further
+     apart. */
+  --bg-1: #1e1e21;
+  --bg-2: #2b2b2e;
+  /* A surface nested inside a panel has to sit a step above it —
+     without a hairline, a nested surface at the same tone as its
+     parent is invisible. */
+  --inset-bg: var(--bg-2);
+  /* The blurhash behind the photograph is dimmed, so the photo is
+     the brightest thing on the page rather than the placeholder
+     standing in for it. */
+  --photo-backdrop-dim: 0.35;
+
+  /* glass — light-on-dark instead of white-on-light */
+  --glass-1: rgba(255, 255, 255, 0.04);
+  --glass-2: rgba(255, 255, 255, 0.08);
+  /* A raised panel, lighter than the page. Same value the light
+     theme's raised panels resolve to in their own terms. */
+  --glass-raised: rgba(255, 255, 255, 0.08);
+  /* A disabled control keeps the accent's HUE, muted toward the
+     page. On a dark page that means DIMMER, not brighter — so the
+     mix runs toward the page colour rather than away from it.
+     The ratio is set by CHROMA, not by eye: mixing a light accent
+     into near-black desaturates fast, and below an oklch chroma of
+     ~0.045 the result reads as a tinted grey rather than as the
+     hue. At 26% the fill landed at chroma 0.032 — grey. At 45% it
+     is 0.050 and reads as violet. */
+  --disabled-bg: color-mix(in srgb, var(--accent-fill) 45%, var(--bg-0));
+  --disabled-fg: color-mix(in srgb, var(--accent) 70%, var(--disabled-bg));
+  /* No edges. The dark theme separates surfaces by lightness and by
+     nothing else, so every hairline token here is transparent.
+
+     This is the other half of the change that widened the tonal
+     step: a surface that reads as a surface does not need a line
+     drawn around it, and on near-black a line is a bright graphic
+     element anyway.
+
+     The accent's own borders are not edges — they mark state, and
+     the focus ring is the keyboard's way of finding a field. Both
+     stay. */
+  --glass-edge: transparent;
+  --glass-edge-strong: transparent;
+
+  /* Edge roles — see the note in tokens.css. On near-black a hairline
+     is a bright graphic line, so the containers and controls take no
+     edge at all and their surface's lightness does the separating.
+     A text field keeps one: a field's boundary is functional, not
+     decorative. The hairline is transparent rather than absent so the
+     box keeps the same 1px it has in the light theme. */
+  --edge-panel-color: transparent;
+  --edge-control-color: transparent;
+  /* A text field does not need an edge either: its fill is
+     --glass-2, which composites to a surface a clear step lighter
+     than the card it sits on, so it reads as a field by its tone. */
+  --edge-field-color: transparent;
+  --edge-strong-color: transparent;
+  /* The lit-from-above cue was an edge too — a 1px line along the
+     top of every panel. A surface that reads as a surface does not
+     need it. */
+  --glass-inset: transparent;
+  --glass-edge-bright: rgba(255, 255, 255, 0.06);
+
+  /* The glass material.
+     The film is a background-IMAGE, so it layers over whatever fill
+     a control already has instead of replacing it — a chip that was
+     transparent gets the film, a button that had a fill keeps it and
+     gains the film on top.
+
+     The film is FLAT. The first version ran a vertical gradient
+     across it, and that is what made the result read as old-school:
+     a gradient across a small control is the old iOS recipe — a
+     shiny dome with a bright band on top and a dark band at the
+     bottom. Modern dark glass has almost no contrast in it at all.
+
+     There is NO rim. The first version of the modern recipe carried
+     a 7% white lip along the top, the way glass catches light, and
+     it was the last thing left that read as an edge rather than as a
+     material. The film and the wide shadow are enough: the control
+     separates by the tone of its own surface, and nothing is drawn
+     around it.
+
+     The wide shadow is what lifts the slab off the page — on a
+     near-black page it is nearly invisible, but over a photograph it
+     is what separates the glass from the image. */
+  --control-film: linear-gradient(
+    rgba(255, 255, 255, 0.075),
+    rgba(255, 255, 255, 0.075)
+  );
+  --control-blur: blur(24px) saturate(1.6);
+  --control-texture: 0 12px 28px -14px rgba(0, 0, 0, 0.60);
+  /* The secondary button already carried a blur of its own; in the
+     dark theme that becomes the glass blur, so every control in the
+     theme refracts the same way. The light theme keeps its 6px. */
+  --glass-medium: var(--control-blur);
+
+  /* glass-fill — dark panels. The TopBar, dialogs and menus are
+     surfaces on the page, so they follow the page, not the photos. */
+  --glass-fill-light: rgba(30, 30, 33, 0.82);
+  --glass-fill-medium: rgba(30, 30, 33, 0.94);
+  --glass-fill-heavy: rgba(30, 30, 33, 1);
+
+  /* pill — the overlay badges that sit ON a photo. These stay light
+     in both themes: the photo behind them is the surface, and white
+     on a photo reads whether the photo is bright or dark. */
+  --pill-bg: rgba(255, 255, 255, 0.92);
+  --pill-bg-strong: rgba(255, 255, 255, 0.96);
+  --pill-bg-hover: rgba(255, 255, 255, 1);
+  --pill-fg: #14161a;
+  --pill-border: rgba(0, 0, 0, 0.12);
+
+  /* scrollbar — a light thumb on a dark track */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.18);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
+
+  /* scrim — the lightbox and modal dim the page behind them */
+  --scrim: rgba(0, 0, 0, 0.62);
+  --scrim-cell: rgba(0, 0, 0, 0.35);
+
+  /* skeleton — the shimmer reads as a faint lift off the page */
+  --skeleton-track: rgba(255, 255, 255, 0);
+  --skeleton-base: rgba(255, 255, 255, 0.05);
+  /* The spinner's track is its own thing — it was borrowing
+     --glass-edge for the ring it draws, and that token is now
+     transparent. */
+  --spinner-track: rgba(255, 255, 255, 0.12);
+  --skeleton-peak: rgba(255, 255, 255, 0.09);
+
+  /* text — near-white primary, two steps down for secondary */
+  --fg-1: #e8e8e6;
+  --fg-2: #a8a8a4;
+  --fg-3: #8a8a86;
+  --fg-on-accent: #0a0a0b;
+
+  /* accent — one pale purple, used for links, focus, selection.
+     Immich's own deep-purple dark primary, held at their chroma
+     (0.097 in oklch) so it reads as lavender rather than neon.
+     Dark text sits on it, not white: at this lightness, near-black
+     is the readable pairing (11.6:1). */
+  --accent: #D3BBFF;
+  --accent-2: #e1c9ff;
+  /* In the dark theme the accent is light enough to be BOTH the ink
+     and the fill — it reads as text on the near-black page and it
+     reads as a painted block. So the fill tokens just repeat it. */
+  --accent-fill: #D3BBFF;
+  --accent-fill-2: #e1c9ff;
+  --accent-soft: rgba(211, 187, 255, 0.14);
+  /* the halo is the same purple as the accent, so the home button's
+     glow and the dropdown hover stay one colour */
+  --halo: 211, 187, 255;
+
+  /* semantic — unchanged from the light theme; they are state, not
+     chrome, and both read well on the near-black base */
+  --negative: #ef4444;
+  --negative-soft: rgba(239, 68, 68, 0.14);
+  --success: #10b981;
+  --danger: #ef4444;
+  --warn: #f59e0b;
+
+  /* radii — sharp. Everything. */
+  --r-1: 0px;
+  --r-2: 0px;
+  --r-3: 0px;
+  --r-4: 0px;
+  --r-pill: 0px;
+
+  /* photo-tile chrome — borderless and flat.
+     The dark theme's grid is a continuous surface: the photos touch
+     pixel-to-pixel, so a border between them would read as a grid of
+     seams rather than as the edge of a photo. Same reasoning as the
+     presentation wall's borderless tile.
+
+     The state rings move INSIDE the tile (an inset outline paints
+     over the photo, and never changes the layout) so a disliked or
+     menu-open tile is marked without a ring appearing to sit on top
+     of its neighbour. */
+  --grid-tile-border-width: 0px;
+  --grid-tile-shadow: none;
+  --grid-tile-hover-shadow: none;
+  /* The context-menu-open marker moves inside the tile for the same
+     reason the state rings do: with no border, `border-color` has
+     nothing to paint, so the ring has to be the inset shadow. */
+  --grid-tile-menu-shadow: inset 0 0 0 1px var(--accent);
+  --grid-tile-dislike-ring: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  --grid-tile-mixed-ring: inset 0 0 0 1px var(--mixed-tile-ring);
+
+  /* shadows — on a near-black base a shadow is invisible, so depth
+     comes from the surfaces themselves. What is left is just enough
+     to lift a floating panel off the page. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 10px 28px rgba(0, 0, 0, 0.55);
+  /* No lit top edge here either — the same 1px line, arriving by
+     another route. */
+  --shadow-glass:
+    0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-glass-strong:
+    0 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow-button: 0 4px 18px rgba(var(--halo), 0.25);
+
+  /* backdrop — a whisper of lift at the top, otherwise flat black */
+  --bg-mesh:
+    radial-gradient(ellipse 70% 55% at 50% -5%, rgba(255, 255, 255, 0.025), transparent 70%),
+    var(--bg-0);
+}
+
+/**
+ * No rounded corners, anywhere.
+ *
+ * The radius tokens above cover everything that reads one, but a
+ * handful of surfaces (the photo tile's badges, the scroll-to-top
+ * button, the toggle switch, the spinner) declare their roundness
+ * directly. "No rounded aspects at all" means all of them, so this
+ * one rule settles it for the whole theme — including anything
+ * added later.
+ */
+html[data-theme='dark'] *,
+html[data-theme='dark'] *::before,
+html[data-theme='dark'] *::after {
+  border-radius: 0 !important;
+}

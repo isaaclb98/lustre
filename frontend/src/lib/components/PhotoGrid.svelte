@@ -29,7 +29,8 @@
   import ImageContextMenu from './ImageContextMenu.svelte';
   import Lightbox from './Lightbox.svelte';
   import { preferences } from '$lib/stores/preferences';
-  import { GRID_SIZE_CONFIG, type GridSizeConfig } from '$lib/grid/config';
+  import { theme } from '$lib/theme';
+  import { gridConfigFor, type GridSizeConfig } from '$lib/grid/config';
   import { columnsForWidth, wallColumnsForWidth } from '$lib/grid/geometry';
 
   // Use the generated SearchResult shape so `url`, `width`,
@@ -150,7 +151,15 @@
   // `--grid-tile-size`, `--grid-gutter-size`, and
   // `--grid-row-max-width` on `:root`. The CSS uses those vars;
   // the virtualizer uses the JS derived values directly.
-  const config = $derived(tileConfig ?? GRID_SIZE_CONFIG[$preferences.gridSize]);
+  //
+  // The theme decides the gap and the radius. The dark theme's grid
+  // has no gutter — its photos touch, like the presentation wall's —
+  // so the gap the virtualizer assumes has to be the gap the CSS
+  // renders, or every row would be the wrong height and the scroll
+  // would drift.
+  const config = $derived(
+    tileConfig ?? gridConfigFor($preferences.gridSize, $theme)
+  );
   const TILE = $derived(config.tile);
   const GAP = $derived(config.gap);
   const MAX_COLS = $derived(config.maxCols);
@@ -769,7 +778,7 @@
   .spinner {
     width: 32px;
     height: 32px;
-    border: 3px solid var(--glass-edge);
+    border: 3px solid var(--spinner-track);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;

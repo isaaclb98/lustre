@@ -31,7 +31,7 @@
     height: 1.5em;
     padding: 0 0.4em;
     background: var(--glass-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     border-radius: var(--r-1);
     color: var(--fg-2);
     font-family: var(--font-mono-stack);
