@@ -58,7 +58,7 @@
     margin-top: var(--s-3);
     padding: var(--s-2) var(--s-4);
     border-radius: var(--r-pill);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     background: var(--bg-1);
     color: var(--fg-1);
     text-decoration: none;

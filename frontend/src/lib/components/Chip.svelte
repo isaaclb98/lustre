@@ -35,7 +35,7 @@
     gap: var(--s-1);
     background: var(--glass-1);
     color: var(--fg-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     border-radius: var(--r-pill);
     padding: var(--s-0) var(--s-2) var(--s-0) var(--s-3);
     font-size: var(--fs-sm);

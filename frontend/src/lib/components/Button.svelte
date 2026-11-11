@@ -175,7 +175,7 @@
   .secondary {
     background: var(--glass-raised);
     color: var(--fg-1);
-    border-color: var(--glass-edge-strong);
+    border-color: var(--edge-strong-color);
     backdrop-filter: var(--glass-medium);
     -webkit-backdrop-filter: var(--glass-medium);
   }
@@ -188,7 +188,7 @@
   .ghost {
     background: transparent;
     color: var(--fg-2);
-    border-color: var(--glass-edge);
+    border-color: var(--edge-control-color);
   }
   .ghost:hover {
     background: var(--glass-1);
@@ -219,7 +219,7 @@
   :is(.primary, .secondary, .ghost, .icon).danger {
     background: transparent;
     color: var(--fg-3);
-    border-color: var(--glass-edge);
+    border-color: var(--edge-control-color);
   }
   :is(.primary, .secondary, .ghost, .icon).danger:hover {
     background: var(--negative-soft);

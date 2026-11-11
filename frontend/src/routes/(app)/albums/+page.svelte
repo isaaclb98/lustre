@@ -385,7 +385,7 @@
     aspect-ratio: 3 / 2;
     object-fit: cover;
     background: var(--glass-1);
-    border-bottom: 1px solid var(--glass-edge);
+    border-bottom: 1px solid var(--edge-panel-color);
   }
   /* Placeholder when the album has no members yet — keeps the
      card height the same as the others in its row. */
@@ -445,7 +445,7 @@
     height: 28px;
     border-radius: 50%;
     background: var(--dialog-fill);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     color: var(--fg-1);
     line-height: 1;
     cursor: pointer;

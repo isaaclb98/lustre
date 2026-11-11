@@ -223,7 +223,7 @@
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: var(--s-3);
     padding: var(--s-0) var(--s-3) var(--s-3);
-    border-top: 1px solid var(--glass-edge);
+    border-top: 1px solid var(--edge-panel-color);
   }
   /* Inline label + control pattern. The label
      sits on the left at a fixed width so "Filename" and "Surprise
@@ -250,7 +250,7 @@
   }
   .field input[type='text'] {
     background: var(--bg-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-field-color);
     border-radius: var(--r-pill);
     padding: 0 var(--s-2);
     height: 36px;
@@ -320,7 +320,7 @@
     height: 20px;
     border-radius: 999px;
     background: var(--bg-1, rgba(0, 0, 0, 0.06));
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     transition: background var(--t-fast);
   }
   .surprise-toggle-thumb {
@@ -354,7 +354,7 @@
     flex-direction: column;
     gap: var(--s-2);
     padding: var(--s-2) var(--s-3);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-panel-color);
     border-radius: var(--r-md, 8px);
     background: var(--bg-1, rgba(0, 0, 0, 0.02));
   }

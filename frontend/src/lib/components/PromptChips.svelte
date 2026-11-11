@@ -145,7 +145,7 @@
     /* Round-38: white pill on light theme. Was rgba(14,15,20,0.45)
        dark fill — would now be a dark bar on the light backdrop. */
     background: var(--bg-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     border-radius: var(--r-pill);
     padding: var(--s-0) var(--s-1) var(--s-0) var(--s-0);
     /* Single-stop subtle shadow. --shadow-1 is two-stop and
@@ -159,7 +159,7 @@
     display: inline-flex;
     background: var(--glass-1);
     border-radius: var(--r-pill);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     overflow: hidden;
   }
   .seg {

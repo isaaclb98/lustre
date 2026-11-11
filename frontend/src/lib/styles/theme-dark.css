@@ -28,8 +28,14 @@
 html[data-theme='dark'] {
   /* surfaces — near-black page, charcoal panels */
   --bg-0: #0a0a0b;
-  --bg-1: #16171a;
-  --bg-2: #212226;
+  /* The page->panel step is what lets a panel read as a surface
+     without an outline. At 6% L (the old #16171a) it could not, and
+     the hairline had to stand in for it. These are oklch L 23.5% and
+     29.0% — a 9.1% step and a 5.5% step — which is enough to read as
+     a slab on its own. Same number of surfaces as before, further
+     apart. */
+  --bg-1: #1e1e21;
+  --bg-2: #2b2b2e;
 
   /* glass — light-on-dark instead of white-on-light */
   --glass-1: rgba(255, 255, 255, 0.04);
@@ -49,14 +55,25 @@ html[data-theme='dark'] {
   --disabled-fg: color-mix(in srgb, var(--accent) 70%, var(--disabled-bg));
   --glass-edge: rgba(255, 255, 255, 0.10);
   --glass-edge-strong: rgba(255, 255, 255, 0.20);
+
+  /* Edge roles — see the note in tokens.css. On near-black a hairline
+     is a bright graphic line, so the containers and controls take no
+     edge at all and their surface's lightness does the separating.
+     A text field keeps one: a field's boundary is functional, not
+     decorative. The hairline is transparent rather than absent so the
+     box keeps the same 1px it has in the light theme. */
+  --edge-panel-color: transparent;
+  --edge-control-color: transparent;
+  --edge-field-color: rgba(255, 255, 255, 0.10);
+  --edge-strong-color: transparent;
   --glass-inset: rgba(255, 255, 255, 0.06);
   --glass-edge-bright: rgba(255, 255, 255, 0.06);
 
   /* glass-fill — dark panels. The TopBar, dialogs and menus are
      surfaces on the page, so they follow the page, not the photos. */
-  --glass-fill-light: rgba(22, 23, 26, 0.82);
-  --glass-fill-medium: rgba(22, 23, 26, 0.94);
-  --glass-fill-heavy: rgba(22, 23, 26, 1);
+  --glass-fill-light: rgba(30, 30, 33, 0.82);
+  --glass-fill-medium: rgba(30, 30, 33, 0.94);
+  --glass-fill-heavy: rgba(30, 30, 33, 1);
 
   /* pill — the overlay badges that sit ON a photo. These stay light
      in both themes: the photo behind them is the surface, and white

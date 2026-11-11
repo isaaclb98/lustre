@@ -40,6 +40,19 @@
   /* glass — borders (Linear/Immich subtlety, now dark hairlines) */
   --glass-edge: rgba(0,0,0,0.06);        /* hairline */
   --glass-edge-strong: rgba(0,0,0,0.12);  /* hover/focus border */
+
+  /* Edge ROLES. A container's edge, a control's edge and a text
+     field's edge are different jobs, and the two themes want
+     different answers. The light theme can afford a hairline on all
+     three — 6% black on cream is a soft edge. The dark theme cannot:
+     10% white on near-black is a bright outline, and it turns a page
+     of panels into a wireframe. The dark theme therefore takes the
+     edge off its containers and controls, and lets the surface's own
+     lightness separate them instead (see theme-dark.css). */
+  --edge-panel-color: var(--glass-edge);
+  --edge-control-color: var(--glass-edge);
+  --edge-field-color: var(--glass-edge);
+  --edge-strong-color: var(--glass-edge-strong);
   /* accent-tint — the "halo" / highlight tint used by:
      - the home search button's glow (--shadow-button)
      - Dropdown item hover and selected backgrounds

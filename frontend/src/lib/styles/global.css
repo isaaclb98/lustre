@@ -78,7 +78,7 @@ input, textarea {
   position: relative;
   isolation: isolate;
   background: var(--bg-1);
-  border: 1px solid var(--glass-edge);
+  border: 1px solid var(--edge-panel-color);
   border-radius: var(--r-3);
   overflow: hidden;
   /* Inset top highlight (the lit-from-above cue) + 1-2px drop
@@ -141,7 +141,7 @@ input, textarea {
   color: var(--fg-2);
   font-size: var(--fs-sm);
   background: var(--bg-1);
-  border: 1px solid var(--glass-edge);
+  border: 1px solid var(--edge-panel-color);
   border-radius: var(--r-2);
   /* Round-58: cap state messages at the 5-tile grid width
      (var(--grid-width) = 1256px) so every loading / empty /

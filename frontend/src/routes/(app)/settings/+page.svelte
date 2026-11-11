@@ -379,7 +379,7 @@
     margin: var(--s-2) 0 0 0;
     padding: var(--s-2);
     background: var(--bg-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-panel-color);
     border-radius: var(--r-2);
     color: var(--fg-2);
     font-size: var(--fs-xs);
@@ -405,7 +405,7 @@
     appearance: none;
     background: var(--glass-1);
     color: var(--fg-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     border-radius: var(--r-pill);
     padding: 0 var(--s-3);
     height: 32px;

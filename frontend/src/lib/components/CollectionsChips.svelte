@@ -92,7 +92,7 @@
     gap: var(--s-1);
     background: transparent;
     color: var(--fg-1);
-    border: 1px solid var(--glass-edge);
+    border: 1px solid var(--edge-control-color);
     border-radius: var(--r-pill);
     padding: var(--s-0) var(--s-3) var(--s-0) var(--s-2);
     font-size: var(--fs-sm);
