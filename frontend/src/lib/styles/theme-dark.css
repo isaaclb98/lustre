@@ -39,9 +39,14 @@ html[data-theme='dark'] {
   --glass-raised: rgba(255, 255, 255, 0.08);
   /* A disabled control keeps the accent's HUE, muted toward the
      page. On a dark page that means DIMMER, not brighter — so the
-     mix runs the other way: a little accent, mostly page. */
-  --disabled-bg: color-mix(in srgb, var(--accent-fill) 26%, var(--bg-0));
-  --disabled-fg: color-mix(in srgb, var(--accent) 62%, var(--disabled-bg));
+     mix runs toward the page colour rather than away from it.
+     The ratio is set by CHROMA, not by eye: mixing a light accent
+     into near-black desaturates fast, and below an oklch chroma of
+     ~0.045 the result reads as a tinted grey rather than as the
+     hue. At 26% the fill landed at chroma 0.032 — grey. At 45% it
+     is 0.050 and reads as violet. */
+  --disabled-bg: color-mix(in srgb, var(--accent-fill) 45%, var(--bg-0));
+  --disabled-fg: color-mix(in srgb, var(--accent) 70%, var(--disabled-bg));
   --glass-edge: rgba(255, 255, 255, 0.10);
   --glass-edge-strong: rgba(255, 255, 255, 0.20);
   --glass-inset: rgba(255, 255, 255, 0.06);
