@@ -56,6 +56,12 @@
      card it sits on; the dark theme has no hairline to fall back on
      and needs a step of its own (see theme-dark.css). */
   --inset-bg: var(--bg-1);
+  /* The photo frame's blurhash backdrop. It fills the area around a
+     portrait photo inside the frame with a stretched, blurred tint
+     of the image. On the light theme it reads as a continuation of
+     the photo; on a near-black page it is the brightest thing on
+     screen, so the dark theme dims it (see theme-dark.css). */
+  --photo-backdrop-dim: 1;
   --glass-edge-strong: rgba(0,0,0,0.12);  /* hover/focus border */
 
   /* Edge ROLES. A container's edge, a control's edge and a text

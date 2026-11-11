@@ -40,6 +40,10 @@ html[data-theme='dark'] {
      without a hairline, a nested surface at the same tone as its
      parent is invisible. */
   --inset-bg: var(--bg-2);
+  /* The blurhash behind the photograph is dimmed, so the photo is
+     the brightest thing on the page rather than the placeholder
+     standing in for it. */
+  --photo-backdrop-dim: 0.35;
 
   /* glass — light-on-dark instead of white-on-light */
   --glass-1: rgba(255, 255, 255, 0.04);

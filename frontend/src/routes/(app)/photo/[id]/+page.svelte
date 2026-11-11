@@ -433,6 +433,9 @@
        makes the blurhash look muddy. (Round‑31 fix.) */
     background-size: cover;
     background-position: center;
+    /* The dark theme dims this so the photograph, not the
+       placeholder, is the brightest thing on the page. */
+    opacity: var(--photo-backdrop-dim);
   }
 
   .hero {
