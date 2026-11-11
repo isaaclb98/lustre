@@ -778,7 +778,7 @@
   .spinner {
     width: 32px;
     height: 32px;
-    border: 3px solid var(--glass-edge);
+    border: 3px solid var(--spinner-track);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;

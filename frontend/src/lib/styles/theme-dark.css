@@ -36,6 +36,10 @@ html[data-theme='dark'] {
      apart. */
   --bg-1: #1e1e21;
   --bg-2: #2b2b2e;
+  /* A surface nested inside a panel has to sit a step above it —
+     without a hairline, a nested surface at the same tone as its
+     parent is invisible. */
+  --inset-bg: var(--bg-2);
 
   /* glass — light-on-dark instead of white-on-light */
   --glass-1: rgba(255, 255, 255, 0.04);
@@ -53,8 +57,19 @@ html[data-theme='dark'] {
      is 0.050 and reads as violet. */
   --disabled-bg: color-mix(in srgb, var(--accent-fill) 45%, var(--bg-0));
   --disabled-fg: color-mix(in srgb, var(--accent) 70%, var(--disabled-bg));
-  --glass-edge: rgba(255, 255, 255, 0.10);
-  --glass-edge-strong: rgba(255, 255, 255, 0.20);
+  /* No edges. The dark theme separates surfaces by lightness and by
+     nothing else, so every hairline token here is transparent.
+
+     This is the other half of the change that widened the tonal
+     step: a surface that reads as a surface does not need a line
+     drawn around it, and on near-black a line is a bright graphic
+     element anyway.
+
+     The accent's own borders are not edges — they mark state, and
+     the focus ring is the keyboard's way of finding a field. Both
+     stay. */
+  --glass-edge: transparent;
+  --glass-edge-strong: transparent;
 
   /* Edge roles — see the note in tokens.css. On near-black a hairline
      is a bright graphic line, so the containers and controls take no
@@ -64,9 +79,15 @@ html[data-theme='dark'] {
      box keeps the same 1px it has in the light theme. */
   --edge-panel-color: transparent;
   --edge-control-color: transparent;
-  --edge-field-color: rgba(255, 255, 255, 0.10);
+  /* A text field does not need an edge either: its fill is
+     --glass-2, which composites to a surface a clear step lighter
+     than the card it sits on, so it reads as a field by its tone. */
+  --edge-field-color: transparent;
   --edge-strong-color: transparent;
-  --glass-inset: rgba(255, 255, 255, 0.06);
+  /* The lit-from-above cue was an edge too — a 1px line along the
+     top of every panel. A surface that reads as a surface does not
+     need it. */
+  --glass-inset: transparent;
   --glass-edge-bright: rgba(255, 255, 255, 0.06);
 
   /* glass-fill — dark panels. The TopBar, dialogs and menus are
@@ -95,6 +116,10 @@ html[data-theme='dark'] {
   /* skeleton — the shimmer reads as a faint lift off the page */
   --skeleton-track: rgba(255, 255, 255, 0);
   --skeleton-base: rgba(255, 255, 255, 0.05);
+  /* The spinner's track is its own thing — it was borrowing
+     --glass-edge for the ring it draws, and that token is now
+     transparent. */
+  --spinner-track: rgba(255, 255, 255, 0.12);
   --skeleton-peak: rgba(255, 255, 255, 0.09);
 
   /* text — near-white primary, two steps down for secondary */
@@ -161,11 +186,11 @@ html[data-theme='dark'] {
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.45);
   --shadow-3: 0 10px 28px rgba(0, 0, 0, 0.55);
+  /* No lit top edge here either — the same 1px line, arriving by
+     another route. */
   --shadow-glass:
-    0 1px 0 rgba(255, 255, 255, 0.06) inset,
     0 2px 8px rgba(0, 0, 0, 0.45);
   --shadow-glass-strong:
-    0 1px 0 rgba(255, 255, 255, 0.08) inset,
     0 8px 24px rgba(0, 0, 0, 0.55);
   --shadow-button: 0 4px 18px rgba(var(--halo), 0.25);
 

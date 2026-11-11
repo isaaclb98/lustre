@@ -140,7 +140,7 @@ input, textarea {
   text-align: left;
   color: var(--fg-2);
   font-size: var(--fs-sm);
-  background: var(--bg-1);
+  background: var(--inset-bg);
   border: 1px solid var(--edge-panel-color);
   border-radius: var(--r-2);
   /* Round-58: cap state messages at the 5-tile grid width

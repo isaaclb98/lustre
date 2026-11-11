@@ -378,7 +378,7 @@
   .log {
     margin: var(--s-2) 0 0 0;
     padding: var(--s-2);
-    background: var(--bg-1);
+    background: var(--inset-bg);
     border: 1px solid var(--edge-panel-color);
     border-radius: var(--r-2);
     color: var(--fg-2);

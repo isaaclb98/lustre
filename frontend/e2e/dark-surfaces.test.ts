@@ -78,7 +78,17 @@ function lightness(colour: string): number {
   return y > 0.008856 ? 116 * Math.cbrt(y) - 16 : 903.3 * y;
 }
 
-/** Flip the marker the way the backend stamps it, and wait for it to land. */
+/**
+ * Flip the marker the way the backend stamps it, and wait for it to
+ * land.
+ *
+ * The wait is not just for the marker: a custom property on the root
+ * changes the instant the attribute does, but the DESCENDANTS' computed
+ * styles pick it up on the next style recalc. Measuring straight
+ * after the flip reads the old border colours — the root already says
+ * "transparent" while every element below it still says "6% black".
+ * Two frames is enough for that recalc to run.
+ */
 async function goDark(page: Page) {
   await page.evaluate(() => {
     document.documentElement.setAttribute('data-theme', 'dark');
@@ -92,6 +102,12 @@ async function goDark(page: Page) {
       )
     )
     .toBe('#0a0a0b');
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      )
+  );
 }
 
 test.describe('dark theme surfaces', () => {
@@ -116,16 +132,56 @@ test.describe('dark theme surfaces', () => {
 
     // The panels are the surfaces that used to carry the outline.
     // They must now separate by their own lightness.
-    const outlined = borders.filter((b) => {
+    const panels = borders.filter((b) => {
       const m = b.bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
       if (!m) return false;
       return `${m[1]},${m[2]},${m[3]}` === panelRgb;
     });
 
+    // The panel has to be there for this to mean anything: on a light
+    // deployment the panel colour belongs to the dark theme, so
+    // nothing matches and the assertion below would pass on an
+    // empty set.
+    const panelCount = await page.evaluate((rgb) => {
+      const [r, g, b] = rgb.split(',').map(Number);
+      let n = 0;
+      for (const el of Array.from(document.querySelectorAll('*'))) {
+        const cs = getComputedStyle(el);
+        const m = cs.backgroundColor.match(
+          /rgba?\((\d+),\s*(\d+),\s*(\d+)/
+        );
+        if (!m) continue;
+        if (+m[1] === r && +m[2] === g && +m[3] === b) n++;
+      }
+      return n;
+    }, panelRgb);
+    expect(panelCount, 'the dark theme must render panels to check').toBeGreaterThan(0);
+
     expect(
-      outlined.map((b) => `${b.sel} ${b.width} ${b.colour}`),
+      panels.map((b) => `${b.sel} ${b.width} ${b.colour}`),
       'a dark-theme panel must not paint a border — it separates by ' +
         'lightness, and an outline around it is the wireframe'
+    ).toEqual([]);
+  });
+
+  test('the dark theme paints no neutral border at all', async ({ page }) => {
+    await page.goto(`${APP}/albums`);
+    await page.waitForSelector('.card', { timeout: 30000 });
+    await goDark(page);
+
+    const borders = await paintedBorders(page);
+
+    // The only borders the dark theme paints are chromatic — the
+    // accent, which marks state. A neutral one would be an edge, and
+    // the dark theme has none.
+    const neutral = borders.filter((b) => {
+      const [r, g, b2] = b.colour.split(',').map(Number);
+      return Math.max(r, g, b2) - Math.min(r, g, b2) < 12;
+    });
+
+    expect(
+      neutral.map((b) => `${b.sel} ${b.width} ${b.colour}`),
+      'the dark theme must not paint a neutral border anywhere'
     ).toEqual([]);
   });
 

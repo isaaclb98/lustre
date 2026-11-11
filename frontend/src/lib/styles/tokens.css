@@ -39,6 +39,12 @@
 
   /* glass — borders (Linear/Immich subtlety, now dark hairlines) */
   --glass-edge: rgba(0,0,0,0.06);        /* hairline */
+  --spinner-track: var(--glass-edge);     /* the loading ring's track */
+  /* A surface nested inside another one. In the light theme the
+     hairline did the separating, so this is the same white as the
+     card it sits on; the dark theme has no hairline to fall back on
+     and needs a step of its own (see theme-dark.css). */
+  --inset-bg: var(--bg-1);
   --glass-edge-strong: rgba(0,0,0,0.12);  /* hover/focus border */
 
   /* Edge ROLES. A container's edge, a control's edge and a text
