@@ -187,17 +187,22 @@
   // each preloader once; subsequent effect runs (caused by
   // blurhash decode, memberOf refresh, etc.) are no-ops.
   //
-  // Distance: ±1 by default. The 1s slideshow preset only gives
-  // the user 1000 ms between ticks — `playing` bumps that to ±3
-  // so the auto-advance doesn't race the network. Single-photo
-  // lightbox (`items.length <= 1`) skips preloading entirely.
+  // Distance: 1 behind, 2 ahead by default. The lightbox is
+  // browsed forward, so the window leans ahead: warming two photos
+  // forward means the SECOND press of a → run lands on an
+  // already-cached image instead of starting a cold fetch. The 1s
+  // slideshow preset only gives the user 1000 ms between ticks —
+  // `playing` bumps that to ±3 so the auto-advance doesn't race
+  // the network. Single-photo lightbox (`items.length <= 1`) skips
+  // preloading entirely.
   //
   // Bandwidth respect: skip preloading when the user has
   // declared save-data via the Network Information API or the
   // `prefers-reduced-data` media query. Both are
   // feature-detected; old browsers that lack them get the
-  // default ±1 preload (a strict-power-user setting, but that's
-  // the conservative default for a desktop-class lightbox).
+  // default preload window (a strict-power-user setting, but
+  // that's the conservative default for a desktop-class
+  // lightbox).
   /* Local "pressed" state for the Like / Dislike action buttons.
      Synced from the current photo only when the user navigates
      to a different photo — re-syncing after every server response
