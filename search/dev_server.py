@@ -157,12 +157,19 @@ def _build_demo_app(count: int) -> FastAPI:
                 "INSERT OR IGNORE INTO dislikes (id, disliked_at, source) VALUES (?, datetime('now'), 'manual')",
                 (points[i].id,),
             )
+        # Split the favourites between the two albums. An album needs
+        # enough members to fill whole grid rows: a wall of three
+        # photos cannot cover a five-column row, so the row would be
+        # short and the background would show through at the edge.
+        # The presentation wall is the album's reason to exist, so
+        # the demo albums are sized to exercise it.
+        per_album = max(1, min(24, fav_count // 2))
         cur = conn.execute(
             "INSERT INTO albums (name, description, created_at, updated_at) VALUES (?, ?, datetime('now'), datetime('now'))",
             ("Landscape picks", "Curated landscape photos from the library."),
         )
         a1 = cur.lastrowid
-        for i in range(min(3, fav_count)):
+        for i in range(per_album):
             conn.execute(
                 "INSERT OR IGNORE INTO album_memberships (album_id, favorite_id, added_at) VALUES (?, ?, datetime('now'))",
                 (a1, points[i].id),
@@ -172,7 +179,7 @@ def _build_demo_app(count: int) -> FastAPI:
             ("Night scenes", "Urban and night photography."),
         )
         a2 = cur2.lastrowid
-        for i in range(min(6, fav_count), min(9, len(points))):
+        for i in range(per_album, min(2 * per_album, fav_count)):
             conn.execute(
                 "INSERT OR IGNORE INTO album_memberships (album_id, favorite_id, added_at) VALUES (?, ?, datetime('now'))",
                 (a2, points[i].id),
