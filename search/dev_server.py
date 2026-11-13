@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI
+
+logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,8 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _make_demo_images(root: Path, count: int) -> list[Path]:
     """Generate synthetic demo photos using scripts/synth_photos.py.
 
-    Earlier versions of this function wrote flat 2-tone PNGs with
-    a single horizon line. The synth_photos generator produces
+    Earlier versions of this function wrote flat 2-tone PNGs with a
+    single horizon line. The synth_photos generator produces
     realistic-ish JPEGs with sky gradients, mountain silhouettes,
     city skylines, etc. — much closer to what the UI is meant to
     render. The seeded RNG ensures the same demo set every run,
@@ -58,8 +61,47 @@ def _make_demo_images(root: Path, count: int) -> list[Path]:
     return [Path(item["path"]) for item in result.index]
 
 
+def _make_demo_thumbnails(thumb_dir: Path, points: list) -> None:
+    """Write the WebP thumbnails the thumbnail router serves.
+
+    The router serves PRE-GENERATED files from THUMBNAIL_DIR and
+    404s for anything missing — the frontend falls back to the
+    blurhash. A demo seed that generates no thumbnails therefore
+    renders every tile as a broken image, and the e2e suite ends up
+    asserting against a page that never showed a photo.
+
+    So the demo seed writes the same thumbnails the real indexer
+    writes: one WebP per photo, at the same 384px long edge, in the
+    same two-level prefix layout the router looks for.
+    """
+    from PIL import Image, ImageOps
+
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+    for point in points:
+        point_id = point.id
+        source = Path(point.payload["path"])
+        out_dir = thumb_dir / point_id[:2]
+        out_path = out_dir / f"{point_id}.webp"
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            with Image.open(source) as im:
+                im = ImageOps.exif_transpose(im).convert("RGB")
+                im.thumbnail((384, 384), Image.Resampling.LANCZOS)
+                im.save(out_path, "WEBP", quality=80, method=4)
+        except Exception:  # noqa: BLE001
+            # A missing thumbnail is the router's 404 path, which the
+            # frontend already handles — it must not stop the seed.
+            logger.warning("demo thumbnail failed for %s", point_id, exc_info=True)
+
+
 def _build_demo_app(count: int) -> FastAPI:
     """Build the real app against an in-memory Qdrant with local demo photos."""
+    # THUMBNAIL_DIR is read at import time by search.config, so it has
+    # to be set BEFORE search.config is imported below. The demo
+    # thumbnails live beside the demo photos, in their own directory.
+    _thumb_dir = Path(tempfile.gettempdir()) / f"lustre-demo-thumbs-{os.getpid()}"
+    os.environ["THUMBNAIL_DIR"] = str(_thumb_dir)
+
     from qdrant_client import QdrantClient
     from qdrant_client.http import models as qmodels
 
@@ -139,6 +181,12 @@ def _build_demo_app(count: int) -> FastAPI:
             )
         )
     client.upsert(collection_name=collection, points=points)
+
+    # The thumbnail router serves pre-generated files and 404s for
+    # anything missing, so the seed has to write them — otherwise
+    # every tile in the demo renders as a broken image.
+    _make_demo_thumbnails(_thumb_dir, points)
+
     qdrant = QdrantSearch(client=client, collection=collection, timeout_ms=2000)
     app = create_app(cfg=config.load(), qdrant=qdrant)
 
