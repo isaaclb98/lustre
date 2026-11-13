@@ -156,7 +156,7 @@ test.describe('Concurrent operations', () => {
     await page.getByRole('button', { name: 'Search', exact: true }).click();
 
     // Navigate away immediately (don't wait for the response)
-    await page.goto('http://127.0.0.1:8000/random', { waitUntil: 'domcontentloaded' });
+    await page.goto(`${APP}/random`, { waitUntil: 'domcontentloaded' });
     await appReady(page);
 
     // Random page should load fine
@@ -256,7 +256,7 @@ test.describe('Network resilience', () => {
       await route.continue();
     });
 
-    await page.goto('http://127.0.0.1:8000/?positives=beach');
+    await page.goto(`${APP}/?positives=beach`);
     await appReady(page);
 
     // Search button should be disabled during the slow load.
@@ -280,7 +280,7 @@ test.describe('Network resilience', () => {
       }
     });
 
-    await page.goto('http://127.0.0.1:8000/?positives=beach');
+    await page.goto(`${APP}/?positives=beach`);
     await appReady(page);
 
     // First search shows error. User retries.

@@ -111,8 +111,8 @@ test('photo page: unknown id renders an error, not a crash', async ({ page }) =>
   await page.goto(`${APP}/photo/${fakeId}`);
   await appReady(page);
 
-  // The page must show the error state (placeholder.error class).
-  const errorBox = page.locator('.placeholder.error');
+  // The page must show the error state (.state.error class).
+  const errorBox = page.locator('.state.error');
   await expect(errorBox).toBeVisible({ timeout: 5000 });
   await expect(errorBox).toContainText(/not found/i);
 });

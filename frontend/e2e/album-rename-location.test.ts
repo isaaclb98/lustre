@@ -19,6 +19,8 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 
+import { albumWithPhotos } from './albums';
+
 const APP = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173';
 
 /** The Rename control, wherever it is on the page. */
@@ -50,7 +52,8 @@ test.describe('album rename lives on the album page', () => {
   });
 
   test('the album page has exactly one Rename button', async ({ page }) => {
-    await page.goto(`${APP}/albums/5`);
+    const albumId = await albumWithPhotos(page);
+    await page.goto(`${APP}/albums/${albumId}`);
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     await expect(renameButton(page)).toHaveCount(1);

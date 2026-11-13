@@ -23,22 +23,21 @@ test.beforeEach(async ({ page }) => {
   // Photo URLs go through the vite dev proxy when running against
   // :5173, but the regex in vite.config.ts breaks on query strings
   // (`?w=1408`) so images never load. Re-route those to the
-  // backend on :8000 directly. Production runs (CI / prod) hit
-  // :8000 throughout, so the rule is a no-op there.
-  await page.route('**/photo/*/raw**', async (route) => {
-    const url = route
-      .request()
-      .url()
-      .replace('127.0.0.1:5173', '127.0.0.1:8000');
-    await route.continue({ url });
-  });
-  await page.route('**/thumb/**', async (route) => {
-    const url = route
-      .request()
-      .url()
-      .replace('127.0.0.1:5173', '127.0.0.1:8000');
-    await route.continue({ url });
-  });
+  // backend directly. The replacement is of the whole ORIGIN —
+  // swapping a bare host for one that carries its own scheme would
+  // produce `http://http://…`. When the target already IS the
+  // origin the page is on, the rule is a no-op.
+  const origin = new URL(APP).origin;
+  const reroute = async (route: import('@playwright/test').Route) => {
+    const url = route.request().url();
+    if (url.startsWith(origin)) {
+      await route.continue();
+      return;
+    }
+    await route.continue({ url: url.replace(new URL(url).origin, origin) });
+  };
+  await page.route('**/photo/*/raw**', reroute);
+  await page.route('**/thumb/**', reroute);
 });
 
 async function appReady(page: Page) {

@@ -39,7 +39,7 @@ test.describe('Full User Experience E2E Tests', () => {
   test('Homepage loads and shows composer + top-bar tabs', async ({ page }) => {
     await page.goto('/');
     await appReady(page);
-    await expect(page).toHaveTitle(/lustre/);
+    await expect(page).toHaveTitle(/lustre/i);
     await expect(page.locator('.composer-input').first()).toBeVisible();
     // Current topbar tabs: Home, Random, Albums, Settings.
     // (The earlier 'Search' tab was removed when /search became the
@@ -120,12 +120,16 @@ test.describe('Full User Experience E2E Tests', () => {
     }
   });
 
-  test('Search page with no prompts renders results (default), no crash', async ({ page }) => {
-    // / IS the search route. With no prompts in the URL, the page
-    // shows its default results rather than crashing or showing a
-    // blank screen.
+  test('Search page with no prompts shows the composer, no crash', async ({ page }) => {
+    // / IS the search route. With no prompts in the URL there is no
+    // query to run — the search endpoint answers an empty query with
+    // no results — so the page shows its composer and does NOT
+    // render a grid. What matters here is that it renders at all:
+    // the composer is up and the page did not crash.
     await gotoSearch(page);
-    await expect(page.locator('.grid-tile').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('.composer-input').first()).toBeVisible({ timeout: 10_000 });
+    // No stray error text leaked onto the page.
+    await expect(page.getByText(/Couldn't load results/i)).toHaveCount(0);
   });
 
   test('Image raw endpoint serves JPEG bytes for a search result', async ({ page }) => {

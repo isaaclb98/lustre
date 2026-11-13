@@ -53,7 +53,7 @@ test.describe('Journey: First-time visitor explores the library', () => {
 
     // 6. Go back to search page via direct navigation
     // (browser back-nav with the SPA can be flaky in headless tests)
-    await page.goto('http://127.0.0.1:8000/?positives=landscape', { waitUntil: 'domcontentloaded' });
+    await page.goto(`${APP}/?positives=landscape`, { waitUntil: 'domcontentloaded' });
     await appReady(page);
     await expect(page.locator('.grid-tile').first()).toBeVisible({ timeout: 10000 });
   });
