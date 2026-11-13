@@ -17,6 +17,18 @@ import { expect, type Page } from '@playwright/test';
 const APP = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173';
 
 /**
+ * The albums the backend exposes, with their member counts.
+ */
+async function albums(page: Page): Promise<{ id: number; member_count: number }[]> {
+  const res = await page.request.get(`${APP}/api/albums`);
+  expect(res.ok(), 'the albums list must be reachable').toBeTruthy();
+  const body = (await res.json()) as {
+    albums?: { id: number; member_count: number }[];
+  };
+  return body.albums ?? [];
+}
+
+/**
  * The id of an album that actually has photos.
  *
  * Throws if the backend exposes no such album — a presentation wall
@@ -24,15 +36,25 @@ const APP = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173';
  * test to run.
  */
 export async function albumWithPhotos(page: Page): Promise<number> {
-  const res = await page.request.get(`${APP}/api/albums`);
-  expect(res.ok(), 'the albums list must be reachable').toBeTruthy();
-
-  const body = (await res.json()) as {
-    albums?: { id: number; member_count: number }[];
-  };
-  const album = (body.albums ?? []).find((a) => a.member_count > 0);
+  const album = (await albums(page)).find((a) => a.member_count > 0);
   expect(album, 'the backend must expose an album with photos').toBeTruthy();
   return album!.id;
+}
+
+/**
+ * The id of the album with the FEWEST photos.
+ *
+ * Some assertions need a whole cycle of the album to fit on screen
+ * at once — the drift's ring repeats the album, and proving the
+ * repeat means seeing more than one cycle. That only works for an
+ * album smaller than the wall's window of tiles, so take the
+ * smallest one the backend has.
+ */
+export async function smallestAlbum(page: Page): Promise<number> {
+  const withPhotos = (await albums(page)).filter((a) => a.member_count > 0);
+  expect(withPhotos, 'the backend must expose an album with photos').toBeTruthy();
+  const smallest = withPhotos.reduce((a, b) => (a.member_count <= b.member_count ? a : b));
+  return smallest.id;
 }
 
 /** The album's own page — the ordinary, non-presentation route. */

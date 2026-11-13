@@ -26,7 +26,9 @@
  * because the wall is exactly one screen and it moves itself.
  */
 import { test, expect, type ElementHandle, type Page } from '@playwright/test';
-import { driftUrl } from './albums';
+
+const APP = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173';
+import { driftUrl, smallestAlbum } from './albums';
 
 /**
  * The vertical position of one photo on the drift wall, in pixels.
@@ -186,6 +188,49 @@ test.describe('presentation drift', () => {
     const parked = await photoY(page, photo);
     await page.waitForTimeout(900);
     expect(await photoY(page, photo)).toBe(parked);
+  });
+
+  test('the wall loops the album without a seam', async ({ page }) => {
+    // The ring is the whole trick: the wall shows the album's photos
+    // in a loop, so the sequence must be PERIODIC — tile i and tile
+    // i+N are the same photo, where N is the album's size — and the
+    // first cycle must cover the album exactly once with no photo
+    // repeated inside it.
+    //
+    // The wall's order is the route's RANDOM order, so it cannot be
+    // compared against the API's insertion order: only the
+    // periodicity is a property of the wall itself.
+    //
+    // A cycle only fits on screen if the album is SMALLER than the
+    // window of tiles, so this needs an album with fewer photos than
+    // the wall shows — the smallest one the backend has.
+    const albumId = await smallestAlbum(page);
+    const album = await (
+      await page.request.get(`${APP}/api/albums/${albumId}?limit=1000`)
+    ).json();
+    const size = album.members.length;
+
+    await page.goto(`${APP}/albums/${albumId}/present?motion=drift`);
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    const ids = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.tile')).map((t) =>
+        t.getAttribute('data-photo-id')
+      )
+    );
+
+    // Enough tiles to see more than one cycle.
+    expect(ids.length).toBeGreaterThan(size);
+
+    // The first cycle covers the album exactly once.
+    expect(new Set(ids.slice(0, size)).size).toBe(size);
+
+    // And the sequence repeats with the album's period.
+    for (let i = size; i < ids.length; i++) {
+      expect(ids[i], `tile ${i} must repeat the album's cycle`).toBe(
+        ids[i - size]
+      );
+    }
   });
 
   test('Escape leaves the wall', async ({ page }) => {
