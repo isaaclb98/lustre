@@ -213,6 +213,27 @@ def _resize_cached(point_id: str, width: int, source: Path) -> Path:
 
     try:
         with Image.open(source) as im:
+            # draft() asks libjpeg to scale during the DCT decode
+            # itself, so the source arrives already at ~1/2 or 1/4
+            # size and the Lanczos pass below never runs on
+            # full-size pixels. On a 6000x4000 source that is
+            # ~1.8x faster end to end (measured on prod photos:
+            # 3535 ms -> 2014 ms for five photos, PSNR 43-46 dB so
+            # the result is visually lossless), and the final
+            # dimensions are identical.
+            #
+            # It must come BEFORE exif_transpose(): exif_transpose
+            # loads the image, and a loaded image can no longer
+            # change its decode scale — calling draft() afterwards
+            # is silently a no-op.
+            #
+            # It only ever DOWNSCALES the decode, never upscales.
+            # libjpeg picks the nearest power-of-two scale factor
+            # whose result still covers the target, so the image is
+            # always at least `width` wide and the Lanczos pass
+            # below still does the final, exact downscale. A source
+            # already narrower than `width` is left alone.
+            im.draft("RGB", (width, width))
             # EXIF orientation: many phone photos are stored
             # landscape with a rotation flag rather than the
             # rotated pixels. Without this fix-up, a portrait
