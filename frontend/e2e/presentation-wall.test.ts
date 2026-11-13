@@ -24,8 +24,7 @@
  * promise is broken.
  */
 import { test, expect, type Page } from '@playwright/test';
-
-const APP = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173';
+import { albumUrl, presentUrl } from './albums';
 
 /**
  * The photo ids in the order the wall rendered them.
@@ -55,7 +54,7 @@ async function albumCount(page: Page): Promise<number> {
 
 test.describe('presentation wall', () => {
   test('renders the album as a gapless square grid', async ({ page }) => {
-    await page.goto(`${APP}/albums/5/present`);
+    await page.goto(await presentUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     const geom = await page.evaluate(() => {
@@ -90,7 +89,7 @@ test.describe('presentation wall', () => {
   });
 
   test('is on its own — no app chrome, no controls', async ({ page }) => {
-    await page.goto(`${APP}/albums/5/present`);
+    await page.goto(await presentUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     // The app chrome is not in the wall's layout tree at all. It
@@ -118,7 +117,7 @@ test.describe('presentation wall', () => {
 
   test('fills the viewport — no background bleeding in at the edges', async ({ page }) => {
     await page.setViewportSize({ width: 1270, height: 900 });
-    await page.goto(`${APP}/albums/5/present`);
+    await page.goto(await presentUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     const edges = await page.evaluate(() => {
@@ -155,7 +154,7 @@ test.describe('presentation wall', () => {
   });
 
   test('the scrollbar is hidden while the wall is up', async ({ page }) => {
-    await page.goto(`${APP}/albums/5/present`);
+    await page.goto(await presentUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     // A visible scrollbar reserves a gutter, and the wall would
@@ -173,7 +172,7 @@ test.describe('presentation wall', () => {
   });
 
   test('the scrollbar comes back on an ordinary route', async ({ page }) => {
-    await page.goto(`${APP}/albums/5`);
+    await page.goto(await albumUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     // The class is removed when the wall unmounts, so the rest of
@@ -189,7 +188,7 @@ test.describe('presentation wall', () => {
 
   test('the wall look does not leak into other routes', async ({ page }) => {
     // The normal album page must keep the app-wide grid.
-    await page.goto(`${APP}/albums/5`);
+    await page.goto(await albumUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     const geom = await page.evaluate(() => {
@@ -217,14 +216,14 @@ test.describe('presentation wall', () => {
     // The counterpart to the wall's own-standing test: the layout
     // split moved the chrome into a route group, so the ordinary
     // pages must still have it.
-    await page.goto(`${APP}/albums/5`);
+    await page.goto(await albumUrl(page));
     await page.waitForSelector('.topbar', { timeout: 30000 });
     await expect(page.locator('.app-shell')).toHaveCount(1);
     await expect(page.locator('.shell')).toHaveCount(1);
   });
 
   test('reshuffles on every open', async ({ page }) => {
-    await page.goto(`${APP}/albums/5/present`);
+    await page.goto(await presentUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
     const first = await renderedOrder(page);
     expect(first.length).toBeGreaterThan(0);
@@ -233,7 +232,7 @@ test.describe('presentation wall', () => {
     expect(countBefore).toBeGreaterThan(0);
 
     // A fresh open of the same album must be a different order.
-    await page.goto(`${APP}/albums/5/present`);
+    await page.goto(await presentUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
     const second = await renderedOrder(page);
 
@@ -244,7 +243,7 @@ test.describe('presentation wall', () => {
   });
 
   test('is read-only — nothing on the wall can be changed', async ({ page }) => {
-    await page.goto(`${APP}/albums/5/present`);
+    await page.goto(await presentUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     // The grid's own mutation affordances are absent.
@@ -256,11 +255,11 @@ test.describe('presentation wall', () => {
   });
 
   test('Escape leaves the wall', async ({ page }) => {
-    await page.goto(`${APP}/albums/5/present`);
+    await page.goto(await presentUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     await page.keyboard.press('Escape');
-    await page.waitForURL(/\/albums\/5$/, { timeout: 10000 });
+    await page.waitForURL(/\/albums\/\d+$/, { timeout: 10000 });
     // Back on the album page, with the app chrome.
     await expect(page.locator('.topbar')).toHaveCount(1);
   });
