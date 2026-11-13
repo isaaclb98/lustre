@@ -31,6 +31,7 @@
   import { GRID_SIZE_CONFIG, wallConfig } from '$lib/grid/config';
   import { shuffled } from '$lib/grid/shuffle';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
+  import DriftWall from '$lib/components/DriftWall.svelte';
   import type { AlbumDetail } from '$lib/api/endpoints';
 
   type Member = {
@@ -90,6 +91,24 @@
   // photos are as large as they asked for.
   let tileConfig = $derived(wallConfig(GRID_SIZE_CONFIG[$preferences.gridSize]));
 
+  /**
+   * Which surface this open is.
+   *
+   * `drift` is the MOVING wall: the same photos, the same gapless
+   * square field, the same random order — but the wall scrolls
+   * ITSELF upward, forever, and carries exactly one control: the
+   * pause button. Content that moves on its own has to be pausable
+   * (WCAG 2.2.2), so the moving wall cannot make the still wall's
+   * promise that nothing on it can be pressed. One control cannot
+   * be both absent and present, which is why the drift is a MODE of
+   * this route rather than a replacement for it.
+   *
+   * Anything else — including no parameter at all — is the still
+   * wall, so an old link to the presentation keeps meaning what it
+   * always meant.
+   */
+  let drifting = $derived($page.url.searchParams.get('motion') === 'drift');
+
   async function load() {
     const id = String($page.params.id);
     loading = true;
@@ -146,13 +165,18 @@
   <title>{detail?.name ?? 'Album'} · Lustre</title>
 </svelte:head>
 
-<div class="present" data-photo-count={members.length}>
+<div class="present" class:drift-surface={drifting} data-photo-count={members.length}>
   {#if loading}
     <div class="state">Loading…</div>
   {:else if error || !detail}
     <div class="state error">Couldn't load album: {error ?? 'not found'}</div>
   {:else if members.length === 0}
     <div class="state empty">No photos in this album yet.</div>
+  {:else if drifting}
+    <DriftWall
+      items={items}
+      {tileConfig}
+    />
   {:else}
     <PhotoGrid
       items={items}
@@ -170,6 +194,16 @@
        no top bar to slide under — the photos start at the very top
        of the viewport and run to its edges. */
     min-height: 100vh;
+  }
+  /* The moving wall is ONE screen and the document does not scroll:
+     the wall moves itself. This is also the positioning context the
+     drift's surface resolves against — it fills the presentation
+     exactly, and the overflow is clipped so no row can paint
+     outside the screen. */
+  .present.drift-surface {
+    position: relative;
+    height: 100vh;
+    overflow: hidden;
   }
   .state {
     padding: var(--s-6);

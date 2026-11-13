@@ -266,6 +266,13 @@
             Present
           </Button>
           <Button
+            variant="secondary"
+            href={resolve(`/albums/${detail.id}/present?motion=drift`)}
+            title="Show the whole album as a wall that drifts upward on its own"
+          >
+            Drift
+          </Button>
+          <Button
             variant="primary"
             href="/albums/{detail.id}/download.zip"
             target="_blank"
