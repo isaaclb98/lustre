@@ -58,8 +58,11 @@ test.describe('Albums page UI', () => {
     // The list update is async; wait for the album name to appear.
     await expect(page.getByText(albumName)).toBeVisible({ timeout: 5000 });
 
-    // The album card has a Delete button (aria-label includes the
-    // name); the confirm is the same in-app dialog.
+    // The album card's Delete button is revealed on hover (it is
+    // hidden until the card is hovered), so hover the card before
+    // clicking it. The confirm is the same in-app dialog.
+    const card = page.locator('article.card', { hasText: albumName }).first();
+    await card.hover();
     await page.getByRole('button', { name: new RegExp(`Delete ${albumName}`) }).click();
     await page.locator('[role="dialog"]').getByRole('button', { name: 'Delete' }).click();
     await expect(page.getByText(albumName)).toBeHidden({ timeout: 5000 });
@@ -111,31 +114,54 @@ test.describe('Lightbox like', () => {
     await expect(actions).toHaveText(['', 'Like', 'Most similar', 'Add to album', 'Open raw']);
     await expect(actions.first()).toBeVisible({ timeout: 3000 });
 
+    // The TEXT actions are one family — same chrome, same type. The
+    // slideshow control is an icon, so it is deliberately not one of
+    // them and is left out of the comparison.
     const actionStyles = await actions.evaluateAll((buttons) =>
-      buttons.map((button) => {
-        const style = getComputedStyle(button);
-        return {
-          color: style.color,
-          backgroundColor: style.backgroundColor,
-          borderColor: style.borderTopColor,
-          fontFamily: style.fontFamily,
-          fontSize: style.fontSize,
-          fontWeight: style.fontWeight,
-        };
-      }),
+      buttons
+        .filter((button) => (button.textContent ?? '').trim().length > 0)
+        .map((button) => {
+          const style = getComputedStyle(button);
+          return {
+            color: style.color,
+            backgroundColor: style.backgroundColor,
+            borderColor: style.borderTopColor,
+            fontFamily: style.fontFamily,
+            fontSize: style.fontSize,
+            fontWeight: style.fontWeight,
+          };
+        }),
     );
+    expect(actionStyles.length).toBe(4);
     expect(new Set(actionStyles.map((style) => JSON.stringify(style))).size).toBe(1);
 
     const like = dialog.locator('button[title^="Like"]');
-    const before = await page.request.get('/api/favorites').then((r) => r.json());
+
+    // The photo THIS test opened, by id. The assertion is about that
+    // photo's own membership, not the size of the favourites table:
+    // the table is global state that a test running beside this one
+    // also writes to, so its total moves for reasons that have
+    // nothing to do with this click.
+    const photoId = (await page
+      .locator('.grid-tile a')
+      .first()
+      .getAttribute('href'))!.split('/').pop();
+    const isFavourite = async () => {
+      const favs = await page.request
+        .get('/api/favorites?limit=1000')
+        .then((r) => r.json());
+      return (favs.favorites ?? []).some((f: { id: string }) => f.id === photoId);
+    };
+
+    const before = await isFavourite();
     await like.click();
     await page.waitForTimeout(500);
-    const after = await page.request.get('/api/favorites').then((r) => r.json());
+    const after = await isFavourite();
+
     // The like button TOGGLES — if the photo was already liked it
-    // unlikes, if not it likes. Either way the favorites table should
-    // reflect the toggle (total may go up or down by 1). The key
-    // invariant: the API was called and responded.
-    expect(Math.abs((after.total ?? 0) - (before.total ?? 0))).toBeLessThanOrEqual(1);
+    // unlikes, if not it likes. Either way this photo's membership
+    // flipped.
+    expect(after).toBe(!before);
   });
 });
 

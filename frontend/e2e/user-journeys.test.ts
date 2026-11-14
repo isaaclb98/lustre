@@ -70,7 +70,7 @@ test.describe('Journey: First-time visitor explores the library', () => {
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
 
     // 4. Like the photo
-    const likeBtn = page.locator('[role="dialog"] button[title="Like"]').first();
+    const likeBtn = page.locator('[role="dialog"] button[title^="Like"]').first();
     await likeBtn.click();
     await page.waitForTimeout(500);
 
@@ -83,9 +83,11 @@ test.describe('Journey: First-time visitor explores the library', () => {
     await expect(page).toHaveURL(/\/albums/);
     await appReady(page);
 
-    // 7. The system "Likes" album should show at least 1 item
-    const likesSection = page.locator('text=Likes').first();
-    await expect(likesSection).toBeVisible();
+    // 7. The built-in album — named Favourites — should be there.
+    // (Its centroid key is still `likes` on the backend, but the
+    // album itself was renamed long ago.)
+    const favouritesSection = page.locator('article.card .title', { hasText: 'Favourites' }).first();
+    await expect(favouritesSection).toBeVisible();
   });
 });
 
@@ -100,7 +102,7 @@ test.describe('Journey: Power user builds an album from search', () => {
     for (let i = 0; i < 3; i++) {
       await page.locator('.grid-tile').nth(i).click();
       await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
-      const likeBtn = page.locator('[role="dialog"] button[title="Like"]').first();
+      const likeBtn = page.locator('[role="dialog"] button[title^="Like"]').first();
       await likeBtn.click();
       await page.waitForTimeout(300);
       await page.keyboard.press('Escape');
@@ -113,19 +115,24 @@ test.describe('Journey: Power user builds an album from search', () => {
     await appReady(page);
 
     const albumName = `journey-album-${Date.now()}`;
-    page.once('dialog', (d) => void d.accept(albumName));
     await page.getByRole('button', { name: /New album/i }).click();
+    // The app prompts in its OWN dialog, not the browser's.
+    await page.locator('input[id="dialog-prompt-input"]').fill(albumName);
+    await page.locator('[role="dialog"]').getByRole('button', { name: 'Create' }).click();
     await expect(page.getByText(albumName)).toBeVisible({ timeout: 5000 });
 
     // 4. Open the album detail page
     await page.getByText(albumName).click();
     await expect(page).toHaveURL(/\/albums\/\d+/);
 
-    // Cleanup
-    page.once('dialog', (d) => void d.accept());
+    // Cleanup — the album card's delete button is revealed on hover,
+    // and the confirm is the app's own dialog.
     await page.goto('/albums');
     await appReady(page);
-    await page.getByRole('button', { name: new RegExp(`Delete ${albumName}`) }).click().catch(() => {});
+    const card = page.locator('article.card', { hasText: albumName }).first();
+    await card.hover();
+    await page.getByRole('button', { name: new RegExp(`Delete ${albumName}`) }).click();
+    await page.locator('[role="dialog"]').getByRole('button', { name: 'Delete' }).click();
   });
 });
 

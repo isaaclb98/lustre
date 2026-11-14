@@ -365,17 +365,7 @@ test.describe('Loading states', () => {
   });
 
   test('search button shows loading state', async ({ page }) => {
-    await page.goto('/?positives=beach');
-    await appReady(page);
-
-    // Let the page's own search finish FIRST. The delay below
-    // applies to every search, and the button is disabled while one
-    // is in flight — so a click made during the initial search
-    // would wait on a disabled button rather than start a search.
-    const searchBtn = page.getByRole('button', { name: /^Search$/ });
-    await expect(searchBtn).toBeEnabled({ timeout: 15000 });
-
-    // Now make searches slow enough to observe.
+    // Make searches slow enough to observe.
     const DELAY = 1500;
     await page.route('**/api/search**', async (route: any) => {
       await new Promise(r => setTimeout(r, DELAY));
@@ -383,16 +373,22 @@ test.describe('Loading states', () => {
       await route.fulfill({ response });
     });
 
-    // Arm the waiter BEFORE the click, so it cannot miss the
+    // Arm the waiter BEFORE navigating, so it cannot miss the
     // response it is waiting for.
     const responded = page.waitForResponse((r: any) => r.url().includes('/api/search'), {
-      timeout: 15000,
+      timeout: 20000,
     });
 
-    await searchBtn.click();
+    // The page's OWN search is the search under test. Clicking the
+    // button would race the grid's background paging, which can
+    // disable it at the moment of the click.
+    await page.goto('/?positives=beach');
+    await appReady(page);
 
-    // Search button should be disabled during search
-    await expect(searchBtn).toBeDisabled({ timeout: 500 });
+    const searchBtn = page.getByRole('button', { name: /^Search$/ });
+
+    // The button is disabled while the search is in flight.
+    await expect(searchBtn).toBeDisabled({ timeout: 5000 });
 
     // Wait for the response to complete
     await responded;
