@@ -197,7 +197,9 @@ test('Saved searches: save, pick reapplies prompts, delete removes', async ({ pa
   // Delete our specific entry via the × button on its row.
   // Round 2: also a Svelte Dialog now — confirm via the
   // Delete button inside the modal.
-  await ourItem.locator('button.del, .del').first().click();
+  // The delete control is the row's icon button, labelled with the
+  // saved search's name.
+  await ourItem.getByRole('button', { name: new RegExp(`Delete ${uniqueName}`) }).click();
   await expect(page.locator('[role="dialog"]')).toBeVisible();
   await page.locator('button:has-text("Delete"):not([title])').click();
   await expect(page.locator('[role="dialog"]')).toHaveCount(0);
