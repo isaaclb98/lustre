@@ -88,7 +88,7 @@ def _make_demo_thumbnails(thumb_dir: Path, points: list) -> None:
                 im = ImageOps.exif_transpose(im).convert("RGB")
                 im.thumbnail((384, 384), Image.Resampling.LANCZOS)
                 im.save(out_path, "WEBP", quality=80, method=4)
-        except Exception:  # noqa: BLE001
+        except Exception:
             # A missing thumbnail is the router's 404 path, which the
             # frontend already handles — it must not stop the seed.
             logger.warning("demo thumbnail failed for %s", point_id, exc_info=True)
