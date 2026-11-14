@@ -51,6 +51,20 @@
   /* glass — borders (Linear/Immich subtlety, now dark hairlines) */
   --glass-edge: rgba(0,0,0,0.06);        /* hairline */
   --spinner-track: var(--glass-edge);     /* the loading ring's track */
+
+  /* motion — timing and easing.
+     These are referenced by name across the app (Button, Input,
+     Chip, TopBar, Dropdown, CollectionsChips, Lightbox). A var()
+     that names nothing makes the WHOLE declaration it sits in
+     invalid at computed-value time, so a transition written as
+     `transition: background var(--t-fast) var(--ease-out)` with
+     these missing does not run at all — it falls back to the
+     initial 0s duration. The grid carried its own copy of these
+     (grid/config.ts) because the app-wide ones were missing; the
+     motion tokens belong here, next to every other one. */
+  --t-fast: 120ms;
+  --t-med: 220ms;
+  --ease-out: cubic-bezier(0.16, 0.84, 0.32, 1);
   /* A surface nested inside another one. In the light theme the
      hairline did the separating, so this is the same white as the
      card it sits on; the dark theme has no hairline to fall back on
