@@ -21,6 +21,8 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 
+const APP = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173';
+
 async function statusOrSkip(page: Page) {
   const res = await page.request.get('/api/admin/index/status');
   if (!res.ok()) test.skip(true, `admin endpoint unreachable (${res.status()})`);
@@ -69,16 +71,18 @@ test.describe('Settings page', () => {
     // Make sure no other job is in flight from a prior test before
     // we start a fresh one.
     await page.request.post('/api/admin/index/cancel').catch(() => {});
+    // The fetch runs in the page, so it needs an absolute URL — and
+    // the page has to be on the app for one to exist at all.
+    await page.goto('/settings');
     await page.waitForFunction(
-      async () => {
-        const r = await fetch('/api/admin/index/status');
+      async (url) => {
+        const r = await fetch(url);
         const b = await r.json();
         return b.state !== 'running';
       },
+      `${APP}/api/admin/index/status`,
       { timeout: 15000 }
     );
-
-    await page.goto('/settings');
     // The button is just "Index" with no popover now — clicking it
     // immediately starts an incremental job.
     await expect(page.getByRole('button', { name: 'Index' })).toBeVisible();
@@ -88,11 +92,12 @@ test.describe('Settings page', () => {
     // finishes before our poll — both are acceptable, the contract
     // is just that the click triggered a POST /api/admin/index).
     await page.waitForFunction(
-      async () => {
-        const r = await fetch('/api/admin/index/status');
+      async (url) => {
+        const r = await fetch(url);
         const b = await r.json();
         return b.state === 'running' || b.state === 'idle';
       },
+      `${APP}/api/admin/index/status`,
       { timeout: 5000 }
     );
 
