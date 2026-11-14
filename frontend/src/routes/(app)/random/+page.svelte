@@ -17,8 +17,7 @@
   import {
     random,
     likePoint,
-    unlikePoint,
-    dislikePoint
+    unlikePoint
   } from '$lib/api/endpoints';
   import { preferences } from '$lib/stores/preferences';
   import { currentPageSize } from '$lib/grid/geometry';
@@ -143,19 +142,6 @@
     }
   }
 
-  async function onDislike(id: string) {
-    const idx = indexById.get(id);
-    if (idx === undefined) return;
-    try {
-      await dislikePoint(id);
-      const next = items.slice();
-      next[idx] = { ...next[idx], is_disliked: true };
-      items = next;
-    } catch {
-      /* noop: dislike failure leaves state unchanged */
-    }
-  }
-
   onMount(refresh);
 </script>
 
@@ -175,7 +161,6 @@
       {hasMore}
       onLoadMore={loadMore}
       {onToggleFavorite}
-      {onDislike}
     />
   {/if}
 </section>

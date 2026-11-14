@@ -25,8 +25,6 @@
  *     set:  (id, patch) => items = items.map(x => x.id === id ? { ...x, ...patch } : x),
  *     onLike:     (id) => likePoint(id),
  *     onUnlike:   (id) => unlikePoint(id),
- *     onDislike:  (id) => dislikePoint(id),
- *     onUndislike:(id) => undislikePoint(id),
  *   });
  *   // <button onclick={() => feedback.toggleFavorite(id)}>like</button>
  */

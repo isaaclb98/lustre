@@ -71,7 +71,6 @@
     id: string;
     blurhash?: string | null;
     isFavorite?: boolean;
-    isDisliked?: boolean;
   };
 
   type Props = {
@@ -79,7 +78,6 @@
     index: number;
     onClose: () => void;
     onToggleFavorite?: (id: string) => void;
-    onDislike?: (id: string) => void;
     /** User-created albums — passed down to the right-click
      *  "Add to album" submenu (round-5). */
     albums?: { id: number; name: string }[];
@@ -96,7 +94,6 @@
     index,
     onClose,
     onToggleFavorite,
-    onDislike,
     albums,
     hasMore = false,
     onLoadMore
@@ -211,14 +208,12 @@
      in one of those two states at a time. The parent (grid) still
      owns the API call. */
   let isFavorite = $state(false);
-  let isDisliked = $state(false);
   let lastSyncedIdx = $state(-1);
 
   $effect(() => {
     if (idx === lastSyncedIdx) return;
     const it = items[idx];
     isFavorite = !!it?.isFavorite;
-    isDisliked = !!it?.isDisliked;
     lastSyncedIdx = idx;
   });
 
@@ -239,21 +234,8 @@
       isFavorite = false;
     } else {
       isFavorite = true;
-      isDisliked = false;
     }
     onToggleFavorite?.(it.id);
-  }
-
-  function toggleDislike() {
-    const it = current();
-    if (!it) return;
-    if (isDisliked) {
-      isDisliked = false;
-    } else {
-      isDisliked = true;
-      isFavorite = false;
-    }
-    onDislike?.(it.id);
   }
 
   // Round-6 — Add to album dropdown logic. Now lives in <Dropdown>;
@@ -597,13 +579,6 @@
         ariaPressed={isFavorite ? 'true' : 'false'}
       >
         Like
-      </ActionButton>
-      <ActionButton
-        onclick={toggleDislike}
-        title="Dislike"
-        ariaPressed={isDisliked ? 'true' : 'false'}
-      >
-        Dislike
       </ActionButton>
       <ActionButton
         onclick={() => current() && goSimilar(current()!.id)}

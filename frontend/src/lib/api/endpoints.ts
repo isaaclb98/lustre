@@ -188,14 +188,6 @@ export function similarPhotos(
   );
 }
 
-export async function dislikePoint(pointId: string) {
-  await apiPost(`/api/dislikes/${encodeURIComponent(pointId)}`);
-}
-
-export async function undislikePoint(pointId: string) {
-  await apiDelete(`/api/dislikes/${encodeURIComponent(pointId)}`);
-}
-
 // ---------- Likes (formerly "favourites") ----------
 
 export async function likePoint(pointId: string) {

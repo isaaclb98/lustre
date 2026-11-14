@@ -29,7 +29,6 @@
     search,
     likePoint,
     unlikePoint,
-    dislikePoint,
     getSystemStatus,
     getAdminIndexStatus
   } from '$lib/api/endpoints';
@@ -353,10 +352,10 @@
 
   // Phase 3: usePhotoFeedback consolidates the like/unlike
   // mutation pattern that was duplicated across home,
-  // Lightbox, and the photo page. Home's dislike
-  // remains its own 1-way function (the dislikes page is
-  // the only place to un-dislike), so the composable only
-  // handles the favourite toggle here.
+  // Lightbox, and the photo page. Only the favourite toggle is
+  // wired here — the dislike flag is the server's to set and the
+  // client cannot change it, so mutual exclusion is off: liking a
+  // photo must not blank a dislike the server still holds.
   const feedback = usePhotoFeedback({
     get: (id) => {
       const it = items.find((x) => x.id === id);
@@ -366,22 +365,12 @@
       items = items.map((x) => (x.id === id ? { ...x, ...patch } : x));
     },
     onLike: (id) => likePoint(id),
-    onUnlike: (id) => unlikePoint(id)
+    onUnlike: (id) => unlikePoint(id),
+    mutualExclusion: false
   });
 
   async function onToggleFavorite(id: string) {
     await feedback.toggleFavorite(id);
-  }
-
-  async function onDislike(id: string) {
-    try {
-      await dislikePoint(id);
-      items = items.map((x) =>
-        x.id === id ? { ...x, is_disliked: true } : x
-      );
-    } catch {
-      /* noop: dislike failure is non-critical */
-    }
   }
 
   // Run on Search button (from composer) and on initial mount if
@@ -620,7 +609,6 @@
         {hasMore}
         onLoadMore={loadMore}
         {onToggleFavorite}
-        {onDislike}
       />
     {/if}
   {/if}
