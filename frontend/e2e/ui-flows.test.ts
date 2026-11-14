@@ -104,7 +104,7 @@ test.describe('Saved searches UI', () => {
   });
 });
 
-test.describe('Lightbox like / dislike', () => {
+test.describe('Lightbox like', () => {
   test('clicking Like in the lightbox likes the photo', async ({ page }) => {
     await page.goto('/random');
     await appReady(page);
@@ -114,8 +114,12 @@ test.describe('Lightbox like / dislike', () => {
 
     const dialog = page.locator('[role="dialog"]');
     const actions = dialog.locator('.bar .action');
+    // The bar is: the slideshow button (an icon, so no text), Like,
+    // Most similar, Add to album, Open raw. There is no Dislike
+    // button — it outlived the Dislikes album and was a one-way
+    // action with no way back.
     await expect(actions).toHaveCount(5);
-    await expect(actions).toHaveText(['Like', 'Dislike', 'Most similar', 'Add to album', 'Open raw']);
+    await expect(actions).toHaveText(['', 'Like', 'Most similar', 'Add to album', 'Open raw']);
     await expect(actions.first()).toBeVisible({ timeout: 3000 });
 
     const actionStyles = await actions.evaluateAll((buttons) =>
@@ -163,13 +167,14 @@ test.describe('Direct photo URL navigation', () => {
     const photoImg = page.locator(`img[src*="/photo/${pointId}/raw"]`);
     await expect(photoImg).toBeVisible({ timeout: 10000 });
 
-    // Photo page actions: Like, Dislike, Add to album (Dropdown
-    // primitive), Most similar, Open raw — five in total.
+    // Photo page actions: Like, Add to album (Dropdown primitive),
+    // Most similar, Open raw — four in total. There is no Dislike
+    // button.
     const photoActions = page.locator('.actions button, .actions a');
-    await expect(photoActions).toHaveCount(5);
+    await expect(photoActions).toHaveCount(4);
     const photoActionText = await photoActions.allTextContents();
     expect(photoActionText[0]).toMatch(/^(Like|Liked)$/);
-    expect(photoActionText.slice(1)).toEqual(['Dislike', 'Add to album', 'Most similar', 'Open raw']);
+    expect(photoActionText.slice(1)).toEqual(['Add to album', 'Most similar', 'Open raw']);
     expect(photoActionText.every((text) => !/[♥♡−⟳↗←×‹›]/.test(text))).toBe(true);
   });
 });
