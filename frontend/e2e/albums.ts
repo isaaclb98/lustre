@@ -31,14 +31,36 @@ async function albums(page: Page): Promise<{ id: number; member_count: number }[
 /**
  * The id of an album that actually has photos.
  *
- * Throws if the backend exposes no such album — a presentation wall
- * with no photos has nothing to present, so there is no meaningful
- * test to run.
+ * If the backend has none, one is created and given photos. A test
+ * that needs an album must not depend on the seed's albums still
+ * being there: the destructive tests delete every user album to
+ * assert the empty state, and whichever test runs after them would
+ * otherwise find nothing and fail for a reason that has nothing to
+ * do with what it is testing.
  */
 export async function albumWithPhotos(page: Page): Promise<number> {
   const album = (await albums(page)).find((a) => a.member_count > 0);
-  expect(album, 'the backend must expose an album with photos').toBeTruthy();
-  return album!.id;
+  if (album) return album.id;
+
+  const created = await page.request.post('/api/albums', {
+    data: { name: `e2e-album-${Date.now()}` }
+  });
+  expect(created.status(), 'the album must be creatable').toBe(200);
+  const { id } = await created.json();
+
+  // Members are favourites, so take the ids from the favourites list
+  // rather than from the photo list.
+  const favRes = await page.request.get(`${APP}/api/favorites?limit=8`);
+  expect(favRes.ok(), 'the favourites list must be reachable').toBeTruthy();
+  const favBody = (await favRes.json()) as { favorites?: { id: string }[] };
+  const favIds = (favBody.favorites ?? []).map((f) => f.id);
+  expect(favIds.length, 'the backend must expose some favourites').toBeGreaterThan(0);
+
+  for (const favId of favIds.slice(0, 8)) {
+    await page.request.post(`/api/albums/${id}/members/${favId}`);
+  }
+
+  return id as number;
 }
 
 /**
