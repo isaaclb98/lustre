@@ -125,6 +125,11 @@ jobs:
           # SEARCH_TEST_MODE flips the same env the test backend uses.
           SEARCH_TEST_MODE: "1"
           SEARCH_NO_MODEL: "1"
+          # LUSTRE_E2E_MODE marks the backend disposable, which the
+          # destructive e2e tests (the ones that delete every user
+          # album to assert the empty state) require before they
+          # will touch anything. Without it they skip.
+          LUSTRE_E2E_MODE: "1"
           LOG_LEVEL: "WARNING"
           # CI=true flips playwright to single-worker + 2 retries
           # (see frontend/playwright.config.ts).
