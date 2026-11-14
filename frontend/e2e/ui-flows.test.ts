@@ -45,28 +45,23 @@ async function searchFor(page: Page, prompts: string[]) {
 
 test.describe('Albums page UI', () => {
   test('+ New album → name prompt → create → shows in list → Delete → confirm → gone', async ({ page }) => {
-    // Auto-accept the next prompt (album name)
     const albumName = `e2e-ui-${Date.now()}`;
-    page.once('dialog', (d) => {
-      expect(d.type()).toBe('prompt');
-      void d.accept(albumName);
-    });
 
     await page.goto('/albums');
     await appReady(page);
 
-    // Click + New album → fills the prompt → submits
+    // Click + New album → the app prompts in its OWN dialog, not
+    // the browser's, so the name goes into the dialog's input.
     await page.getByRole('button', { name: /New album/i }).click();
-    // Toast or list update is async; wait for the album name to appear.
+    await page.locator('input[id="dialog-prompt-input"]').fill(albumName);
+    await page.locator('[role="dialog"]').getByRole('button', { name: 'Create' }).click();
+    // The list update is async; wait for the album name to appear.
     await expect(page.getByText(albumName)).toBeVisible({ timeout: 5000 });
 
-    // Auto-accept the confirm() dialog for delete
-    page.once('dialog', (d) => {
-      expect(d.type()).toBe('confirm');
-      void d.accept();
-    });
-    // The album card has a Delete button (aria-label includes the name)
+    // The album card has a Delete button (aria-label includes the
+    // name); the confirm is the same in-app dialog.
     await page.getByRole('button', { name: new RegExp(`Delete ${albumName}`) }).click();
+    await page.locator('[role="dialog"]').getByRole('button', { name: 'Delete' }).click();
     await expect(page.getByText(albumName)).toBeHidden({ timeout: 5000 });
   });
 });
@@ -80,26 +75,20 @@ test.describe('Saved searches UI', () => {
     // Open the saved-searches popover (button title is "Saved searches")
     await page.getByTitle(/Saved searches/i).click();
 
-    // Save the current search — the menu uses window.prompt() to get a name
+    // Save the current search — the app prompts in its OWN dialog.
     const saveName = `e2e-saved-ui-${Date.now()}`;
-    page.once('dialog', (d) => {
-      expect(d.type()).toBe('prompt');
-      void d.accept(saveName);
-    });
-    // The Save button has title="Save current search" (button text is "Save")
     await page.getByTitle('Save current search').click();
+    await page.locator('input[id="dialog-prompt-input"]').fill(saveName);
+    await page.locator('[role="dialog"]').getByRole('button', { name: 'Save' }).click();
     // Wait for the saved entry to appear in the popover
     await expect(page.locator('.pop').getByText(saveName)).toBeVisible({ timeout: 5000 });
 
-    // Delete it via the × button — confirm() dialog
-    page.once('dialog', (d) => {
-      expect(d.type()).toBe('confirm');
-      void d.accept();
-    });
+    // Delete it via the row's delete button — the same in-app dialog
     await page
       .locator('.pop')
       .getByRole('button', { name: new RegExp(`Delete ${saveName}`) })
       .click();
+    await page.locator('[role="dialog"]').getByRole('button', { name: 'Delete' }).click();
     await expect(page.locator('.pop').getByText(saveName)).toBeHidden({ timeout: 5000 });
   });
 });
@@ -137,7 +126,7 @@ test.describe('Lightbox like', () => {
     );
     expect(new Set(actionStyles.map((style) => JSON.stringify(style))).size).toBe(1);
 
-    const like = dialog.locator('button[title="Like"]');
+    const like = dialog.locator('button[title^="Like"]');
     const before = await page.request.get('/api/favorites').then((r) => r.json());
     await like.click();
     await page.waitForTimeout(500);

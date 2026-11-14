@@ -201,7 +201,15 @@ test.describe('Empty states', () => {
     // This test is hard to set up (need empty Qdrant), so we skip if
     // the library has photos. In a real test suite, we'd have a fixture
     // for an empty library.
-    const coll = await page.request.get('http://localhost:6333/collections/images');
+    // The count comes from Qdrant directly. In CI there is no
+    // Qdrant server — the demo backend holds its own in-memory
+    // collection — so the check is simply not available there.
+    const coll = await page.request
+      .get('http://localhost:6333/collections/images')
+      .catch(() => null);
+    if (!coll || !coll.ok()) {
+      test.skip(true, 'no Qdrant server to count against — skipping');
+    }
     const count = (await coll.json()).result.points_count;
 
     if (count > 0) {
@@ -357,16 +365,23 @@ test.describe('Loading states', () => {
   });
 
   test('search button shows loading state', async ({ page }) => {
-    // Intercept search API and add delay
-    const DELAY = 2000;
+    await page.goto('/?positives=beach');
+    await appReady(page);
+
+    // Let the page's own search finish FIRST. The delay below
+    // applies to every search, and the button is disabled while one
+    // is in flight — so a click made during the initial search
+    // would wait on a disabled button rather than start a search.
+    const searchBtn = page.getByRole('button', { name: /^Search$/ });
+    await expect(searchBtn).toBeEnabled({ timeout: 15000 });
+
+    // Now make searches slow enough to observe.
+    const DELAY = 1500;
     await page.route('**/api/search**', async (route: any) => {
       await new Promise(r => setTimeout(r, DELAY));
       const response = await route.fetch();
       await route.fulfill({ response });
     });
-
-    await page.goto('/?positives=beach');
-    await appReady(page);
 
     // Arm the waiter BEFORE the click, so it cannot miss the
     // response it is waiting for.
@@ -374,8 +389,6 @@ test.describe('Loading states', () => {
       timeout: 15000,
     });
 
-    // Click search to trigger the delayed request
-    const searchBtn = page.getByRole('button', { name: /^Search$/ });
     await searchBtn.click();
 
     // Search button should be disabled during search
@@ -389,6 +402,11 @@ test.describe('Loading states', () => {
     // behind the first one, so the button can still be waiting on a
     // follow-up request. The re-enable window has to outlast the
     // injected delay, or the assertion races the app's own traffic.
-    await expect(searchBtn).toBeEnabled({ timeout: DELAY * 5 });
+    await expect(searchBtn).toBeEnabled({ timeout: DELAY * 6 });
+
+    // Leave no route in flight: the grid's own follow-up request
+    // would still be inside the delayed handler when the test ends,
+    // and Playwright reports that as an error.
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
   });
 });
