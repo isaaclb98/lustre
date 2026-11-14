@@ -232,6 +232,20 @@ def _build_demo_app(count: int) -> FastAPI:
                 "INSERT OR IGNORE INTO album_memberships (album_id, favorite_id, added_at) VALUES (?, ?, datetime('now'))",
                 (a2, points[i].id),
             )
+
+    # Register a centroid for each seeded album. The app registers an
+    # album's centroid when the album is created through the API, and
+    # re-attaches the ones that already exist at STARTUP — but the
+    # seed inserts its albums AFTER create_app() has run, so without
+    # this the albums exist with no centroid and their Search button
+    # leads to an empty result.
+    from search.app import _register_album_centroid
+
+    for album_id in (a1, a2):
+        if album_id is None:
+            raise RuntimeError("demo album insert did not return an id")
+        _register_album_centroid(album_id)
+
     return app
 
 
