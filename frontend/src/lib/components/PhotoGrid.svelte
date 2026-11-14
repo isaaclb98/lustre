@@ -45,7 +45,6 @@
     hasMore?: boolean;
     onLoadMore?: (signal?: AbortSignal) => void;
     onToggleFavorite?: (id: string) => void;
-    onDislike?: (id: string) => void;
     /**
      * Optional remove affordance shown as a small − button in the
      * top-right corner of every tile (revealed on hover, or always
@@ -125,7 +124,6 @@
     hasMore = false,
     onLoadMore,
     onToggleFavorite,
-    onDislike,
     onRemove,
     removeLabel,
     onVote,
@@ -619,13 +617,11 @@
     items={items.map((it) => ({
       id: it.id,
       blurhash: it.blurhash,
-      isFavorite: it.is_favorite,
-      isDisliked: it.is_disliked
+      isFavorite: it.is_favorite
     }))}
     index={lightboxIndex}
     onClose={closeLightbox}
     onToggleFavorite={onToggleFavorite}
-    onDislike={onDislike}
     albums={albums}
     {hasMore}
     {onLoadMore}

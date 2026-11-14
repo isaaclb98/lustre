@@ -52,7 +52,11 @@ test('photo page renders hero image and sidebar metadata', async ({ page }) => {
   // All four action buttons present. Use exact-name match for Like
   // because the regex /Like/i would also match "Dislike".
   await expect(page.getByRole('button', { name: 'Like', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Dislike/i })).toBeVisible();
+  // There is no Dislike button: the Dislikes album was removed and
+  // the button that outlived it was a one-way action with no way
+  // back. A button that came back would put the old affordance
+  // back in front of the user.
+  await expect(page.getByRole('button', { name: /Dislike/i })).toHaveCount(0);
   const similarBtn = page.getByRole('link', { name: /Most similar/i });
   await expect(similarBtn).toBeVisible();
   expect(await similarBtn.getAttribute('href')).toContain(`/similar/${id}`);
@@ -111,8 +115,8 @@ test('photo page: unknown id renders an error, not a crash', async ({ page }) =>
   await page.goto(`${APP}/photo/${fakeId}`);
   await appReady(page);
 
-  // The page must show the error state (placeholder.error class).
-  const errorBox = page.locator('.placeholder.error');
+  // The page must show the error state (.state.error class).
+  const errorBox = page.locator('.state.error');
   await expect(errorBox).toBeVisible({ timeout: 5000 });
   await expect(errorBox).toContainText(/not found/i);
 });

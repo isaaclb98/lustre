@@ -29,9 +29,18 @@ import type { APIRequestContext } from '@playwright/test';
 /** Header the backend sets when it is started for an E2E run. */
 const E2E_HEADER = 'x-lustre-e2e-mode';
 
-/** Counts above this mean the backend holds real user data. */
-const MAX_ALBUMS = 3;
-const MAX_FAVORITES = 10;
+/**
+ * Counts above this mean the backend holds real user data.
+ *
+ * The demo seed creates 2 albums and 100 favourites, and a test run
+ * adds a few throwaway albums on top — so the thresholds have to sit
+ * above that and still well below a real library, which holds
+ * thousands of favourites. The margin to production is the point:
+ * this check exists to catch a backend that was started with the
+ * marker but later pointed at real data.
+ */
+const MAX_ALBUMS = 10;
+const MAX_FAVORITES = 300;
 
 export class DestructiveTestError extends Error {
   constructor(message: string) {

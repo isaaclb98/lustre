@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { assertDisposable } from './guard';
+import { assertDisposable, DestructiveTestError } from './guard';
 
 async function appReady(page: any) {
   // The composer is on every page that has a search bar; the topbar
@@ -162,11 +162,22 @@ test.describe('Lightbox edge cases', () => {
 });
 
 test.describe('Empty states', () => {
-  test('Albums page when no custom albums exist shows empty state', async ({ page }) => {
+  test('Albums page with no custom albums shows only the built-in card', async ({ page }) => {
     // Delete all user albums (keep system albums). This deletes EVERY
     // user album, so it must only ever run against a disposable
     // backend — assertDisposable aborts the test otherwise.
-    await assertDisposable(page.request, 'the empty-albums Albums test');
+    // A destructive test cannot run against a real library, so it
+    // SKIPS there rather than failing: the guard has already proved
+    // the backend is not disposable, and nothing has been deleted.
+    try {
+      await assertDisposable(page.request, 'the empty-albums Albums test');
+    } catch (err) {
+      if (err instanceof DestructiveTestError) {
+        test.skip(true, `not a disposable backend: ${err.message}`);
+        return;
+      }
+      throw err;
+    }
     const albums = await page.request.get('/api/albums').then(r => r.json());
     for (const album of (albums.albums ?? [])) {
       if (!['Likes', 'Dislikes'].includes(album.name)) {
@@ -177,18 +188,28 @@ test.describe('Empty states', () => {
     await page.goto('/albums');
     await page.waitForSelector('h1', { timeout: 5000 });
 
-    // The empty-state message reads "No custom albums yet — create
-    // one to group your photos." Wait for it specifically rather
-    // than reading body text immediately, because the albums API
-    // fetch can still be in flight after h1 mounts.
-    await expect(page.getByText(/No custom albums yet/i)).toBeVisible({ timeout: 10_000 });
+    // The built-in Favourites card is always on the page; with no
+    // user albums it is the only one. (There is no separate
+    // empty-state message — the built-in card IS the state.)
+    await expect(page.locator('article.card .title')).toHaveCount(1, {
+      timeout: 10_000,
+    });
+    await expect(page.locator('article.card .title')).toHaveText('Favourites');
   });
 
   test('Random page when library is empty (edge case)', async ({ page }) => {
     // This test is hard to set up (need empty Qdrant), so we skip if
     // the library has photos. In a real test suite, we'd have a fixture
     // for an empty library.
-    const coll = await page.request.get('http://localhost:6333/collections/images');
+    // The count comes from Qdrant directly. In CI there is no
+    // Qdrant server — the demo backend holds its own in-memory
+    // collection — so the check is simply not available there.
+    const coll = await page.request
+      .get('http://localhost:6333/collections/images')
+      .catch(() => null);
+    if (!coll || !coll.ok()) {
+      test.skip(true, 'no Qdrant server to count against — skipping');
+    }
     const count = (await coll.json()).result.points_count;
 
     if (count > 0) {
@@ -206,25 +227,25 @@ test.describe('Empty states', () => {
 });
 
 test.describe('Filters and diversity', () => {
-  test('diversity mode selector changes the search query', async ({ page }) => {
+  test('the additional options panel offers no diversity control', async ({ page }) => {
+    // Diversity was removed from the UI (round-87): the API still
+    // accepts the parameters for external callers, but the app no
+    // longer emits them and no longer offers a control for them. A
+    // selector that came back would put the query back on the wire.
     await page.goto('/?positives=beach');
     await appReady(page);
 
-    // Wait for initial search to fire
-    await page.waitForTimeout(500);
-
-    // Open "Additional options" panel first
     await page.getByRole('button', { name: /additional options/i }).click();
 
-    // Now find the diversity mode combobox
-    await page.getByRole('combobox', { name: /diversity mode/i }).selectOption('balanced');
+    await expect(page.getByRole('combobox', { name: /diversity mode/i })).toHaveCount(0);
 
-    // Diversity mode change alone doesn't fire a search — user must click Search
-    const responsePromise = page.waitForResponse((r: any) => r.url().includes('/api/search'), { timeout: 15000 });
+    // And the search request carries no diversity parameter.
+    const responsePromise = page.waitForResponse((r: any) => r.url().includes('/api/search'), {
+      timeout: 15000,
+    });
     await page.getByRole('button', { name: /^Search$/ }).click();
     const response = await responsePromise;
-    expect(response.status()).toBe(200);
-    expect(response.url()).toContain('diversity=balanced');
+    expect(response.url()).not.toContain('diversity=');
   });
 
   test('filename filter with regex-like pattern', async ({ page }) => {
@@ -270,7 +291,7 @@ test.describe('Toast messages', () => {
     expect(errorText).toContain("Couldn't load results");
   });
 
-  test('success toast appears on save', async ({ page }) => {
+  test('a saved search appears in the menu', async ({ page }) => {
     await page.goto('/?positives=beach');
     await appReady(page);
 
@@ -280,17 +301,28 @@ test.describe('Toast messages', () => {
     // Open saved searches menu
     await page.getByTitle('Saved searches').click();
 
-    // Click Save and handle the prompt
+    // Click Save — the app prompts in its OWN dialog, not the
+    // browser's native prompt, so the name goes into the dialog's
+    // input rather than into a page.on('dialog') handler.
     const saveName = 'test-save-' + Date.now();
-    page.on('dialog', (d: any) => {
-      void d.accept(saveName);
-    });
     await page.getByTitle('Save current search').click();
+    await page.locator('input[id="dialog-prompt-input"]').fill(saveName);
+    // The dialog's own Save button — "Save" also names the menu's
+    // trigger and the "Save current search" control beside it.
+    await page
+      .getByLabel('Save search')
+      .getByRole('button', { name: 'Save' })
+      .click();
 
-    // Should show success toast - wait for the toaster region to appear
-    await expect(page.getByRole('region', { name: /notifications/i })).toBeVisible({ timeout: 3000 });
-    const toast = page.locator('.toast.success, .toast.info').first();
-    await expect(toast).toBeVisible({ timeout: 3000 });
+    // The app has no toast popups — the confirmation is the saved
+    // search showing up in the menu it was saved from. The list
+    // refreshes on save, but the popover may or may not still be
+    // open by then, so open it only if it is not.
+    const menu = page.locator('.pop.glass[role="menu"]');
+    if (!(await menu.isVisible().catch(() => false))) {
+      await page.getByTitle('Saved searches').click();
+    }
+    await expect(page.getByText(saveName)).toBeVisible({ timeout: 5000 });
   });
 });
 
@@ -333,27 +365,44 @@ test.describe('Loading states', () => {
   });
 
   test('search button shows loading state', async ({ page }) => {
-    // Intercept search API and add delay
+    // Make searches slow enough to observe.
+    const DELAY = 1500;
     await page.route('**/api/search**', async (route: any) => {
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, DELAY));
       const response = await route.fetch();
       await route.fulfill({ response });
     });
 
+    // Arm the waiter BEFORE navigating, so it cannot miss the
+    // response it is waiting for.
+    const responded = page.waitForResponse((r: any) => r.url().includes('/api/search'), {
+      timeout: 20000,
+    });
+
+    // The page's OWN search is the search under test. Clicking the
+    // button would race the grid's background paging, which can
+    // disable it at the moment of the click.
     await page.goto('/?positives=beach');
     await appReady(page);
 
-    // Click search to trigger the delayed request
     const searchBtn = page.getByRole('button', { name: /^Search$/ });
-    await searchBtn.click();
 
-    // Search button should be disabled during search
-    await expect(searchBtn).toBeDisabled({ timeout: 500 });
-    
+    // The button is disabled while the search is in flight.
+    await expect(searchBtn).toBeDisabled({ timeout: 5000 });
+
     // Wait for the response to complete
-    await page.waitForResponse((r: any) => r.url().includes('/api/search'), { timeout: 5000 });
-    
-    // Button should be enabled again
-    await expect(searchBtn).toBeEnabled({ timeout: 1000 });
+    await responded;
+
+    // Button should be enabled again. The delay applies to EVERY
+    // search the page issues, and the grid fetches its next page
+    // behind the first one, so the button can still be waiting on a
+    // follow-up request. The re-enable window has to outlast the
+    // injected delay, or the assertion races the app's own traffic.
+    await expect(searchBtn).toBeEnabled({ timeout: DELAY * 6 });
+
+    // Leave no route in flight: the grid's own follow-up request
+    // would still be inside the delayed handler when the test ends,
+    // and Playwright reports that as an error.
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
   });
 });

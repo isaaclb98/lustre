@@ -3,10 +3,10 @@
  * button presses — same contract as the home search (issue #6:
  * "Search runs ONLY on explicit Search button clicks").
  *
- * Regression: filter changes in centroid mode (diversity, depth,
- * filename, collections) used to auto-fire the search (debounced
- * for filename). Now they stage into state; the request happens
- * only when the user clicks Search.
+ * Regression: filter changes in centroid mode (filename,
+ * collections) used to auto-fire the search (debounced for
+ * filename). Now they stage into state; the request happens only
+ * when the user clicks Search.
  *
  * Method: count centroid search API requests. A staged change
  * must add zero; the Search click must add exactly one, carrying
@@ -54,29 +54,6 @@ test('centroid mode renders a Search button', async ({ page }) => {
   const btn = page.locator('.search-actions button', { hasText: 'Search' });
   await expect(btn).toBeVisible();
   await expect(btn).toBeEnabled();
-});
-
-test('changing diversity does not re-run; Search button does', async ({ page }) => {
-  await openAlbumSearch(page);
-  await openFiltersPanel(page);
-  const urls = centroidRequests(page);
-  const before = urls.length;
-
-  // Stage a diversity change — must NOT fire a request (the old
-  // code called reload() directly from this handler).
-  const select = page.locator('select[aria-label="Diversity mode"]');
-  const current = await select.inputValue();
-  const next = ['balanced', 'high', 'off', 'low'].find((v) => v !== current)!;
-  await select.selectOption(next);
-  await page.waitForTimeout(900); // > any plausible debounce
-  expect(urls.length, 'filter change must not auto-fire the search').toBe(before);
-
-  // Click Search — exactly one new request carrying the staged value.
-  await page.locator('.search-actions button', { hasText: 'Search' }).click();
-  await expect
-    .poll(() => urls.length, { timeout: 15000, message: 'Search click must fire the request' })
-    .toBe(before + 1);
-  expect(urls[urls.length - 1]).toContain(`diversity=${encodeURIComponent(next)}`);
 });
 
 test('filename typing does not re-run until Search is pressed', async ({ page }) => {

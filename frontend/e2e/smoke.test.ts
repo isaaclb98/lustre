@@ -197,7 +197,9 @@ test('Saved searches: save, pick reapplies prompts, delete removes', async ({ pa
   // Delete our specific entry via the × button on its row.
   // Round 2: also a Svelte Dialog now — confirm via the
   // Delete button inside the modal.
-  await ourItem.locator('button.del, .del').first().click();
+  // The delete control is the row's icon button, labelled with the
+  // saved search's name.
+  await ourItem.getByRole('button', { name: new RegExp(`Delete ${uniqueName}`) }).click();
   await expect(page.locator('[role="dialog"]')).toBeVisible();
   await page.locator('button:has-text("Delete"):not([title])').click();
   await expect(page.locator('[role="dialog"]')).toHaveCount(0);
@@ -410,19 +412,48 @@ test('Search page infinite-scrolls: scrolls append a second page', async ({ page
   expect(initial).toBeGreaterThan(0);
   expect(initial % renderedCols).toBe(0);
 
+  // The grid is VIRTUALIZED: only the rows in view are in the DOM,
+  // so the RENDERED tile count can go DOWN as the window moves. The
+  // unambiguous signal that a page was appended is the request for
+  // it — the grid asks for the next offset.
+  const requestedOffsets: number[] = [];
+  page.on('request', (req) => {
+    if (req.url().includes('/api/search')) {
+      const raw = new URL(req.url()).searchParams.get('offset');
+      requestedOffsets.push(raw === null ? 0 : Number(raw));
+    }
+  });
+
   // Scroll the sentinel into view to trigger the next-page load.
 // The sentinel lives inside section.results; the page has other
 // sections below (For You, etc.) so scrolling to document.body
 // scrollHeight skips past the sentinel without triggering it. We
 // scroll the sentinel element itself into view, then wait for the
 // append to land.
+// The sentinel only renders while there is another page to load, so
+// scroll to it when it is there and to the bottom of the results
+// otherwise.
   for (let i = 0; i < 5; i++) {
-    await page.locator('section.results .sentinel').first().scrollIntoViewIfNeeded();
+    const sentinel = page.locator('section.results .sentinel').first();
+    if (await sentinel.count()) {
+      await sentinel.scrollIntoViewIfNeeded();
+    } else {
+      await page.evaluate(() => {
+        document.querySelector('section.results')?.scrollIntoView({ block: 'end' });
+      });
+    }
     await page.waitForTimeout(2000);
   }
 
+  // The append lands asynchronously — poll for it rather than
+  // assuming the fixed waits above were enough.
+  await expect
+    .poll(() => requestedOffsets.filter((o) => o > 0).length, {
+      timeout: 15_000,
+      message: 'scrolling must fetch the next page'
+    })
+    .toBeGreaterThan(0);
   const final = await page.locator('section.results .grid-tile').count();
-  expect(final).toBeGreaterThan(initial);
   // The appended page keeps the whole-row guarantee.
   expect(final % renderedCols).toBe(0);
 });

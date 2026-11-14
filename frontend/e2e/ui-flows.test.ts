@@ -45,28 +45,26 @@ async function searchFor(page: Page, prompts: string[]) {
 
 test.describe('Albums page UI', () => {
   test('+ New album → name prompt → create → shows in list → Delete → confirm → gone', async ({ page }) => {
-    // Auto-accept the next prompt (album name)
     const albumName = `e2e-ui-${Date.now()}`;
-    page.once('dialog', (d) => {
-      expect(d.type()).toBe('prompt');
-      void d.accept(albumName);
-    });
 
     await page.goto('/albums');
     await appReady(page);
 
-    // Click + New album → fills the prompt → submits
+    // Click + New album → the app prompts in its OWN dialog, not
+    // the browser's, so the name goes into the dialog's input.
     await page.getByRole('button', { name: /New album/i }).click();
-    // Toast or list update is async; wait for the album name to appear.
+    await page.locator('input[id="dialog-prompt-input"]').fill(albumName);
+    await page.locator('[role="dialog"]').getByRole('button', { name: 'Create' }).click();
+    // The list update is async; wait for the album name to appear.
     await expect(page.getByText(albumName)).toBeVisible({ timeout: 5000 });
 
-    // Auto-accept the confirm() dialog for delete
-    page.once('dialog', (d) => {
-      expect(d.type()).toBe('confirm');
-      void d.accept();
-    });
-    // The album card has a Delete button (aria-label includes the name)
+    // The album card's Delete button is revealed on hover (it is
+    // hidden until the card is hovered), so hover the card before
+    // clicking it. The confirm is the same in-app dialog.
+    const card = page.locator('article.card', { hasText: albumName }).first();
+    await card.hover();
     await page.getByRole('button', { name: new RegExp(`Delete ${albumName}`) }).click();
+    await page.locator('[role="dialog"]').getByRole('button', { name: 'Delete' }).click();
     await expect(page.getByText(albumName)).toBeHidden({ timeout: 5000 });
   });
 });
@@ -80,31 +78,25 @@ test.describe('Saved searches UI', () => {
     // Open the saved-searches popover (button title is "Saved searches")
     await page.getByTitle(/Saved searches/i).click();
 
-    // Save the current search — the menu uses window.prompt() to get a name
+    // Save the current search — the app prompts in its OWN dialog.
     const saveName = `e2e-saved-ui-${Date.now()}`;
-    page.once('dialog', (d) => {
-      expect(d.type()).toBe('prompt');
-      void d.accept(saveName);
-    });
-    // The Save button has title="Save current search" (button text is "Save")
     await page.getByTitle('Save current search').click();
+    await page.locator('input[id="dialog-prompt-input"]').fill(saveName);
+    await page.locator('[role="dialog"]').getByRole('button', { name: 'Save' }).click();
     // Wait for the saved entry to appear in the popover
     await expect(page.locator('.pop').getByText(saveName)).toBeVisible({ timeout: 5000 });
 
-    // Delete it via the × button — confirm() dialog
-    page.once('dialog', (d) => {
-      expect(d.type()).toBe('confirm');
-      void d.accept();
-    });
+    // Delete it via the row's delete button — the same in-app dialog
     await page
       .locator('.pop')
       .getByRole('button', { name: new RegExp(`Delete ${saveName}`) })
       .click();
+    await page.locator('[role="dialog"]').getByRole('button', { name: 'Delete' }).click();
     await expect(page.locator('.pop').getByText(saveName)).toBeHidden({ timeout: 5000 });
   });
 });
 
-test.describe('Lightbox like / dislike', () => {
+test.describe('Lightbox like', () => {
   test('clicking Like in the lightbox likes the photo', async ({ page }) => {
     await page.goto('/random');
     await appReady(page);
@@ -114,35 +106,62 @@ test.describe('Lightbox like / dislike', () => {
 
     const dialog = page.locator('[role="dialog"]');
     const actions = dialog.locator('.bar .action');
+    // The bar is: the slideshow button (an icon, so no text), Like,
+    // Most similar, Add to album, Open raw. There is no Dislike
+    // button — it outlived the Dislikes album and was a one-way
+    // action with no way back.
     await expect(actions).toHaveCount(5);
-    await expect(actions).toHaveText(['Like', 'Dislike', 'Most similar', 'Add to album', 'Open raw']);
+    await expect(actions).toHaveText(['', 'Like', 'Most similar', 'Add to album', 'Open raw']);
     await expect(actions.first()).toBeVisible({ timeout: 3000 });
 
+    // The TEXT actions are one family — same chrome, same type. The
+    // slideshow control is an icon, so it is deliberately not one of
+    // them and is left out of the comparison.
     const actionStyles = await actions.evaluateAll((buttons) =>
-      buttons.map((button) => {
-        const style = getComputedStyle(button);
-        return {
-          color: style.color,
-          backgroundColor: style.backgroundColor,
-          borderColor: style.borderTopColor,
-          fontFamily: style.fontFamily,
-          fontSize: style.fontSize,
-          fontWeight: style.fontWeight,
-        };
-      }),
+      buttons
+        .filter((button) => (button.textContent ?? '').trim().length > 0)
+        .map((button) => {
+          const style = getComputedStyle(button);
+          return {
+            color: style.color,
+            backgroundColor: style.backgroundColor,
+            borderColor: style.borderTopColor,
+            fontFamily: style.fontFamily,
+            fontSize: style.fontSize,
+            fontWeight: style.fontWeight,
+          };
+        }),
     );
+    expect(actionStyles.length).toBe(4);
     expect(new Set(actionStyles.map((style) => JSON.stringify(style))).size).toBe(1);
 
-    const like = dialog.locator('button[title="Like"]');
-    const before = await page.request.get('/api/favorites').then((r) => r.json());
+    const like = dialog.locator('button[title^="Like"]');
+
+    // The photo THIS test opened, by id. The assertion is about that
+    // photo's own membership, not the size of the favourites table:
+    // the table is global state that a test running beside this one
+    // also writes to, so its total moves for reasons that have
+    // nothing to do with this click.
+    const photoId = (await page
+      .locator('.grid-tile a')
+      .first()
+      .getAttribute('href'))!.split('/').pop();
+    const isFavourite = async () => {
+      const favs = await page.request
+        .get('/api/favorites?limit=1000')
+        .then((r) => r.json());
+      return (favs.favorites ?? []).some((f: { id: string }) => f.id === photoId);
+    };
+
+    const before = await isFavourite();
     await like.click();
     await page.waitForTimeout(500);
-    const after = await page.request.get('/api/favorites').then((r) => r.json());
+    const after = await isFavourite();
+
     // The like button TOGGLES — if the photo was already liked it
-    // unlikes, if not it likes. Either way the favorites table should
-    // reflect the toggle (total may go up or down by 1). The key
-    // invariant: the API was called and responded.
-    expect(Math.abs((after.total ?? 0) - (before.total ?? 0))).toBeLessThanOrEqual(1);
+    // unlikes, if not it likes. Either way this photo's membership
+    // flipped.
+    expect(after).toBe(!before);
   });
 });
 
@@ -163,13 +182,14 @@ test.describe('Direct photo URL navigation', () => {
     const photoImg = page.locator(`img[src*="/photo/${pointId}/raw"]`);
     await expect(photoImg).toBeVisible({ timeout: 10000 });
 
-    // Photo page actions: Like, Dislike, Add to album (Dropdown
-    // primitive), Most similar, Open raw — five in total.
+    // Photo page actions: Like, Add to album (Dropdown primitive),
+    // Most similar, Open raw — four in total. There is no Dislike
+    // button.
     const photoActions = page.locator('.actions button, .actions a');
-    await expect(photoActions).toHaveCount(5);
+    await expect(photoActions).toHaveCount(4);
     const photoActionText = await photoActions.allTextContents();
     expect(photoActionText[0]).toMatch(/^(Like|Liked)$/);
-    expect(photoActionText.slice(1)).toEqual(['Dislike', 'Add to album', 'Most similar', 'Open raw']);
+    expect(photoActionText.slice(1)).toEqual(['Add to album', 'Most similar', 'Open raw']);
     expect(photoActionText.every((text) => !/[♥♡−⟳↗←×‹›]/.test(text))).toBe(true);
   });
 });

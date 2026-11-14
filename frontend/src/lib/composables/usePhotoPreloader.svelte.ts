@@ -3,8 +3,9 @@
  * preload effect into a reusable composable.
  *
  * Behaviour preserved from Lightbox.svelte:
- *   - Preloads the next ±N photos where N is 1 (manual nav)
- *     or 3 (slideshow).
+ *   - Preloads the adjacent photos around the cursor. The window is
+ *     ASYMMETRIC — 1 behind and 2 ahead for manual navigation, ±3
+ *     while the slideshow runs (see ./preload-window.ts).
  *   - During slideshow, wraps around the edges (Prev from
  *     the first loops to the last, and vice versa). Outside
  *     of slideshow, respects the grid boundaries — wrap-around
@@ -29,6 +30,12 @@
  * happens on the next nav.
  */
 import { SvelteSet } from 'svelte/reactivity';
+import {
+  MANUAL_PRELOAD_WINDOW,
+  SLIDESHOW_PRELOAD_WINDOW,
+  preloadIndices,
+  type PreloadWindow
+} from './preload-window';
 
 export type PreloadOptions = {
   getItemsLength: () => number;
@@ -92,32 +99,22 @@ export function usePhotoPreloader(opts: PreloadOptions): PreloadController {
       return;
     }
 
-    // Distance: ±3 during slideshow so a 1s cadence doesn't
-    // race the network; ±1 otherwise.
-    const distance = isPlaying ? 3 : 1;
+    // The window is asymmetric: 1 behind, 2 ahead for manual
+    // navigation; ±3 while the slideshow is running so a 1s
+    // cadence doesn't race the network.
+    const win: PreloadWindow = isPlaying ? SLIDESHOW_PRELOAD_WINDOW : MANUAL_PRELOAD_WINDOW;
     // The want set is local — never bound to $state, so a
     // plain Set is fine. (The exposed preloadedSrcs is a
     // SvelteSet, mutated via reassignment of the variable.)
     // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const want = new Set<string>();
-    for (let d = 1; d <= distance; d++) {
-      // Wrap-around only while the slideshow is running —
-      // manual prev at the first photo and next at the last
-      // are intentionally disabled, so preloading the wrap
-      // would be wasted bandwidth.
-      if (isPlaying) {
-        const nextIdx = (cursor + d) % len;
-        const prevIdx = (cursor - d + len) % len;
-        const nextId = opts.getItemIdAt(nextIdx);
-        const prevId = opts.getItemIdAt(prevIdx);
-        if (nextId) want.add(opts.getItemUrl(nextId));
-        if (prevId) want.add(opts.getItemUrl(prevId));
-      } else {
-        const nextId = opts.getItemIdAt(cursor + d);
-        const prevId = opts.getItemIdAt(cursor - d);
-        if (nextId) want.add(opts.getItemUrl(nextId));
-        if (prevId) want.add(opts.getItemUrl(prevId));
-      }
+    // Wrap-around only while the slideshow is running —
+    // manual prev at the first photo and next at the last
+    // are intentionally disabled, so preloading the wrap
+    // would be wasted bandwidth.
+    for (const i of preloadIndices(cursor, len, win, isPlaying)) {
+      const id = opts.getItemIdAt(i);
+      if (id) want.add(opts.getItemUrl(id));
     }
 
     // Evict entries that fell out of the window. Without this,

@@ -37,11 +37,11 @@ test.describe('Browser navigation', () => {
   });
 
   test('browser forward button after going back', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8000/');
+    await page.goto(`${APP}/`);
     await appReady(page);
-    await page.goto('http://127.0.0.1:8000/search');
+    await page.goto(`${APP}/search`);
     await appReady(page);
-    await page.goto('http://127.0.0.1:8000/random');
+    await page.goto(`${APP}/random`);
     await appReady(page);
 
     // Back
@@ -61,7 +61,7 @@ test.describe('Deep linking', () => {
     const pointId = apiJson.results?.[0]?.id;
     if (!pointId) test.skip(true, 'No search results');
 
-    const resp = await page.goto(`http://127.0.0.1:8000/photo/${pointId}`);
+    const resp = await page.goto(`${APP}/photo/${pointId}`);
     expect(resp?.status()).toBe(200);
     await appReady(page);
   });
@@ -72,7 +72,7 @@ test.describe('Deep linking', () => {
     const pointId = apiJson.results?.[0]?.id;
     if (!pointId) test.skip(true, 'No search results');
 
-    const resp = await page.goto(`http://127.0.0.1:8000/similar/${pointId}`);
+    const resp = await page.goto(`${APP}/similar/${pointId}`);
     expect(resp?.status()).toBe(200);
     await appReady(page);
     await expect(page.getByRole('heading', { name: /similar/i })).toBeVisible({ timeout: 5000 });
@@ -85,7 +85,7 @@ test.describe('Deep linking', () => {
     });
     const album = await createRes.json();
 
-    const resp = await page.goto(`http://127.0.0.1:8000/albums/${album.id}`);
+    const resp = await page.goto(`${APP}/albums/${album.id}`);
     expect(resp?.status()).toBe(200);
     await appReady(page);
 
@@ -94,14 +94,14 @@ test.describe('Deep linking', () => {
   });
 
   test('GET /random renders the random page', async ({ page }) => {
-    const resp = await page.goto('http://127.0.0.1:8000/random');
+    const resp = await page.goto(`${APP}/random`);
     expect(resp?.status()).toBe(200);
     await appReady(page);
     await expect(page.getByRole('heading', { name: /random/i })).toBeVisible();
   });
 
   test('GET /albums renders the albums page', async ({ page }) => {
-    const resp = await page.goto('http://127.0.0.1:8000/albums');
+    const resp = await page.goto(`${APP}/albums`);
     expect(resp?.status()).toBe(200);
     await appReady(page);
     await expect(page.locator('header.topbar')).toBeVisible();
@@ -110,7 +110,7 @@ test.describe('Deep linking', () => {
 
 test.describe('URL state persistence', () => {
   test('search URL params persist after page refresh', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8000/?positives=beach&negatives=ocean');
+    await page.goto(`${APP}/?positives=beach&negatives=ocean`);
     await appReady(page);
     await expect(page.locator('.chip').filter({ hasText: 'beach' })).toBeVisible();
     await expect(page.locator('.chip').filter({ hasText: 'ocean' })).toBeVisible();
@@ -142,7 +142,7 @@ test.describe('URL state persistence', () => {
   });
 
   test('removing a prompt updates the URL', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8000/?positives=removeme');
+    await page.goto(`${APP}/?positives=removeme`);
     await appReady(page);
     await expect(page.locator('.chip').filter({ hasText: 'removeme' })).toBeVisible();
 
@@ -158,7 +158,7 @@ test.describe('URL state persistence', () => {
 
 test.describe('Error pages', () => {
   test('GET /nonexistent-page returns 200 (SPA fallback) and renders app', async ({ page }) => {
-    const resp = await page.goto('http://127.0.0.1:8000/nonexistent-page-xyz');
+    const resp = await page.goto(`${APP}/nonexistent-page-xyz`);
     // SPA serves index.html for unknown paths — status 200
     expect(resp?.status()).toBe(200);
     await appReady(page);
@@ -167,7 +167,7 @@ test.describe('Error pages', () => {
   });
 
   test('GET /api/nonexistent returns 404 (JSON, not HTML)', async ({ page }) => {
-    const resp = await page.request.get('http://127.0.0.1:8000/api/nonexistent-endpoint');
+    const resp = await page.request.get(`${APP}/api/nonexistent-endpoint`);
     expect(resp.status()).toBe(404);
     const body = await resp.json();
     expect(body).toHaveProperty('detail');
@@ -176,13 +176,13 @@ test.describe('Error pages', () => {
 
 test.describe('Page transitions', () => {
   test('navigation between pages is smooth (no white flash)', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8000/');
+    await page.goto(`${APP}/`);
     await appReady(page);
 
     // Navigate to a few pages
     const pages = ['/search', '/random', '/albums'];
     for (const path of pages) {
-      await page.goto(`http://127.0.0.1:8000${path}`);
+      await page.goto(`${APP}${path}`);
       await appReady(page);
       // Header should be present on every page
       await expect(page.locator('header.topbar')).toBeVisible({ timeout: 5000 });
@@ -211,13 +211,13 @@ test.describe('Page transitions', () => {
 
 test.describe('URL encoding', () => {
   test('prompts with spaces work in URL', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8000/?positives=hello%20world');
+    await page.goto(`${APP}/?positives=hello%20world`);
     await appReady(page);
     await expect(page.locator('.chip').filter({ hasText: /hello.*world/ })).toBeVisible({ timeout: 5000 });
   });
 
   test('prompts with unicode work in URL', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8000/?positives=%E2%9C%93'); // ✓ checkmark
+    await page.goto(`${APP}/?positives=%E2%9C%93`); // ✓ checkmark
     await appReady(page);
     // Should render the chip without crashing
     const chips = await page.locator('.chip').count();
@@ -227,7 +227,7 @@ test.describe('URL encoding', () => {
 
 test.describe('Page refresh on every route', () => {
   test('refresh on /search keeps state', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8000/?positives=photo');
+    await page.goto(`${APP}/?positives=photo`);
     await appReady(page);
     await expect(page.locator('.grid-tile').first()).toBeVisible({ timeout: 10000 });
     await page.reload();
@@ -236,7 +236,7 @@ test.describe('Page refresh on every route', () => {
   });
 
   test('refresh on /random keeps results', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8000/random');
+    await page.goto(`${APP}/random`);
     await appReady(page);
     await expect(page.locator('.grid-tile').first()).toBeVisible({ timeout: 10000 });
     await page.reload();
@@ -245,7 +245,7 @@ test.describe('Page refresh on every route', () => {
   });
 
   test('refresh on /albums keeps state', async ({ page }) => {
-    await page.goto('http://127.0.0.1:8000/albums');
+    await page.goto(`${APP}/albums`);
     await appReady(page);
     await page.reload();
     await appReady(page);

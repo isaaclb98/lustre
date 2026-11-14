@@ -6,8 +6,9 @@
  * its decoded bitmap is ready in memory) by the time the user
  * clicks. The hidden `<img class="preload">` elements mounted by
  * the Lightbox do the work; we assert they're present, mount the
- * right number for the ±1 / ±3 (slideshow) windows, and that
- * they're evicted as the cursor moves past them.
+ * right number for the 1-behind/2-ahead (manual) and ±3
+ * (slideshow) windows, and that they're evicted as the cursor
+ * moves past them.
  */
 import { test, expect } from '@playwright/test';
 
@@ -19,21 +20,68 @@ async function openLightboxAndSettle(page: import('@playwright/test').Page) {
   await page.waitForTimeout(1500);
 }
 
+/** The photo ids the grid is currently showing, in DOM order. */
+async function gridPhotoIds(page: import('@playwright/test').Page): Promise<string[]> {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll('.grid-tile img'))
+      .map((e) => e.src.match(/\/thumb\/([^/?]+)/)?.[1] ?? '')
+      .filter(Boolean)
+  );
+}
+
+/** The photo ids the lightbox is currently preloading. */
+async function preloadPhotoIds(page: import('@playwright/test').Page): Promise<string[]> {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll('[role="dialog"] img.preload')).map(
+      (e) => (e as HTMLImageElement).src.match(/photo\/([^/]+)\/raw/)?.[1] ?? ''
+    )
+  );
+}
+
 test('Lightbox mounts preload <img> nodes for adjacent photos', async ({ page }) => {
   await openLightboxAndSettle(page);
 
-  // ±1 by default while paused. The lightbox needs at least 3
-  // photos to render any preloads (idx 0 has no previous; if we
-  // start at idx 0 of a long grid we get only the next preload).
+  // The manual window is 1 behind, 2 ahead. At idx 0 there is no
+  // photo behind, so both forward slots are used → exactly 2.
   const preloads = page.locator('[role="dialog"] img.preload');
   await expect(preloads.first()).toBeAttached({ timeout: 5_000 });
-
-  // Count: should be 1 (just next, since we start at idx 0) or
-  // 2 (idx 0 with wrap... but we don't wrap when paused). So
-  // exactly 1 preload node.
-  expect(await preloads.count()).toBeGreaterThanOrEqual(1);
-  expect(await preloads.count()).toBeLessThanOrEqual(2);
+  expect(await preloads.count()).toBe(2);
 });
+
+test('Preload window is 1 behind and 2 ahead of the cursor', async ({ page }) => {
+  await page.goto('/random');
+  await page.waitForSelector('.grid-tile');
+  await page.waitForTimeout(1500);
+
+  const gridIds = await gridPhotoIds(page);
+  expect(gridIds.length).toBeGreaterThan(6);
+
+  // Open on a tile in the middle so there is room on both sides.
+  const openIdx = 3;
+  await page.evaluate((i) => {
+    document.querySelectorAll('.grid-tile')[i].querySelector('a.tile')?.click();
+  }, openIdx);
+  await page.waitForSelector('[role="dialog"]');
+  await page.waitForTimeout(1500);
+
+  const preloads = await preloadPhotoIds(page);
+  // 1 behind + 2 ahead = 3 preload nodes.
+  expect(preloads.length).toBe(3);
+
+  // The set must be exactly {prev, next1, next2} — not, say,
+  // {prev, next1, prev2}. The grid's DOM order is the lightbox's
+  // item order, so gridIds[openIdx + n] is the nth photo ahead.
+  const expected = [
+    gridIds[openIdx - 1],
+    gridIds[openIdx + 1],
+    gridIds[openIdx + 2]
+  ];
+  expect(new Set(preloads)).toEqual(new Set(expected));
+
+  // The cursor itself is never in its own window.
+  expect(preloads).not.toContain(gridIds[openIdx]);
+});
+
 
 test('Preload srcs are unique URLs (no duplicate <img> per URL)', async ({ page }) => {
   await openLightboxAndSettle(page);

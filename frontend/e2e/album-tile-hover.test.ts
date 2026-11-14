@@ -19,6 +19,8 @@
  */
 import { test, expect, type Page } from '@playwright/test';
 
+import { albumWithPhotos } from './albums';
+
 const APP = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173';
 
 async function firstLoadedTile(page: Page) {
@@ -28,7 +30,8 @@ async function firstLoadedTile(page: Page) {
 
 test.describe('album tile chrome + hover motion', () => {
   test('album grid: no favourite heart, remove button hidden until hover', async ({ page }) => {
-    await page.goto(`${APP}/albums/5`);
+    const albumId = await albumWithPhotos(page);
+    await page.goto(`${APP}/albums/${albumId}`);
     const tile = await firstLoadedTile(page);
 
     // No heart on album tiles.
@@ -49,7 +52,8 @@ test.describe('album tile chrome + hover motion', () => {
   });
 
   test('album grid: hover zooms the photo, the tile does not move', async ({ page }) => {
-    await page.goto(`${APP}/albums/5`);
+    const albumId = await albumWithPhotos(page);
+    await page.goto(`${APP}/albums/${albumId}`);
     const tile = await firstLoadedTile(page);
 
     const before = await tile.evaluate((el) => {
@@ -106,7 +110,8 @@ test.describe('album tile chrome + hover motion', () => {
   });
 
   test('hovering one tile does not disturb its neighbours', async ({ page }) => {
-    await page.goto(`${APP}/albums/5`);
+    const albumId = await albumWithPhotos(page);
+    await page.goto(`${APP}/albums/${albumId}`);
     const tile = await firstLoadedTile(page);
 
     const neighbourBefore = await page

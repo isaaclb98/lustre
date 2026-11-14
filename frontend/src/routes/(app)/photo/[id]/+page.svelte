@@ -11,7 +11,7 @@
    *
    * What this page reuses:
    *   - $lib/api/endpoints (photoUrl, likePoint, unlikePoint,
-   *     dislikePoint, undislikePoint, blurhash background)
+   *     blurhash background)
    *   - $lib/components/Button (primary/secondary/ghost actions)
    *   - $lib/components/ActionButton (toggle actions — Like AND
    *     Dislike both expose aria-pressed indicating the current
@@ -37,8 +37,6 @@
     photoUrl,
     likePoint,
     unlikePoint,
-    dislikePoint,
-    undislikePoint,
     addPhotoToAlbum,
     removePhotoFromAlbum,
     listAlbums,
@@ -133,12 +131,11 @@
     }
   });
 
-  // Phase 3: usePhotoFeedback consolidates the like/dislike
-  // mutation pattern. The photo page owns the full
-  // bidirectional + mutual-exclusion behaviour, so the
-  // composable handles both directions here. The previous
-  // 55-line handwritten implementation is replaced with a
-  // 7-line configuration block.
+  // Phase 3: usePhotoFeedback consolidates the like mutation
+  // pattern. The photo page owns the bidirectional behaviour, so the
+  // composable handles both directions here. The previous 55-line
+  // handwritten implementation is replaced with a 7-line
+  // configuration block.
   const feedback = usePhotoFeedback({
     get: () =>
       photo
@@ -149,9 +146,7 @@
       photo = { ...photo, ...patch };
     },
     onLike: (id) => likePoint(id),
-    onUnlike: (id) => unlikePoint(id),
-    onDislike: (id) => dislikePoint(id),
-    onUndislike: (id) => undislikePoint(id)
+    onUnlike: (id) => unlikePoint(id)
   });
 
   async function toggleFavorite() {
@@ -159,16 +154,6 @@
     actionInFlight = true;
     try {
       await feedback.toggleFavorite(photo.id);
-    } finally {
-      actionInFlight = false;
-    }
-  }
-
-  async function toggleDislike() {
-    if (!photo || actionInFlight) return;
-    actionInFlight = true;
-    try {
-      await feedback.toggleDislike(photo.id);
     } finally {
       actionInFlight = false;
     }
@@ -293,13 +278,6 @@
             ariaPressed={photo.is_favorite ? 'true' : 'false'}
           >
             Like
-          </ActionButton>
-          <ActionButton
-            onclick={toggleDislike}
-            title="Dislike"
-            ariaPressed={photo.is_disliked ? 'true' : 'false'}
-          >
-            Dislike
           </ActionButton>
           <Dropdown
             items={(albums ?? []).map((a) => ({ id: a.id, label: a.name }))}

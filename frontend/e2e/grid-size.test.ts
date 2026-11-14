@@ -228,16 +228,23 @@ test.describe('Grid size preference', () => {
     // vars on every preference change. The vars are
     // --grid-tile-size and --grid-gutter-size.
     await page.goto('/');
-    const vars = await page.evaluate(() => {
-      const style = getComputedStyle(document.documentElement);
-      return {
-        tile: style.getPropertyValue('--grid-tile-size').trim(),
-        gap: style.getPropertyValue('--grid-gutter-size').trim()
-      };
-    });
-    // Medium config: 192/8. The leading-zero trimmed values
-    // should be '192px' and '8px'.
-    expect(vars.tile).toBe('192px');
-    expect(vars.gap).toBe('8px');
+    // The layout publishes these from its onMount, so they land a
+    // tick or two after the route mounts. Reading them once catches
+    // the empty pre-publish value; POLL for them instead.
+    //
+    // Medium config: 192/8. The leading-zero trimmed values should
+    // be '192px' and '8px'.
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() => {
+            const style = getComputedStyle(document.documentElement);
+            const tile = style.getPropertyValue('--grid-tile-size').trim();
+            const gap = style.getPropertyValue('--grid-gutter-size').trim();
+            return `${tile} / ${gap}`;
+          }),
+        { timeout: 10_000, message: 'the grid vars must be published' }
+      )
+      .toBe('192px / 8px');
   });
 });

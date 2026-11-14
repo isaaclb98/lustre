@@ -16,7 +16,7 @@ import { test, expect } from '@playwright/test';
 
 test('Photo page renders with data already populated (no loading state)', async ({ page }) => {
   // Pick a real photo from the dev backend.
-  const resp = await page.request.get('http://localhost:18000/api/random?limit=1');
+  const resp = await page.request.get('/api/random?limit=1');
   const data = (await resp.json()) as { results: Array<{ id: string }> };
   const id = data.results[0].id;
 
@@ -27,9 +27,9 @@ test('Photo page renders with data already populated (no loading state)', async 
   // "Loading photo..." placeholder first.
   await expect(page.locator('img.hero')).toBeVisible({ timeout: 5000 });
 
-  // The placeholder.error block must NOT be visible (this is a
-  // real photo, not a 404).
-  await expect(page.locator('.placeholder.error')).toHaveCount(0);
+  // The error state must NOT be visible (this is a real photo, not
+  // a 404). The page renders `.state.error` for a failed load.
+  await expect(page.locator('.state.error')).toHaveCount(0);
 
   // The sidebar metadata should also be populated — verify
   // the filename is non-empty.
@@ -37,7 +37,7 @@ test('Photo page renders with data already populated (no loading state)', async 
   expect(filename?.length ?? 0).toBeGreaterThan(0);
 });
 
-test('Unknown photo id renders the inline .placeholder.error block', async ({ page }) => {
+test('Unknown photo id renders the inline .state.error block', async ({ page }) => {
   // Syntactically valid UUID that we know isn't indexed.
   const fakeId = '00000000-0000-0000-0000-000000000000';
   await page.goto(`/photo/${fakeId}`);
@@ -46,6 +46,6 @@ test('Unknown photo id renders the inline .placeholder.error block', async ({ pa
   // (Round 3 chose to surface errors via data.error rather
   // than throwing to the +error.svelte boundary, so the
   // existing e2e test for this case continues to work.)
-  await expect(page.locator('.placeholder.error')).toBeVisible({ timeout: 5000 });
-  await expect(page.locator('.placeholder.error')).toContainText(/not found/i);
+  await expect(page.locator('.state.error')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('.state.error')).toContainText(/not found/i);
 });

@@ -15,8 +15,7 @@
   import {
     similarPhotos,
     likePoint,
-    unlikePoint,
-    dislikePoint
+    unlikePoint
   } from '$lib/api/endpoints';
   import { preferences } from '$lib/stores/preferences';
   import { currentPageSizeWithin } from '$lib/grid/geometry';
@@ -71,19 +70,6 @@
     }
   }
 
-  async function onDislike(id: string) {
-    try {
-      await dislikePoint(id);
-      // No toast (round-4 #9). Mark disliked so the lightbox
-      // button stays lit until navigation.
-      items = items.map((x) =>
-        x.id === id ? { ...x, is_disliked: true } : x
-      );
-    } catch {
-      /* noop: dislike failure leaves state unchanged */
-    }
-  }
-
   onMount(refresh);
   // Re-fetch whenever the route param changes. Without this, the
   // page component is reused across navigations from /similar/A to
@@ -121,7 +107,6 @@
       hasMore={false}
       onLoadMore={() => {}}
       {onToggleFavorite}
-      {onDislike}
     />
   </section>
 {/if}

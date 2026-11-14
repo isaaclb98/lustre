@@ -50,9 +50,13 @@ test.describe.serial('Fresh-install lifecycle', () => {
     // the test ran — bail.
     const status = await page.request.get('/api/admin/index/status');
     const body = await status.json();
+    // The empty-index banner shows when the library holds no points.
+    // The demo backend is seeded with photos, so the banner is
+    // legitimately absent there — this test needs an actually empty
+    // library, which means a wiped stack.
     test.skip(
-      body.last_run_at !== null,
-      'stack is not fresh (last_run_at is set) — wipe and re-run'
+      body.points_count !== 0,
+      'the library is not empty (points_count is set) — wipe and re-run'
     );
 
     // Empty-state banner on home (contains both the message text and
