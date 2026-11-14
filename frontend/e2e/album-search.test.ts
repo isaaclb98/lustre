@@ -20,6 +20,8 @@
 
 import { test, expect, type Page } from '@playwright/test';
 
+import { albumWithPhotos } from './albums';
+
 const APP = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:8000';
 
 async function appReady(page: Page) {
@@ -60,22 +62,25 @@ test.describe('album card Search button (round‑29)', () => {
     }
   });
 
-  test('clicking Likes Search navigates to /?centroid=likes', async ({
+  test('clicking Favourites Search navigates to /?centroid=favourites', async ({
     page
   }) => {
     await page.goto(`${APP}/albums`);
     await appReady(page);
 
-    const likesButton = page.locator(
-      'button.search-btn[data-centroid="likes"]'
+    // The built-in album is named Favourites and its centroid key is
+    // `favourites`; `likes` survives on the backend as a back-compat
+    // alias for old links, but the card publishes the primary key.
+    const favouritesButton = page.locator(
+      'button.search-btn[data-centroid="favourites"]'
     );
-    // Skip when Likes is empty — button is disabled.
-    if (await likesButton.isDisabled()) {
-      test.skip(true, 'Likes album is empty; nothing to search');
+    // Skip when Favourites is empty — button is disabled.
+    if (await favouritesButton.isDisabled()) {
+      test.skip(true, 'Favourites album is empty; nothing to search');
       return;
     }
-    await likesButton.click();
-    await page.waitForURL(/\?centroid=likes/, { timeout: 5000 });
+    await favouritesButton.click();
+    await page.waitForURL(/\?centroid=favourites/, { timeout: 5000 });
 
     // The hero heading flips to "Searching by album".
     await expect(
@@ -88,32 +93,33 @@ test.describe('album card Search button (round‑29)', () => {
     // topbar already provides navigation back to /albums.
     await expect(page.locator('a.back-link')).toHaveCount(0);
 
-    // The results render at least one tile (the Likes centroid
+    // The results render at least one tile (the Favourites centroid
     // has at least one photo in the dev DB).
     await page.waitForSelector('.grid-tile', { timeout: 10_000 });
     const tileCount = await page.locator('.grid-tile').count();
     expect(tileCount).toBeGreaterThan(0);
   });
 
-  test('clicking Dislikes Search returns results, not empty', async ({
-    page
-  }) => {
-    // Round‑29 regression test for the empty-results bug: the
-    // dislikes centroid used to filter every candidate via the
-    // over-aggressive 1st-percentile near-dup threshold, so the
-    // page rendered with 0 tiles. Pin the >=1 result here.
+  test('a populated album returns results, not empty', async ({ page }) => {
+    // Round‑29 regression test for the empty-results bug: a centroid
+    // used to filter every candidate via the over-aggressive
+    // 1st-percentile near-dup threshold, so the page rendered with 0
+    // tiles. Pin the >=1 result here.
+    //
+    // The Dislikes album this originally ran against was removed —
+    // the Explore feature covers that ground — so the assertion runs
+    // against a USER album, which is the same code path.
     await page.goto(`${APP}/albums`);
     await appReady(page);
 
-    const btn = page.locator(
-      'button.search-btn[data-centroid="dislikes"]'
-    );
+    const albumId = await albumWithPhotos(page);
+    const btn = page.locator(`button.search-btn[data-centroid="album:${albumId}"]`);
     if (await btn.isDisabled()) {
-      test.skip(true, 'Dislikes album is empty');
+      test.skip(true, 'The album is empty; nothing to search');
       return;
     }
     await btn.click();
-    await page.waitForURL(/\?centroid=dislikes/, { timeout: 5000 });
+    await page.waitForURL(/\?centroid=album/, { timeout: 5000 });
     await expect(
       page.locator('h1', { hasText: 'Searching by album' })
     ).toBeVisible();
@@ -128,24 +134,16 @@ test.describe('album card Search button (round‑29)', () => {
     expect(tileCount).toBeGreaterThan(0);
   });
 
-  test('clicking Dislikes Search navigates to /?centroid=dislikes', async ({
-    page
-  }) => {
+  test('no album card offers a dislikes centroid', async ({ page }) => {
+    // The built-in Dislikes album was removed, so nothing on the
+    // albums page may publish a `dislikes` centroid. A card that
+    // did would link to a centroid the app no longer offers.
     await page.goto(`${APP}/albums`);
     await appReady(page);
 
-    const btn = page.locator(
-      'button.search-btn[data-centroid="dislikes"]'
-    );
-    if (await btn.isDisabled()) {
-      test.skip(true, 'Dislikes album is empty');
-      return;
-    }
-    await btn.click();
-    await page.waitForURL(/\?centroid=dislikes/, { timeout: 5000 });
     await expect(
-      page.locator('h1', { hasText: 'Searching by album' })
-    ).toBeVisible();
+      page.locator('[data-centroid="dislikes"]')
+    ).toHaveCount(0);
   });
 
   test('empty albums disable the Search button', async ({ page }) => {
@@ -167,14 +165,14 @@ test.describe('album card Search button (round‑29)', () => {
   });
 
   test('reload on /?centroid=… restores the search', async ({ page }) => {
-    await page.goto(`${APP}/?centroid=likes`);
+    await page.goto(`${APP}/?centroid=favourites`);
     await appReady(page);
     await expect(
       page.locator('h1', { hasText: 'Searching by album' })
     ).toBeVisible();
     await page.waitForSelector('.grid-tile', { timeout: 10_000 });
 
-    // Hard reload — the page should pick up ?centroid=likes
+    // Hard reload — the page should pick up ?centroid=favourites
     // from the URL and re-run the search automatically.
     await page.reload();
     await appReady(page);
@@ -246,7 +244,7 @@ test.describe('album card Search button (round‑29)', () => {
     page
   }) => {
     // Start on a centroid page.
-    await page.goto(`${APP}/?centroid=likes`);
+    await page.goto(`${APP}/?centroid=favourites`);
     await appReady(page);
     await expect(
       page.locator('h1', { hasText: 'Searching by album' })

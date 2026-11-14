@@ -47,20 +47,18 @@ test('Backdrop click closes the dialog', async ({ page }) => {
   await expect(page.locator('[role="dialog"]')).toHaveCount(0);
 });
 
-test('Submitting a name calls the API and shows a success toast', async ({ page }) => {
+test('Submitting a name calls the API and the album appears', async ({ page }) => {
   await openAlbumsAndClickNew(page);
   // Use a unique-ish name so successive runs don't collide.
   const name = `r2-modal-${Date.now()}`;
   await page.locator('input[id="dialog-prompt-input"]').fill(name);
   await page.locator('button:has-text("Create")').click();
-  // The dialog closes; a success toast appears.
+  // The dialog closes. The app has no toast popups — the
+  // confirmation is the album showing up in the list.
   await expect(page.locator('[role="dialog"]')).toHaveCount(0);
-  // Look for any toast text containing "created" — the kind
-  // class is "success" but the actual text might be slightly
-  // different.
-  await expect(page.locator('.toaster .toast').last()).toContainText(
-    /created|created/i
-  );
+  await expect(page.getByText(name, { exact: true })).toBeVisible({
+    timeout: 10_000,
+  });
 });
 
 test('Cancel button closes without submitting', async ({ page }) => {
@@ -68,8 +66,11 @@ test('Cancel button closes without submitting', async ({ page }) => {
   await page.locator('input[id="dialog-prompt-input"]').fill('This should be cancelled');
   await page.locator('button:has-text("Cancel")').click();
   await expect(page.locator('[role="dialog"]')).toHaveCount(0);
-  // No success toast.
-  await expect(page.locator('.toast.success')).toHaveCount(0);
+  // Nothing was created: the albums API holds no album with the
+  // name that was typed and cancelled.
+  const albums = await page.request.get('/api/albums').then((r) => r.json());
+  const names = (albums.albums ?? []).map((a: { name: string }) => a.name);
+  expect(names).not.toContain('This should be cancelled');
 });
 
 test('Initial focus lands on the confirm action in a prompt dialog', async ({ page }) => {

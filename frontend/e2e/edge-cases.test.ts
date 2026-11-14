@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { assertDisposable } from './guard';
+import { assertDisposable, DestructiveTestError } from './guard';
 
 async function appReady(page: any) {
   // The composer is on every page that has a search bar; the topbar
@@ -166,7 +166,18 @@ test.describe('Empty states', () => {
     // Delete all user albums (keep system albums). This deletes EVERY
     // user album, so it must only ever run against a disposable
     // backend — assertDisposable aborts the test otherwise.
-    await assertDisposable(page.request, 'the empty-albums Albums test');
+    // A destructive test cannot run against a real library, so it
+    // SKIPS there rather than failing: the guard has already proved
+    // the backend is not disposable, and nothing has been deleted.
+    try {
+      await assertDisposable(page.request, 'the empty-albums Albums test');
+    } catch (err) {
+      if (err instanceof DestructiveTestError) {
+        test.skip(true, `not a disposable backend: ${err.message}`);
+        return;
+      }
+      throw err;
+    }
     const albums = await page.request.get('/api/albums').then(r => r.json());
     for (const album of (albums.albums ?? [])) {
       if (!['Likes', 'Dislikes'].includes(album.name)) {
@@ -206,25 +217,25 @@ test.describe('Empty states', () => {
 });
 
 test.describe('Filters and diversity', () => {
-  test('diversity mode selector changes the search query', async ({ page }) => {
+  test('the additional options panel offers no diversity control', async ({ page }) => {
+    // Diversity was removed from the UI (round-87): the API still
+    // accepts the parameters for external callers, but the app no
+    // longer emits them and no longer offers a control for them. A
+    // selector that came back would put the query back on the wire.
     await page.goto('/?positives=beach');
     await appReady(page);
 
-    // Wait for initial search to fire
-    await page.waitForTimeout(500);
-
-    // Open "Additional options" panel first
     await page.getByRole('button', { name: /additional options/i }).click();
 
-    // Now find the diversity mode combobox
-    await page.getByRole('combobox', { name: /diversity mode/i }).selectOption('balanced');
+    await expect(page.getByRole('combobox', { name: /diversity mode/i })).toHaveCount(0);
 
-    // Diversity mode change alone doesn't fire a search — user must click Search
-    const responsePromise = page.waitForResponse((r: any) => r.url().includes('/api/search'), { timeout: 15000 });
+    // And the search request carries no diversity parameter.
+    const responsePromise = page.waitForResponse((r: any) => r.url().includes('/api/search'), {
+      timeout: 15000,
+    });
     await page.getByRole('button', { name: /^Search$/ }).click();
     const response = await responsePromise;
-    expect(response.status()).toBe(200);
-    expect(response.url()).toContain('diversity=balanced');
+    expect(response.url()).not.toContain('diversity=');
   });
 
   test('filename filter with regex-like pattern', async ({ page }) => {
@@ -270,7 +281,7 @@ test.describe('Toast messages', () => {
     expect(errorText).toContain("Couldn't load results");
   });
 
-  test('success toast appears on save', async ({ page }) => {
+  test('a saved search appears in the menu', async ({ page }) => {
     await page.goto('/?positives=beach');
     await appReady(page);
 
@@ -280,17 +291,20 @@ test.describe('Toast messages', () => {
     // Open saved searches menu
     await page.getByTitle('Saved searches').click();
 
-    // Click Save and handle the prompt
+    // Click Save — the app prompts in its OWN dialog, not the
+    // browser's native prompt, so the name goes into the dialog's
+    // input rather than into a page.on('dialog') handler.
     const saveName = 'test-save-' + Date.now();
-    page.on('dialog', (d: any) => {
-      void d.accept(saveName);
-    });
     await page.getByTitle('Save current search').click();
+    await page.locator('input[id="dialog-prompt-input"]').fill(saveName);
+    await page.locator('button:has-text("Save")').click();
 
-    // Should show success toast - wait for the toaster region to appear
-    await expect(page.getByRole('region', { name: /notifications/i })).toBeVisible({ timeout: 3000 });
-    const toast = page.locator('.toast.success, .toast.info').first();
-    await expect(toast).toBeVisible({ timeout: 3000 });
+    // The app has no toast popups — the confirmation is the saved
+    // search showing up in the menu it was saved from. The list
+    // refreshes on save, but the popover is not necessarily open
+    // when it does, so open it again to read the result.
+    await page.getByTitle('Saved searches').click();
+    await expect(page.getByText(saveName)).toBeVisible({ timeout: 5000 });
   });
 });
 
@@ -334,8 +348,9 @@ test.describe('Loading states', () => {
 
   test('search button shows loading state', async ({ page }) => {
     // Intercept search API and add delay
+    const DELAY = 2000;
     await page.route('**/api/search**', async (route: any) => {
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, DELAY));
       const response = await route.fetch();
       await route.fulfill({ response });
     });
@@ -343,17 +358,27 @@ test.describe('Loading states', () => {
     await page.goto('/?positives=beach');
     await appReady(page);
 
+    // Arm the waiter BEFORE the click, so it cannot miss the
+    // response it is waiting for.
+    const responded = page.waitForResponse((r: any) => r.url().includes('/api/search'), {
+      timeout: 15000,
+    });
+
     // Click search to trigger the delayed request
     const searchBtn = page.getByRole('button', { name: /^Search$/ });
     await searchBtn.click();
 
     // Search button should be disabled during search
     await expect(searchBtn).toBeDisabled({ timeout: 500 });
-    
+
     // Wait for the response to complete
-    await page.waitForResponse((r: any) => r.url().includes('/api/search'), { timeout: 5000 });
-    
-    // Button should be enabled again
-    await expect(searchBtn).toBeEnabled({ timeout: 1000 });
+    await responded;
+
+    // Button should be enabled again. The delay applies to EVERY
+    // search the page issues, and the grid fetches its next page
+    // behind the first one, so the button can still be waiting on a
+    // follow-up request. The re-enable window has to outlast the
+    // injected delay, or the assertion races the app's own traffic.
+    await expect(searchBtn).toBeEnabled({ timeout: DELAY * 5 });
   });
 });

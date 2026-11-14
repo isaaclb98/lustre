@@ -31,7 +31,7 @@ test.describe('Keyboard navigation', () => {
     // Should have visited at least the Home link, Search link, etc.
     expect(focused.length).toBe(8);
     // At least some should be nav links (Home, Search, Random...)
-    expect(focused.some(f => /Home|Search|Random|For You|Albums/.test(f))).toBe(true);
+    expect(focused.some(f => /Home|Search|Random|Albums/.test(f))).toBe(true);
   });
 
   test('Search input receives keyboard focus via Tab', async ({ page }) => {
@@ -105,11 +105,12 @@ test.describe('ARIA labels and semantic markup', () => {
     await appReady(page);
 
     // Scope to the navigation element to avoid matching the brand link.
-    // Current topbar tabs: Home, Random, For You, Albums, Settings.
+    // Current topbar tabs: Home, Random, Albums, Settings.
     // (The earlier 'Search' tab was removed when /search became the
-    // home route — there's no longer a dedicated 'Search' link.)
+    // home route, and the 'For You' tab was removed with the For
+    // You feature — there is no longer a dedicated link for either.)
     const nav = page.getByRole('navigation');
-    for (const label of ['Home', 'Random', 'For You', 'Albums', 'Settings']) {
+    for (const label of ['Home', 'Random', 'Albums', 'Settings']) {
       await expect(nav.getByRole('link', { name: label })).toBeVisible();
     }
   });
@@ -175,14 +176,14 @@ test.describe('ARIA labels and semantic markup', () => {
 });
 
 test.describe('Screen reader announcements', () => {
-  test('Toaster region has aria-label="Notifications"', async ({ page }) => {
+  test('the page has no stale toast region', async ({ page }) => {
     await page.goto('/?positives=beach');
     await appReady(page);
 
-    // The toaster region should exist in the DOM (even if empty)
-    // — check for it without requiring visibility
-    const region = page.getByRole('region', { name: /notifications/i });
-    expect(await region.count()).toBeGreaterThan(0);
+    // The app has no toast popups — the toaster region was removed
+    // along with them — so a live region announcing notifications
+    // must not be left behind claiming to announce things.
+    expect(await page.getByRole('region', { name: /notifications/i }).count()).toBe(0);
   });
 
   test('Search results load without announcing errors', async ({ page }) => {
@@ -192,9 +193,8 @@ test.describe('Screen reader announcements', () => {
     // Wait for results
     await expect(page.locator('.grid-tile').first()).toBeVisible({ timeout: 10000 });
 
-    // No error toasts should be present
-    const errorToasts = page.locator('.toast.error');
-    expect(await errorToasts.count()).toBe(0);
+    // No error banner is present.
+    await expect(page.locator('div.error')).toHaveCount(0);
   });
 });
 
