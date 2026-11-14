@@ -162,7 +162,7 @@ test.describe('Lightbox edge cases', () => {
 });
 
 test.describe('Empty states', () => {
-  test('Albums page when no custom albums exist shows empty state', async ({ page }) => {
+  test('Albums page with no custom albums shows only the built-in card', async ({ page }) => {
     // Delete all user albums (keep system albums). This deletes EVERY
     // user album, so it must only ever run against a disposable
     // backend — assertDisposable aborts the test otherwise.
@@ -188,11 +188,13 @@ test.describe('Empty states', () => {
     await page.goto('/albums');
     await page.waitForSelector('h1', { timeout: 5000 });
 
-    // The empty-state message reads "No custom albums yet — create
-    // one to group your photos." Wait for it specifically rather
-    // than reading body text immediately, because the albums API
-    // fetch can still be in flight after h1 mounts.
-    await expect(page.getByText(/No custom albums yet/i)).toBeVisible({ timeout: 10_000 });
+    // The built-in Favourites card is always on the page; with no
+    // user albums it is the only one. (There is no separate
+    // empty-state message — the built-in card IS the state.)
+    await expect(page.locator('article.card .title')).toHaveCount(1, {
+      timeout: 10_000,
+    });
+    await expect(page.locator('article.card .title')).toHaveText('Favourites');
   });
 
   test('Random page when library is empty (edge case)', async ({ page }) => {
@@ -297,13 +299,21 @@ test.describe('Toast messages', () => {
     const saveName = 'test-save-' + Date.now();
     await page.getByTitle('Save current search').click();
     await page.locator('input[id="dialog-prompt-input"]').fill(saveName);
-    await page.locator('button:has-text("Save")').click();
+    // The dialog's own Save button — "Save" also names the menu's
+    // trigger and the "Save current search" control beside it.
+    await page
+      .getByLabel('Save search')
+      .getByRole('button', { name: 'Save' })
+      .click();
 
     // The app has no toast popups — the confirmation is the saved
     // search showing up in the menu it was saved from. The list
-    // refreshes on save, but the popover is not necessarily open
-    // when it does, so open it again to read the result.
-    await page.getByTitle('Saved searches').click();
+    // refreshes on save, but the popover may or may not still be
+    // open by then, so open it only if it is not.
+    const menu = page.locator('.pop.glass[role="menu"]');
+    if (!(await menu.isVisible().catch(() => false))) {
+      await page.getByTitle('Saved searches').click();
+    }
     await expect(page.getByText(saveName)).toBeVisible({ timeout: 5000 });
   });
 });
