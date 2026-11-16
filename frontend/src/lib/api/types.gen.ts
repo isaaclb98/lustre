@@ -15,7 +15,7 @@ export interface paths {
          *     can't resolve on disk are skipped and recorded in
          *     `_missing.txt`. Album id with no row → 404.
          */
-        get: operations["album_download_zip_albums__album_id__download_zip_head_1"];
+        get: operations["album_download_zip_albums__album_id__download_zip_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -29,7 +29,7 @@ export interface paths {
          *     can't resolve on disk are skipped and recorded in
          *     `_missing.txt`. Album id with no row → 404.
          */
-        head: operations["album_download_zip_albums__album_id__download_zip_head"];
+        head: operations["album_download_zip_albums__album_id__download_zip_get_1"];
         patch?: never;
         trace?: never;
     };
@@ -293,7 +293,7 @@ export interface paths {
          *     The `full` parameter is accepted and ignored, so an old
          *     caller does not break.
          */
-        get: operations["api_cache_refresh_api_cache_refresh_post_1"];
+        get: operations["api_cache_refresh_api_cache_refresh_get"];
         put?: never;
         /**
          * Api Cache Refresh
@@ -314,7 +314,7 @@ export interface paths {
          *     The `full` parameter is accepted and ignored, so an old
          *     caller does not break.
          */
-        post: operations["api_cache_refresh_api_cache_refresh_post"];
+        post: operations["api_cache_refresh_api_cache_refresh_get_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -692,13 +692,13 @@ export interface paths {
             cookie?: never;
         };
         /** Favorites Download Zip */
-        get: operations["favorites_download_zip_favorites_download_zip_head"];
+        get: operations["favorites_download_zip_favorites_download_zip_get"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
         /** Favorites Download Zip */
-        head: operations["favorites_download_zip_favorites_download_zip_head_1"];
+        head: operations["favorites_download_zip_favorites_download_zip_get_1"];
         patch?: never;
         trace?: never;
     };
@@ -814,6 +814,8 @@ export interface components {
         AlbumMemberItem: {
             /** Added At */
             added_at: string;
+            /** Blurhash */
+            blurhash?: string | null;
             /** Id */
             id: string;
             /** Path */
@@ -1413,7 +1415,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    album_download_zip_albums__album_id__download_zip_head_1: {
+    album_download_zip_albums__album_id__download_zip_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1442,7 +1444,7 @@ export interface operations {
             };
         };
     };
-    album_download_zip_albums__album_id__download_zip_head: {
+    album_download_zip_albums__album_id__download_zip_get_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -1887,7 +1889,7 @@ export interface operations {
             };
         };
     };
-    api_cache_refresh_api_cache_refresh_post_1: {
+    api_cache_refresh_api_cache_refresh_get: {
         parameters: {
             query?: {
                 /** @description Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant. */
@@ -1919,7 +1921,7 @@ export interface operations {
             };
         };
     };
-    api_cache_refresh_api_cache_refresh_post: {
+    api_cache_refresh_api_cache_refresh_get_1: {
         parameters: {
             query?: {
                 /** @description Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant. */
@@ -2669,7 +2671,7 @@ export interface operations {
             };
         };
     };
-    favorites_download_zip_favorites_download_zip_head: {
+    favorites_download_zip_favorites_download_zip_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -2687,7 +2689,7 @@ export interface operations {
             };
         };
     };
-    favorites_download_zip_favorites_download_zip_head_1: {
+    favorites_download_zip_favorites_download_zip_get_1: {
         parameters: {
             query?: never;
             header?: never;

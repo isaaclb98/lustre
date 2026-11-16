@@ -77,6 +77,17 @@
             "title": "Added At",
             "type": "string"
           },
+          "blurhash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blurhash"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1249,7 +1260,7 @@
     "/albums/{album_id}/download.zip": {
       "get": {
         "description": "Stream an album's photos as a zip \u2014 same shape and rules\nas `/favorites/download.zip`. Membership comes from\n`index_db.list_album_members` (INNER JOIN against the cache,\nso orphan rows are hidden from the archive too). Files we\ncan't resolve on disk are skipped and recorded in\n`_missing.txt`. Album id with no row \u2192 404.",
-        "operationId": "album_download_zip_albums__album_id__download_zip_head_1",
+        "operationId": "album_download_zip_albums__album_id__download_zip_get",
         "parameters": [
           {
             "in": "path",
@@ -1280,7 +1291,7 @@
       },
       "head": {
         "description": "Stream an album's photos as a zip \u2014 same shape and rules\nas `/favorites/download.zip`. Membership comes from\n`index_db.list_album_members` (INNER JOIN against the cache,\nso orphan rows are hidden from the archive too). Files we\ncan't resolve on disk are skipped and recorded in\n`_missing.txt`. Album id with no row \u2192 404.",
-        "operationId": "album_download_zip_albums__album_id__download_zip_head",
+        "operationId": "album_download_zip_albums__album_id__download_zip_get_1",
         "parameters": [
           {
             "in": "path",
@@ -1839,7 +1850,7 @@
     "/api/cache/refresh": {
       "get": {
         "description": "Purge user-state rows whose photo Qdrant no longer holds.\n\nThere is no derived cache to refresh any more. The photo\ncorpus, its metadata, and the native text index all live in\nQdrant; SQLite holds only the user's own state \u2014 favourites,\ndislikes, albums, memberships, saved searches, feedback.\n\nWhat this endpoint still does is the one thing that needed a\ntrigger: dropping user-state rows that point at photos the\nindexer has pruned. The purge checks liveness against\nQdrant, so a favourite is only dropped when the COLLECTION\nsays the photo is gone \u2014 never because a local mirror was\nstale.\n\nThe `full` parameter is accepted and ignored, so an old\ncaller does not break.",
-        "operationId": "api_cache_refresh_api_cache_refresh_post_1",
+        "operationId": "api_cache_refresh_api_cache_refresh_get",
         "parameters": [
           {
             "description": "Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant.",
@@ -1878,7 +1889,7 @@
       },
       "post": {
         "description": "Purge user-state rows whose photo Qdrant no longer holds.\n\nThere is no derived cache to refresh any more. The photo\ncorpus, its metadata, and the native text index all live in\nQdrant; SQLite holds only the user's own state \u2014 favourites,\ndislikes, albums, memberships, saved searches, feedback.\n\nWhat this endpoint still does is the one thing that needed a\ntrigger: dropping user-state rows that point at photos the\nindexer has pruned. The purge checks liveness against\nQdrant, so a favourite is only dropped when the COLLECTION\nsays the photo is gone \u2014 never because a local mirror was\nstale.\n\nThe `full` parameter is accepted and ignored, so an old\ncaller does not break.",
-        "operationId": "api_cache_refresh_api_cache_refresh_post",
+        "operationId": "api_cache_refresh_api_cache_refresh_get_1",
         "parameters": [
           {
             "description": "Deprecated. There is no cache to refresh: the photo corpus lives in Qdrant and the SQLite side holds only authoritative user state. The endpoint now runs the orphan purge, which checks liveness against Qdrant.",
@@ -3231,7 +3242,7 @@
     },
     "/favorites/download.zip": {
       "get": {
-        "operationId": "favorites_download_zip_favorites_download_zip_head",
+        "operationId": "favorites_download_zip_favorites_download_zip_get",
         "responses": {
           "200": {
             "description": "Successful Response"
@@ -3240,7 +3251,7 @@
         "summary": "Favorites Download Zip"
       },
       "head": {
-        "operationId": "favorites_download_zip_favorites_download_zip_head_1",
+        "operationId": "favorites_download_zip_favorites_download_zip_get_1",
         "responses": {
           "200": {
             "description": "Successful Response"
