@@ -382,6 +382,7 @@
               srcWidth={photoWidth}
               wall
               readOnly
+              eager
               label={tileLabel(item)}
             />
           </div>
