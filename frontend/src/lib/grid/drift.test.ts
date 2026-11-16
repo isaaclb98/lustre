@@ -15,9 +15,16 @@
 import { describe, it, expect } from 'vitest';
 import {
   DRIFT_OVERSCAN_ROWS,
+  DRIFT_SPEED_MAX_PX_PER_SEC,
+  DRIFT_SPEED_MIN_PX_PER_SEC,
   DRIFT_SPEED_PX_PER_SEC,
+  DRIFT_SPEED_STEP_PX_PER_SEC,
+  clampDriftColumns,
+  clampDriftSpeed,
+  driftMaxColumns,
   driftRowItems,
-  driftWindowRows
+  driftWindowRows,
+  quantizePhotoWidth
 } from '$lib/grid/drift';
 
 const ALBUM = Array.from({ length: 224 }, (_, i) => `p${i}`);
@@ -189,5 +196,116 @@ describe('drift speed', () => {
     // At 16px/s a photo crosses a 900px screen in under a minute.
     expect(DRIFT_SPEED_PX_PER_SEC).toBe(16);
     expect(900 / DRIFT_SPEED_PX_PER_SEC).toBeLessThan(60);
+  });
+});
+
+describe('clampDriftSpeed', () => {
+  it('keeps a value inside the control range', () => {
+    expect(clampDriftSpeed(DRIFT_SPEED_MIN_PX_PER_SEC)).toBe(
+      DRIFT_SPEED_MIN_PX_PER_SEC
+    );
+    expect(clampDriftSpeed(DRIFT_SPEED_MAX_PX_PER_SEC)).toBe(
+      DRIFT_SPEED_MAX_PX_PER_SEC
+    );
+  });
+
+  it('clamps a value outside the range', () => {
+    expect(clampDriftSpeed(0)).toBe(DRIFT_SPEED_MIN_PX_PER_SEC);
+    expect(clampDriftSpeed(-100)).toBe(DRIFT_SPEED_MIN_PX_PER_SEC);
+    expect(clampDriftSpeed(10_000)).toBe(DRIFT_SPEED_MAX_PX_PER_SEC);
+  });
+
+  it('falls back to the default for a value that is not a number', () => {
+    // A restored form state or a dragged thumb can deliver NaN.
+    expect(clampDriftSpeed(Number.NaN)).toBe(DRIFT_SPEED_PX_PER_SEC);
+    expect(clampDriftSpeed(Number.POSITIVE_INFINITY)).toBe(
+      DRIFT_SPEED_MAX_PX_PER_SEC
+    );
+  });
+
+  it('rounds to a whole number of pixels per second', () => {
+    expect(clampDriftSpeed(20.4)).toBe(20);
+    expect(clampDriftSpeed(20.6)).toBe(21);
+  });
+
+  it('has a step that divides its range evenly', () => {
+    // A slider whose step does not land on both ends cannot reach
+    // its own maximum, so the top of the range would be a value the
+    // control cannot express.
+    const span = DRIFT_SPEED_MAX_PX_PER_SEC - DRIFT_SPEED_MIN_PX_PER_SEC;
+    expect(span % DRIFT_SPEED_STEP_PX_PER_SEC).toBe(0);
+  });
+});
+
+describe('clampDriftColumns', () => {
+  it('keeps a value inside the range the surface allows', () => {
+    expect(clampDriftColumns(3, 10)).toBe(3);
+    expect(clampDriftColumns(10, 10)).toBe(10);
+  });
+
+  it('clamps above the ceiling', () => {
+    expect(clampDriftColumns(50, 10)).toBe(10);
+  });
+
+  it('never goes below one column', () => {
+    // One column is the closest the wall comes to a single photo.
+    expect(clampDriftColumns(0, 10)).toBe(1);
+    expect(clampDriftColumns(-5, 10)).toBe(1);
+  });
+
+  it('survives a surface that allows no columns at all', () => {
+    // A max below the floor must not produce a zero-column wall.
+    expect(clampDriftColumns(5, 0)).toBe(1);
+  });
+
+  it('falls back for a value that is not a number', () => {
+    expect(clampDriftColumns(Number.NaN, 10)).toBe(1);
+  });
+});
+
+describe('driftMaxColumns', () => {
+  it('is at least the auto column count', () => {
+    // The wall's own default has to be reachable on the slider, or
+    // the control traps the user away from where it started.
+    expect(driftMaxColumns(1440, 8)).toBeGreaterThanOrEqual(8);
+  });
+
+  it('never lets a tile fall below the minimum width', () => {
+    const max = driftMaxColumns(1200, 1);
+    expect(1200 / max).toBeGreaterThanOrEqual(120);
+  });
+
+  it('is at least one column, whatever the width', () => {
+    expect(driftMaxColumns(0, 0)).toBeGreaterThanOrEqual(1);
+    expect(driftMaxColumns(10, 0)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('quantizePhotoWidth', () => {
+  it('never asks for less than the thumbnail width', () => {
+    // Below the thumbnail's own size the thumbnail is the right
+    // asset, and asking for less would fetch a pointless variant.
+    expect(quantizePhotoWidth(100)).toBe(384);
+    expect(quantizePhotoWidth(384)).toBe(384);
+  });
+
+  it('asks for the smallest step that covers the tile', () => {
+    expect(quantizePhotoWidth(385)).toBe(768);
+    expect(quantizePhotoWidth(768)).toBe(768);
+    expect(quantizePhotoWidth(769)).toBe(1280);
+    expect(quantizePhotoWidth(1280)).toBe(1280);
+    expect(quantizePhotoWidth(1281)).toBe(1920);
+    expect(quantizePhotoWidth(1920)).toBe(1920);
+  });
+
+  it('caps at the largest step rather than asking for the tile size', () => {
+    // An unquantised width would be a separate cached resize of
+    // every photo for every column count.
+    expect(quantizePhotoWidth(4000)).toBe(1920);
+  });
+
+  it('falls back to the thumbnail for a width that is not a number', () => {
+    expect(quantizePhotoWidth(0)).toBe(384);
+    expect(quantizePhotoWidth(Number.NaN)).toBe(384);
   });
 });

@@ -15,7 +15,7 @@
    * interactions. The grid above just lays them out.
    */
   import { onMount } from 'svelte';
-  import { thumbUrl } from '../api/endpoints';
+  import { thumbUrl, photoUrl } from '../api/endpoints';
   import { blurhashToDataUrl } from './blurhash-bg';
   import Icon from './Icon.svelte';
 
@@ -121,6 +121,21 @@
      * photo and — unlike a border — never changes the layout.
      */
     wall?: boolean;
+    /**
+     * The width to fetch the photo at, in CSS pixels.
+     *
+     * The grid renders the app's 384px thumbnail, which is the
+     * right size for a tile in a grid and far too small for one
+     * filling a screen. A surface that lets the user ZOOM has to
+     * ask for a bigger image, or the zoom shows a blurry
+     * enlargement of a thumbnail.
+     *
+     * Above 384 the photo comes from the raw endpoint, which
+     * server-resizes the original and caches the result on disk.
+     * At or below 384 the thumbnail is used — it is already the
+     * right size and it is what every other grid renders.
+     */
+    srcWidth?: number;
   };
   let {
     pointId,
@@ -141,7 +156,8 @@
     voteUpLabel = 'Add to album',
     wall = false,
     readOnly = false,
-    label = ''
+    label = '',
+    srcWidth
   }: Props = $props();
 
   // Pre-computed data URL takes priority (caller already decoded
@@ -203,6 +219,32 @@
   // pin to 384.
   let eagerSrcWidth = $derived(384);
   let eagerSrcset = $derived(`${thumbUrl(pointId, 384)} 384w`);
+
+  /**
+   * Where the photo comes from at the size the caller asked for.
+   *
+   * Two sources, and the boundary between them is the thumbnail's
+   * own size. At 384px or below the thumbnail IS the right asset
+   * — it is a pre-generated 384px crop, it is what every grid in
+   * the app renders, and it costs nothing to fetch. Above it, the
+   * thumbnail would be an enlargement of itself, so the ORIGINAL
+   * is fetched at the requested width and server-resized.
+   *
+   * The raw endpoint only downsizes (it never upscales), so asking
+   * for more than the photo has simply gives the photo's own size
+   * back — the worst case is a soft image, never a broken one.
+   */
+  const THUMBNAIL_MAX_WIDTH = 384;
+  let wantsFullWidth = $derived(
+    typeof srcWidth === 'number' && srcWidth > THUMBNAIL_MAX_WIDTH
+  );
+  let fullSrc = $derived(
+    wantsFullWidth
+      ? photoUrl(pointId, srcWidth)
+      : isEager
+        ? thumbUrl(pointId, eagerSrcWidth)
+        : thumbUrl(pointId, 384)
+  );
   // Sizes attribute must reflect the actual rendered tile width
   // so the browser picks the right srcset entry. Without this,
   // `sizes` was hardcoded to "240px" on every viewport, so the
@@ -261,9 +303,9 @@
   <img
     bind:this={imgEl}
     class="full"
-    src={isEager ? thumbUrl(pointId, eagerSrcWidth) : thumbUrl(pointId, 384)}
-    srcset={isEager ? eagerSrcset : undefined}
-    sizes={isEager ? eagerSizes : undefined}
+    src={fullSrc}
+    srcset={wantsFullWidth ? undefined : isEager ? eagerSrcset : undefined}
+    sizes={wantsFullWidth ? undefined : isEager ? eagerSizes : undefined}
     alt=""
     loading={isEager ? 'eager' : 'lazy'}
     fetchpriority={eagerIndex === 0 ? 'high' : isEager ? 'auto' : 'low'}

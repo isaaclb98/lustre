@@ -140,7 +140,7 @@ test.describe('presentation drift', () => {
     expect(geom.width).toBe(geom.height);
   });
 
-  test('it is on its own — no app chrome, and one control', async ({ page }) => {
+  test('it is on its own — no app chrome, and only the drift\u2019s own controls', async ({ page }) => {
     await page.goto(await driftUrl(page));
     await page.waitForSelector('.tile', { timeout: 30000 });
 
@@ -149,8 +149,10 @@ test.describe('presentation drift', () => {
     await expect(page.locator('.shell')).toHaveCount(0);
 
     // Exactly one button: the pause. The still wall has none, but
-    // content that moves on its own has to be pausable.
+    // content that moves on its own has to be pausable. The two
+    // adjustment sliders are inputs, not buttons.
     await expect(page.locator('button')).toHaveCount(1);
+    await expect(page.locator('button.drift-pause')).toHaveCount(1);
 
     // Still read-only: no way to favourite, dislike or re-file.
     await expect(page.locator('button.remove-btn')).toHaveCount(0);
@@ -240,5 +242,165 @@ test.describe('presentation drift', () => {
     await page.keyboard.press('Escape');
     await page.waitForURL(/\/albums\/\d+$/, { timeout: 10000 });
     await expect(page.locator('.topbar')).toHaveCount(1);
+  });
+
+  test('the photos do not zoom on hover', async ({ page }) => {
+    // The still wall leans in on hover; the drifting wall must not.
+    // A photo that grows under the pointer shifts against a field
+    // that is already sliding, and on a ring every tile passes
+    // under the pointer — so the zoom would be a flicker.
+    await page.goto(await driftUrl(page));
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    // The pointer is moved BY COORDINATE rather than with
+    // locator.hover(): the wall is a clipped, moving surface, and
+    // Playwright's actionability check would reject a target it
+    // cannot scroll to and cannot find stable.
+    //
+    // The wall is PARKED first for the same reason — but parking
+    // changes nothing about the CSS under test. It is the same tile
+    // and the same hover rule; the wall simply stops sliding.
+    await page.locator('button.drift-pause').click();
+    await page.waitForTimeout(300);
+
+    // A tile that is actually ON SCREEN — the wall renders rows
+    // above the viewport as overscan, and those are not hoverable.
+    const target = await page.evaluate(() => {
+      const tile = Array.from(document.querySelectorAll('.tile')).find((t) => {
+        const r = t.getBoundingClientRect();
+        return r.top > 40 && r.bottom < window.innerHeight - 40 && r.left > 40;
+      });
+      if (!tile) return null;
+      const r = tile.getBoundingClientRect();
+      return {
+        x: r.left + r.width / 2,
+        y: r.top + r.height / 2,
+        id: tile.getAttribute('data-photo-id')
+      };
+    });
+    expect(target, 'the wall must show a tile on screen').not.toBeNull();
+
+    const transformOf = (photoId: string | null) =>
+      page.evaluate((pid) => {
+        const tile = document.querySelector(
+          `.tile[data-photo-id="${pid}"] img.full`
+        );
+        return tile ? getComputedStyle(tile).transform : 'missing';
+      }, photoId);
+
+    const before = await transformOf(target!.id);
+
+    await page.mouse.move(target!.x, target!.y);
+    await page.waitForTimeout(400);
+    const after = await transformOf(target!.id);
+
+    // No scale: either the identity matrix or no transform at all.
+    const scaleOf = (t: string) => {
+      const m = t.match(/matrix\\(([^)]+)\\)/);
+      if (!m) return 1;
+      const parts = m[1].split(',').map(Number);
+      return parts[0] ?? 1;
+    };
+    expect(scaleOf(after)).toBeCloseTo(1, 2);
+    expect(scaleOf(after)).toBeCloseTo(scaleOf(before), 2);
+  });
+
+  test('the controls appear when the mouse moves and fade when it rests', async ({ page }) => {
+    await page.goto(await driftUrl(page));
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    const fields = page.locator('.drift-fields');
+    await expect(fields).toHaveCount(1);
+
+    // The controls show on arrival, then fade once the pointer
+    // rests — the wall is a thing you look at.
+    await expect(fields).toHaveClass(/visible/);
+    await page.mouse.move(10, 10);
+    await page.waitForTimeout(3200);
+    await expect(fields).not.toHaveClass(/visible/);
+
+    // Moving the pointer brings them back.
+    await page.mouse.move(600, 400);
+    await page.mouse.move(620, 420);
+    await expect(fields).toHaveClass(/visible/);
+  });
+
+  test('the pause stays visible even when the adjustments fade', async ({ page }) => {
+    // The pause is the control that makes the moving content
+    // lawful, so it cannot be one the user has to hunt for.
+    await page.goto(await driftUrl(page));
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    await page.mouse.move(10, 10);
+    await page.waitForTimeout(3200);
+
+    await expect(page.locator('.drift-fields')).not.toHaveClass(/visible/);
+    await expect(page.locator('button.drift-pause')).toBeVisible();
+  });
+
+  test('the speed control changes how fast the wall drifts', async ({ page }) => {
+    await page.goto(await driftUrl(page));
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    const photo = await middlePhoto(page);
+    const before = await photoY(page, photo);
+
+    // Drive the slider to its slowest setting and measure the same
+    // photo's travel over the same interval.
+    const speed = page.locator('.drift-fields input[aria-label^="Speed"]');
+    await speed.fill('4');
+    await page.waitForTimeout(200);
+
+    const slowStart = await photoY(page, photo);
+    await page.waitForTimeout(1000);
+    const slowEnd = await photoY(page, photo);
+    const slowTravel = slowStart - slowEnd;
+
+    // And at the fastest setting.
+    await speed.fill('64');
+    await page.waitForTimeout(200);
+    const fastStart = await photoY(page, photo);
+    await page.waitForTimeout(1000);
+    const fastEnd = await photoY(page, photo);
+    const fastTravel = fastStart - fastEnd;
+
+    expect(slowTravel).toBeGreaterThan(0);
+    expect(fastTravel).toBeGreaterThan(slowTravel * 2);
+    expect(before).not.toBeNaN();
+  });
+
+  test('the zoom control changes how many photos are across the wall', async ({ page }) => {
+    await page.goto(await driftUrl(page));
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    const rowCount = () =>
+      page.evaluate(
+        () => document.querySelectorAll('.grid-row')[0]?.children.length ?? 0
+      );
+
+    const wide = await rowCount();
+    expect(wide).toBeGreaterThan(1);
+
+    const columns = page.locator('.drift-fields input[aria-label^="Columns"]');
+    await columns.fill('2');
+    await page.waitForTimeout(500);
+
+    // Fewer columns means bigger photos: the wall's row holds two.
+    expect(await rowCount()).toBe(2);
+
+    // And the tiles are square and still touching.
+    const geom = await page.evaluate(() => {
+      const row = document.querySelector('.grid-row')!;
+      const tiles = Array.from(row.querySelectorAll('.tile')) as HTMLElement[];
+      const a = tiles[0].getBoundingClientRect();
+      const b = tiles[1].getBoundingClientRect();
+      return {
+        gap: Math.round(b.x - (a.x + a.width)),
+        width: Math.round(a.width),
+        height: Math.round(a.height)
+      };
+    });
+    expect(geom.gap).toBe(0);
+    expect(geom.width).toBe(geom.height);
   });
 });

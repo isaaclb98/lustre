@@ -260,13 +260,6 @@
           </Button>
           <Button
             variant="secondary"
-            href={resolve(`/albums/${detail.id}/present`)}
-            title="Show the whole album as a gallery, in a random order"
-          >
-            Present
-          </Button>
-          <Button
-            variant="secondary"
             href={resolve(`/albums/${detail.id}/present?motion=drift`)}
             title="Show the whole album as a wall that drifts upward on its own"
           >

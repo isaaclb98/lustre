@@ -49,6 +49,140 @@
 export const DRIFT_SPEED_PX_PER_SEC = 16;
 
 /**
+ * The bounds of the drift's SPEED control.
+ *
+ * The floor is not zero: a wall that cannot move is what the PAUSE
+ * control is for, and a speed of zero would leave the wall parked
+ * while the pause button still said "Pause" — two controls, one
+ * state, and no way to tell which one the user had actually set.
+ *
+ * The ceiling is fast enough to read as a scroll rather than a
+ * breath, and slow enough that a photo is on screen for a while
+ * before it leaves. At 64px/s a 900px-tall screen takes 14 seconds
+ * to cross.
+ */
+export const DRIFT_SPEED_MIN_PX_PER_SEC = 4;
+export const DRIFT_SPEED_MAX_PX_PER_SEC = 64;
+
+/** The step the speed control moves by, in px/s. */
+export const DRIFT_SPEED_STEP_PX_PER_SEC = 4;
+
+/**
+ * The widths a photo may be fetched at.
+ *
+ * The app's thumbnail is 384px, which is the right size for a tile
+ * in a grid. A surface the user can ZOOM has to fetch something
+ * bigger when the tile outgrows that — and the bigger asset is
+ * produced by the server, resized from the original and cached on
+ * disk.
+ *
+ * The steps are quantised for a reason: an unquantised width would
+ * make every column count ask for a slightly different size, and
+ * every one of those is a separate cached copy of the same photo.
+ * A handful of steps keeps the number of variants bounded while
+ * staying close enough to the real tile size that the photo looks
+ * sharp.
+ */
+export const DRIFT_PHOTO_WIDTHS = [384, 768, 1280, 1920] as const;
+
+/**
+ * The width to fetch a photo at for a tile `tileWidth` px wide.
+ *
+ * The smallest step that still covers the tile — so the photo is
+ * never scaled UP by the browser, only down. Below the thumbnail's
+ * own size the answer is the thumbnail.
+ */
+export function quantizePhotoWidth(tileWidth: number): number {
+  if (!Number.isFinite(tileWidth) || tileWidth <= 0) {
+    return DRIFT_PHOTO_WIDTHS[0];
+  }
+  for (const step of DRIFT_PHOTO_WIDTHS) {
+    if (tileWidth <= step) return step;
+  }
+  // Wider than the biggest step: ask for the biggest one. The
+  // server never upscales, so the photo comes back at its own size
+  // and the browser softens it — a soft photo, never a broken one.
+  return DRIFT_PHOTO_WIDTHS[DRIFT_PHOTO_WIDTHS.length - 1];
+}
+
+/**
+ * The bounds of the drift's ZOOM control — how many photos sit
+ * across the wall.
+ *
+ * One column is the closest the wall can come to a single photo at
+ * a time; the upper bound is a wall of thumbnails rather than
+ * photos, which is a different surface and not a zoom.
+ */
+export const DRIFT_MIN_COLUMNS = 1;
+export const DRIFT_MAX_COLUMNS = 24;
+
+/**
+ * The smallest a tile may be, in CSS pixels, when the user is
+ * choosing the column count themselves.
+ *
+ * Below this the wall stops being a wall: the photos become
+ * postage stamps and the gapless field turns into noise. The
+ * thumbnails are 384px, so this is already generous.
+ */
+export const DRIFT_MIN_TILE_PX = 120;
+
+/**
+ * The speed control's value, clamped into range.
+ *
+ * The slider is the only way in, but the value also arrives from
+ * the browser (a restored form state, a dragged thumb that overshoots
+ * the end of the track), so the range is enforced in one place.
+ *
+ * NaN — the value that is not a number at all — falls back to the
+ * default. Infinity and -Infinity are ordinary out-of-range values
+ * and clamp to the ends like any other.
+ */
+export function clampDriftSpeed(value: number): number {
+  if (Number.isNaN(value)) return DRIFT_SPEED_PX_PER_SEC;
+  return Math.min(
+    DRIFT_SPEED_MAX_PX_PER_SEC,
+    Math.max(DRIFT_SPEED_MIN_PX_PER_SEC, Math.round(value))
+  );
+}
+
+/**
+ * The column count the zoom control may take, clamped into range.
+ *
+ * `max` is the ceiling the surface itself allows — it depends on
+ * the viewport, so it is computed by the caller and passed in.
+ */
+export function clampDriftColumns(value: number, max: number): number {
+  if (Number.isNaN(value)) return DRIFT_MIN_COLUMNS;
+  const hi = Math.max(DRIFT_MIN_COLUMNS, Math.floor(max));
+  return Math.min(hi, Math.max(DRIFT_MIN_COLUMNS, Math.round(value)));
+}
+
+/**
+ * The most columns the wall may show at `surfaceWidth`.
+ *
+ * Two ceilings apply, and the LARGER one wins: the surface's own
+ * limit (a tile must stay at least `DRIFT_MIN_TILE_PX` wide) and the
+ * absolute ceiling. The auto column count is folded in as well, so
+ * the wall's own default is always reachable on the slider — a
+ * control that cannot return to where it started is a control that
+ * traps the user.
+ */
+export function driftMaxColumns(
+  surfaceWidth: number,
+  autoColumns: number
+): number {
+  const byTile =
+    surfaceWidth > 0
+      ? Math.floor(surfaceWidth / DRIFT_MIN_TILE_PX)
+      : DRIFT_MAX_COLUMNS;
+  return Math.max(
+    DRIFT_MIN_COLUMNS,
+    autoColumns,
+    Math.min(DRIFT_MAX_COLUMNS, byTile)
+  );
+}
+
+/**
  * Rows rendered beyond the viewport, above and below it.
  *
  * The wall moves, so a row has to exist before it scrolls into view
