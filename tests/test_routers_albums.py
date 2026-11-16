@@ -59,8 +59,6 @@ def test_album_detail_carries_the_blurhash_of_each_member():
     arrived yet shows as a grey block: a hole in the wall, scrolling
     past. On the drift this reads as pop-in.
     """
-    from search.routers.albums import build_albums_router
-
     db = MagicMock()
     db.get_album.return_value = {
         "id": 7,
