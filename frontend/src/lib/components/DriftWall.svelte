@@ -54,14 +54,14 @@
   import {
     DRIFT_MIN_COLUMNS,
     DRIFT_OVERSCAN_ROWS,
-    DRIFT_SPEED_MAX_PX_PER_SEC,
-    DRIFT_SPEED_MIN_PX_PER_SEC,
     DRIFT_SPEED_PX_PER_SEC,
-    DRIFT_SPEED_STEP_PX_PER_SEC,
+    DRIFT_SPEED_STEP_COUNT,
     clampDriftColumns,
-    clampDriftSpeed,
     driftMaxColumns,
+    driftOverscanRows,
     driftRowItems,
+    driftSpeedFromRung,
+    driftSpeedRung,
     driftWindowRows,
     quantizePhotoWidth
   } from '$lib/grid/drift';
@@ -210,8 +210,17 @@
       // The rendered window advances one row at a time. Kept in
       // state rather than derived from the pixel offset so the row
       // list is rebuilt only when the slice actually changes.
+      //
+      // The lead is in SECONDS, not rows: a row must exist early
+      // enough for its photo to arrive, and how early that is depends
+      // on how fast the wall is moving.
       if (rowHeight > 0) {
-        const range = driftWindowRows(scrollPx, rowHeight, surfaceHeight);
+        const range = driftWindowRows(
+          scrollPx,
+          rowHeight,
+          surfaceHeight,
+          driftOverscanRows(speedPxPerSec, rowHeight)
+        );
         if (range.first !== firstRow || range.last !== lastRow) {
           firstRow = range.first;
           lastRow = range.last;
@@ -317,7 +326,10 @@
 
   function onSpeedInput(e: Event) {
     const el = e.currentTarget as HTMLInputElement;
-    speedPxPerSec = clampDriftSpeed(Number(el.value));
+    // The slider speaks in RUNGS, not px/s: the ladder's rungs are
+    // what the thumb lands on, and each one is a fixed ratio above
+    // the last. The speed itself is derived from the rung.
+    speedPxPerSec = driftSpeedFromRung(Number(el.value));
   }
 
   function onColumnsInput(e: Event) {
@@ -396,12 +408,14 @@
         <input
           class="drift-range"
           type="range"
-          min={DRIFT_SPEED_MIN_PX_PER_SEC}
-          max={DRIFT_SPEED_MAX_PX_PER_SEC}
-          step={DRIFT_SPEED_STEP_PX_PER_SEC}
-          value={speedPxPerSec}
+          min={0}
+          max={DRIFT_SPEED_STEP_COUNT - 1}
+          step={1}
+          value={driftSpeedRung(speedPxPerSec)}
           oninput={onSpeedInput}
           aria-label="Speed — how fast the wall drifts, in pixels per second"
+          aria-valuetext="{speedPxPerSec} pixels per second"
+          title="How fast the wall drifts — each notch is a third of a stop faster than the last"
         />
         <span class="drift-value">{speedPxPerSec} px/s</span>
       </label>
