@@ -14,15 +14,20 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  DRIFT_LEAD_SECONDS,
   DRIFT_OVERSCAN_ROWS,
+  DRIFT_SPEED_LADDER,
   DRIFT_SPEED_MAX_PX_PER_SEC,
   DRIFT_SPEED_MIN_PX_PER_SEC,
   DRIFT_SPEED_PX_PER_SEC,
-  DRIFT_SPEED_STEP_PX_PER_SEC,
+  DRIFT_SPEED_STEP_COUNT,
   clampDriftColumns,
   clampDriftSpeed,
   driftMaxColumns,
+  driftOverscanRows,
   driftRowItems,
+  driftSpeedFromRung,
+  driftSpeedRung,
   driftWindowRows,
   quantizePhotoWidth
 } from '$lib/grid/drift';
@@ -191,11 +196,105 @@ describe('driftRowItems', () => {
   });
 });
 
-describe('drift speed', () => {
-  it('is slow enough to read as breathing', () => {
+describe('the drift speed ladder', () => {
+  it('starts slow enough to read as breathing', () => {
     // At 16px/s a photo crosses a 900px screen in under a minute.
     expect(DRIFT_SPEED_PX_PER_SEC).toBe(16);
     expect(900 / DRIFT_SPEED_PX_PER_SEC).toBeLessThan(60);
+  });
+
+  it('is strictly increasing, so every rung is a distinct speed', () => {
+    for (let i = 1; i < DRIFT_SPEED_LADDER.length; i++) {
+      expect(DRIFT_SPEED_LADDER[i]).toBeGreaterThan(DRIFT_SPEED_LADDER[i - 1]);
+    }
+  });
+
+  it('spans a range wide enough to be worth reaching', () => {
+    // The complaint that started this: the old ceiling of 64px/s
+    // took fourteen seconds to cross a screen. The ladder has to go
+    // well past that, or the top of the slider is still a crawl.
+    expect(DRIFT_SPEED_MAX_PX_PER_SEC).toBeGreaterThanOrEqual(1024);
+    expect(900 / DRIFT_SPEED_MAX_PX_PER_SEC).toBeLessThan(1);
+  });
+
+  it('steps by a ratio, not a fixed amount', () => {
+    // A fixed step would bunch every usable speed at one end of the
+    // slider and leave the rest of the travel unreachable.
+    const ratios = DRIFT_SPEED_LADDER.slice(1).map((v, i) => v / DRIFT_SPEED_LADDER[i]);
+    for (const ratio of ratios) {
+      // Every rung is between a third of a stop and a half stop up.
+      expect(ratio).toBeGreaterThan(1.25);
+      expect(ratio).toBeLessThan(1.55);
+    }
+  });
+
+  it('has the default on the ladder', () => {
+    expect(DRIFT_SPEED_LADDER).toContain(DRIFT_SPEED_PX_PER_SEC);
+  });
+
+  it('has one rung per step the control offers', () => {
+    expect(DRIFT_SPEED_STEP_COUNT).toBe(DRIFT_SPEED_LADDER.length);
+  });
+});
+
+describe('driftSpeedRung', () => {
+  it('finds the rung a speed sits on', () => {
+    expect(driftSpeedRung(4)).toBe(0);
+    expect(driftSpeedRung(DRIFT_SPEED_MAX_PX_PER_SEC)).toBe(
+      DRIFT_SPEED_LADDER.length - 1
+    );
+  });
+
+  it('rounds an off-ladder speed to the nearest rung', () => {
+    // 9 is nearer 8 than 12.
+    expect(driftSpeedRung(9)).toBe(DRIFT_SPEED_LADDER.indexOf(8));
+    expect(driftSpeedRung(11)).toBe(DRIFT_SPEED_LADDER.indexOf(12));
+  });
+
+  it('breaks a tie toward the slower rung', () => {
+    // 10 is exactly between 8 and 12. The tie goes DOWN, so dragging
+    // toward "faster" never jumps a rung early.
+    expect(driftSpeedRung(10)).toBe(DRIFT_SPEED_LADDER.indexOf(8));
+  });
+
+  it('clamps a speed outside the ladder', () => {
+    expect(driftSpeedRung(0)).toBe(0);
+    expect(driftSpeedRung(-100)).toBe(0);
+    expect(driftSpeedRung(1_000_000)).toBe(DRIFT_SPEED_LADDER.length - 1);
+  });
+
+  it('falls back to the default for a value that is not a number', () => {
+    expect(driftSpeedRung(Number.NaN)).toBe(
+      driftSpeedRung(DRIFT_SPEED_PX_PER_SEC)
+    );
+  });
+});
+
+describe('driftSpeedFromRung', () => {
+  it('reads the speed a rung means', () => {
+    expect(driftSpeedFromRung(0)).toBe(DRIFT_SPEED_MIN_PX_PER_SEC);
+    expect(driftSpeedFromRung(DRIFT_SPEED_LADDER.length - 1)).toBe(
+      DRIFT_SPEED_MAX_PX_PER_SEC
+    );
+  });
+
+  it('clamps a rung outside the ladder', () => {
+    expect(driftSpeedFromRung(-5)).toBe(DRIFT_SPEED_MIN_PX_PER_SEC);
+    expect(driftSpeedFromRung(9999)).toBe(DRIFT_SPEED_MAX_PX_PER_SEC);
+  });
+
+  it('falls back to the default for a rung that is not a number', () => {
+    expect(driftSpeedFromRung(Number.NaN)).toBe(DRIFT_SPEED_PX_PER_SEC);
+  });
+
+  it('round-trips every rung', () => {
+    // The slider's value is a rung and the wall's speed is derived
+    // from it, so the two must agree in both directions or the thumb
+    // and the readout drift apart.
+    for (let i = 0; i < DRIFT_SPEED_LADDER.length; i++) {
+      expect(driftSpeedFromRung(i)).toBe(DRIFT_SPEED_LADDER[i]);
+      expect(driftSpeedRung(DRIFT_SPEED_LADDER[i])).toBe(i);
+    }
   });
 });
 
@@ -223,17 +322,50 @@ describe('clampDriftSpeed', () => {
     );
   });
 
-  it('rounds to a whole number of pixels per second', () => {
-    expect(clampDriftSpeed(20.4)).toBe(20);
-    expect(clampDriftSpeed(20.6)).toBe(21);
+  it('always lands on a speed the ladder offers', () => {
+    // There is no in-between value to ask for, so a resolved speed
+    // is always one of the ladder's own.
+    for (const raw of [1, 7, 10.5, 100, 333, 999, 5000]) {
+      expect(DRIFT_SPEED_LADDER).toContain(clampDriftSpeed(raw));
+    }
+  });
+});
+
+describe('driftOverscanRows', () => {
+  it('never gives less lead than the wall has always had', () => {
+    expect(driftOverscanRows(4, 240)).toBeGreaterThanOrEqual(
+      DRIFT_OVERSCAN_ROWS
+    );
+    expect(driftOverscanRows(2048, 240)).toBeGreaterThanOrEqual(
+      DRIFT_OVERSCAN_ROWS
+    );
   });
 
-  it('has a step that divides its range evenly', () => {
-    // A slider whose step does not land on both ends cannot reach
-    // its own maximum, so the top of the range would be a value the
-    // control cannot express.
-    const span = DRIFT_SPEED_MAX_PX_PER_SEC - DRIFT_SPEED_MIN_PX_PER_SEC;
-    expect(span % DRIFT_SPEED_STEP_PX_PER_SEC).toBe(0);
+  it('keeps the same amount of TIME in reserve at any speed', () => {
+    // The lead exists so a photo has time to ARRIVE. Two rows covers
+    // half a minute at the default speed, so a fast wall needs many
+    // more rows to cover the same seconds.
+    const rowHeight = 240;
+    const slow = driftOverscanRows(16, rowHeight);
+    const fast = driftOverscanRows(2048, rowHeight);
+    expect(fast).toBeGreaterThan(slow);
+
+    // The fast wall's reserve covers at least the lead time asked for.
+    const leadSeconds = (fast * rowHeight) / 2048;
+    expect(leadSeconds).toBeGreaterThanOrEqual(DRIFT_LEAD_SECONDS);
+  });
+
+  it('gives a fast wall far more lead than a slow one', () => {
+    // Two rows at 2048px/s is a quarter of a second — a photo would
+    // pop in blank. The lead has to grow with the speed.
+    expect(driftOverscanRows(2048, 240)).toBeGreaterThan(
+      driftOverscanRows(16, 240) * 2
+    );
+  });
+
+  it('falls back to the default lead without a row height', () => {
+    expect(driftOverscanRows(2048, 0)).toBe(DRIFT_OVERSCAN_ROWS);
+    expect(driftOverscanRows(2048, -10)).toBe(DRIFT_OVERSCAN_ROWS);
   });
 });
 
