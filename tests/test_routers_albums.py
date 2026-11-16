@@ -45,6 +45,59 @@ def _fake_index_db():
     return db
 
 
+
+
+# --- GET /api/albums/{id} ---
+
+def test_album_detail_carries_the_blurhash_of_each_member():
+    """The album's members answer with their blurhash.
+
+    The Qdrant payload already carries it and the query already
+    hydrates the whole payload, so this costs no extra I/O — but the
+    response model used to drop it. A presentation surface renders a
+    photo per tile, and without a placeholder a photo that has not
+    arrived yet shows as a grey block: a hole in the wall, scrolling
+    past. On the drift this reads as pop-in.
+    """
+    db = MagicMock()
+    db.get_album.return_value = {
+        "id": 7,
+        "name": "Album",
+        "description": "",
+        "cover_favorite_id": "",
+        "created_at": "2026-01-01",
+        "updated_at": "2026-01-01",
+    }
+    db.list_album_members.return_value = [
+        {
+            "id": "point-a",
+            "path": "/nas/a.jpg",
+            "added_at": "2026-01-01",
+            "blurhash": "LEHV6nWB2yk8pyo0adR*.7kCMdnj",
+        },
+        {
+            "id": "point-b",
+            "path": "/nas/b.jpg",
+            "added_at": "2026-01-01",
+            "blurhash": None,
+        },
+    ]
+    db.count_album_members.return_value = 2
+    db.list_albums.return_value = []
+
+    app = _build(db, _fake_cfg())
+    with TestClient(app) as client:
+        resp = client.get("/api/albums/7")
+
+    assert resp.status_code == 200
+    members = resp.json()["members"]
+    assert members[0]["blurhash"] == "LEHV6nWB2yk8pyo0adR*.7kCMdnj"
+    # A photo with no blurhash answers null, not a missing key — the
+    # frontend reads it either way, but a stable shape is a stable
+    # contract.
+    assert "blurhash" in members[1]
+    assert members[1]["blurhash"] is None
+
 # --- POST /api/albums ---
 
 def test_create_album_returns_summary_and_registers_centroid():

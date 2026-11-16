@@ -151,6 +151,14 @@ class AlbumMemberItem(BaseModel):
     id: str
     path: str
     added_at: str
+    # The photo's blurhash, as a data URL. The payload carries it
+    # already (the query hydrates the whole thing), so this costs
+    # no extra I/O — but the response model used to drop it, and a
+    # presentation surface that renders a photo per tile needs a
+    # PLACEHOLDER for the ones that have not arrived yet. Without
+    # it the tile is a grey block until its photo lands, which on a
+    # moving wall reads as pop-in.
+    blurhash: str | None = None
 
 
 class AlbumDetailResponse(BaseModel):

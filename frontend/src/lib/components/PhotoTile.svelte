@@ -38,6 +38,22 @@
      * in the first row of the visible virtualizer slice.
      */
     eagerIndex?: number | false | null;
+    /**
+     * Load the photo EAGERLY, whatever the browser's lazy heuristic
+     * would decide.
+     *
+     * The heuristic exists for a grid the USER scrolls: it defers
+     * images below the fold until they are nearly in view, because
+     * a human might never scroll that far. A wall that moves ITSELF
+     * breaks that assumption — there is no user gesture to wait
+     * for, so a deferred image is simply a blank tile that scrolls
+     * past. On the drift this reads as pop-in.
+     *
+     * So the moving surface asks for eager loading and manages the
+     * budget itself: it renders a bounded window of rows, so the
+     * number of eager requests is bounded too.
+     */
+    eager?: boolean;
     onOpen?: (id: string) => void;
     onContextMenu?: (id: string, e: MouseEvent) => void;
     /**
@@ -146,6 +162,7 @@
     isDisliked,
     contextMenuOpen,
     eagerIndex,
+    eager = false,
     onOpen,
     onContextMenu,
     onRemove,
@@ -212,7 +229,14 @@
   // are the tiles a user is staring at on first paint — we want them
   // marked eager + high-priority so the browser starts fetching them
   // alongside the HTML/CSS instead of waiting on its lazy heuristic.
-  let isEager = $derived(eagerIndex === 0 || eagerIndex === 1 || eagerIndex === 2);
+  // The tile loads eagerly if the caller said so, or if it is one
+  // of the first three tiles of the first visible row — the tiles a
+  // user is staring at on first paint, which we want marked
+  // high-priority so the browser starts fetching them alongside the
+  // HTML/CSS instead of waiting on its lazy heuristic.
+  let isEager = $derived(
+    eager || eagerIndex === 0 || eagerIndex === 1 || eagerIndex === 2
+  );
   // Rendered srcset width for the eager tiles. The single-variant
   // pipeline serves 384×384; the rounded-up × 2 calculation would
   // be 480, but the backend only generates 384 (no 480), so just

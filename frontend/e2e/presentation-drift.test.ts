@@ -345,10 +345,15 @@ test.describe('presentation drift', () => {
     const photo = await middlePhoto(page);
     const before = await photoY(page, photo);
 
+    // The slider counts RUNGS, not px/s — the speed ladder's rungs are
+    // what the thumb lands on. Rung 0 is the slowest, the last rung
+    // the fastest.
+    const speed = page.locator('.drift-fields input[aria-label^="Speed"]');
+    const lastRung = Number(await speed.getAttribute('max'));
+
     // Drive the slider to its slowest setting and measure the same
     // photo's travel over the same interval.
-    const speed = page.locator('.drift-fields input[aria-label^="Speed"]');
-    await speed.fill('4');
+    await speed.fill('0');
     await page.waitForTimeout(200);
 
     const slowStart = await photoY(page, photo);
@@ -357,7 +362,7 @@ test.describe('presentation drift', () => {
     const slowTravel = slowStart - slowEnd;
 
     // And at the fastest setting.
-    await speed.fill('64');
+    await speed.fill(String(lastRung));
     await page.waitForTimeout(200);
     const fastStart = await photoY(page, photo);
     await page.waitForTimeout(1000);
@@ -367,6 +372,74 @@ test.describe('presentation drift', () => {
     expect(slowTravel).toBeGreaterThan(0);
     expect(fastTravel).toBeGreaterThan(slowTravel * 2);
     expect(before).not.toBeNaN();
+  });
+
+  test('the speed control reaches far past a crawl', async ({ page }) => {
+    await page.goto(await driftUrl(page));
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    // The complaint the ladder answers: the old ceiling of 64px/s
+    // took fourteen seconds to cross a screen. The top rung has to
+    // cross it in well under a second, and the readout has to SAY
+    // so — the number on screen is the speed, not the rung.
+    const speed = page.locator('.drift-fields input[aria-label^="Speed"]');
+    const lastRung = Number(await speed.getAttribute('max'));
+    await speed.fill(String(lastRung));
+    await page.waitForTimeout(300);
+
+    const readout = await page.locator('.drift-value').first().innerText();
+    const pxPerSec = Number(readout.replace(/[^\d]/g, ''));
+
+    expect(pxPerSec).toBeGreaterThanOrEqual(1024);
+    expect(900 / pxPerSec).toBeLessThan(1);
+    // The slider's accessible name must report the speed too, so a
+    // screen reader hears "2048 pixels per second" and not "18".
+    await expect(speed).toHaveAttribute('aria-valuetext', /\d+ pixels per second/);
+  });
+
+  test('the photos do not pop in — they arrive with a placeholder', async ({ page }) => {
+    await page.goto(await driftUrl(page));
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    // The defect this pins: the wall's tiles had NO placeholder at
+    // all, so a photo that had not arrived yet showed as a grey
+    // block — a hole in the wall that scrolls past. Measured on prod
+    // with a cold, throttled cache: 6 of the first 9 photos were
+    // grey blocks, with a median of ~2 seconds between the photo
+    // entering the screen and its bytes landing.
+    //
+    // Two things make that go away, and both are asserted here:
+    // the tile carries a PLACEHOLDER (the blurhash), and the browser
+    // is told to fetch the photo EAGERLY. The browser's own lazy
+    // heuristic assumes a USER scrolls the page; a wall that moves
+    // itself has no user gesture to wait for, so a deferred image
+    // is simply a hole that scrolls past.
+    const tiles = page.locator('.tile');
+    const count = await tiles.count();
+    expect(count).toBeGreaterThan(0);
+
+    for (let i = 0; i < count; i++) {
+      const tile = tiles.nth(i);
+      // Every tile has a placeholder element behind the photo.
+      await expect(tile.locator('img.ph, .ph.fallback')).toHaveCount(1);
+      // And the photo itself is fetched eagerly, not deferred.
+      await expect(tile.locator('img.full')).toHaveAttribute('loading', 'eager');
+    }
+  });
+
+  test('the drift carries the blurhash the album API provides', async ({ page }) => {
+    await page.goto(await driftUrl(page));
+    await page.waitForSelector('.tile', { timeout: 30000 });
+
+    // The API used to answer with id/path/added_at only, so the
+    // wall had no blurhash to show and fell back to a grey block.
+    // The payload already carried it; the response model dropped it.
+    const hasLqip = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.tile')).some((t) =>
+        t.querySelector('img.ph')
+      )
+    );
+    expect(hasLqip, 'the drift tiles must carry a blurhash placeholder').toBe(true);
   });
 
   test('the zoom control changes how many photos are across the wall', async ({ page }) => {

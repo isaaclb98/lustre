@@ -121,6 +121,7 @@ def build_albums_router(
                     id=str(row["id"]),
                     path=str(row["path"]),
                     added_at=str(row["added_at"] or ""),
+                    blurhash=row.get("blurhash") or None,
                 )
                 for row in rows
             ],
