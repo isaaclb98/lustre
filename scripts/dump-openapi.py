@@ -4,13 +4,30 @@
 Single source of truth for the TypeScript types and Zod schemas the
 frontend uses. Run from the repo root after backend changes:
 
-    .venv-test/bin/python scripts/dump-openapi.py
+    .venv/bin/python scripts/dump-openapi.py
 
 The frontend regenerates types from frontend/openapi.json via
 `npm run gen:types` and `npm run gen:zod` (in npm scripts). Keep
 both in lockstep with the backend — pytest will fail if drift is
 detected (see tests/test_openapi_stability.py).
+
+Why the script re-executes itself
+---------------------------------
+FastAPI generates one operationId per route and de-duplicates the
+collisions by appending the route's FIRST method
+(`list(route.methods)[0]`). `route.methods` is a SET, so that first
+method depends on the process's string-hash seed — the same code
+emits `..._download_zip_get` under one seed and `..._download_zip_head`
+under another. The result is a spec that differs from the pinned
+snapshot for reasons that have nothing to do with the change being
+dumped, which shows up as a wall of phantom diffs and, worse, makes
+the snapshot unreviewable.
+
+So the hash seed is pinned before anything is imported. Python reads
+PYTHONHASHSEED at startup, so the only way to fix it is to re-exec
+with the variable set — which is what the guard below does, once.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -21,6 +38,30 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND = REPO_ROOT / "frontend"
+
+# The hash seed that reproduces the operationIds in the pinned
+# snapshot. Verified against frontend/openapi.json: with this seed
+# the dump differs from the committed file only by the change being
+# dumped.
+_HASH_SEED = "0"
+_REEXEC_FLAG = "_LUSTRE_OPENAPI_DUMP_REEXEC"
+
+
+def _pin_hash_seed() -> None:
+    """Re-exec under a pinned hash seed, once.
+
+    Python fixes the string-hash seed at startup, so setting the
+    variable now would be too late. The guard variable keeps the
+    re-exec from looping.
+    """
+    if os.environ.get(_REEXEC_FLAG) == "1":
+        return
+    if os.environ.get("PYTHONHASHSEED") == _HASH_SEED:
+        return
+    env = dict(os.environ)
+    env["PYTHONHASHSEED"] = _HASH_SEED
+    env[_REEXEC_FLAG] = "1"
+    os.execve(sys.executable, [sys.executable, *sys.argv], env)
 
 
 def main() -> int:
@@ -89,4 +130,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    _pin_hash_seed()
     raise SystemExit(main())
