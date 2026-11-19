@@ -342,6 +342,18 @@ export interface ExploreRoundParams {
   offset?: number;
   /** Session id from a prior response. */
   session?: string;
+  /**
+   * Draw the NEXT round instead of continuing the current one.
+   *
+   * The round the session is serving is retired and a fresh one is
+   * materialised from the feedback recorded so far — the source's
+   * current membership as the positives, the session's down-votes as
+   * the negatives. The response is the new round's first page.
+   *
+   * Voting alone never advances the round: the photos the user is
+   * looking at stay put until they ask for the next one.
+   */
+  advance?: boolean;
   /** Abort the request. */
   signal?: AbortSignal;
 }
@@ -386,6 +398,7 @@ export function exploreRound(
   if (params.limit !== undefined) search.set('limit', String(params.limit));
   if (params.offset !== undefined) search.set('offset', String(params.offset));
   if (params.session !== undefined) search.set('session', params.session);
+  if (params.advance) search.set('advance', 'true');
   return apiGet<SearchResponse>(
     `/api/explore/${encodeURIComponent(source)}/round?${search.toString()}`,
     { signal: sig, schema: Z.SearchResponse, schemaName: 'SearchResponse (explore)' }
