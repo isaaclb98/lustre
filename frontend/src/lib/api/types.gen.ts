@@ -2196,6 +2196,8 @@ export interface operations {
                 offset?: number;
                 /** @description photos per page */
                 limit?: number;
+                /** @description Draw the NEXT round: the round this session is serving is retired and a fresh one is materialised from the feedback recorded so far. The response is the new round's first page. */
+                advance?: boolean;
             };
             header?: never;
             path: {
