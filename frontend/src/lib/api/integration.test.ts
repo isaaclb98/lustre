@@ -131,6 +131,88 @@ describe('random endpoint round-trip', () => {
   });
 });
 
+/**
+ * Explore's round endpoint. The `advance` flag is the whole
+ * explicit-advance contract: without it the server keeps serving
+ * the round the session already has, and with it the round is
+ * retired and a fresh one is drawn from the feedback recorded so
+ * far. A vote NEVER sends it — the photos the user is looking at
+ * stay put while they vote.
+ */
+describe('explore round endpoint URL builder', () => {
+  // The dev-mode zod schema runs in vitest (since `dev` is true),
+  // so the mocked response must satisfy the SearchResponse shape.
+  const valid = JSON.stringify({
+    results: [
+      {
+        id: 'p1',
+        path: '/p.jpg',
+        score: 0.9,
+        score_str: '0.900',
+        url: '/photo/p1/raw',
+        is_favorite: false,
+        blurhash: null,
+        width: null,
+        height: null
+      }
+    ],
+    took_ms: 1,
+    limit: 24,
+    offset: 0,
+    has_more: false
+  });
+
+  let captured: any;
+  beforeEach(() => {
+    captured = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: any, init: any) => {
+        captured = { url: String(_url), init };
+        return new Response(valid, {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        });
+      })
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('omits advance when the round is not being advanced', async () => {
+    const { exploreRound } = await import('./endpoints');
+    await exploreRound('album:7', { limit: 24, offset: 0, session: 's1' });
+    const url = new URL(captured.url, 'http://x');
+    expect(url.pathname).toBe('/api/explore/album%3A7/round');
+    expect(url.searchParams.has('advance')).toBe(false);
+    expect(url.searchParams.get('session')).toBe('s1');
+    expect(url.searchParams.get('limit')).toBe('24');
+  });
+
+  it('sends advance=true to draw the next round', async () => {
+    const { exploreRound } = await import('./endpoints');
+    await exploreRound('album:7', {
+      limit: 24,
+      offset: 0,
+      session: 's1',
+      advance: true
+    });
+    const url = new URL(captured.url, 'http://x');
+    expect(url.searchParams.get('advance')).toBe('true');
+    // The session rides along — the votes are session-scoped, so
+    // the new round has to be drawn against the same session.
+    expect(url.searchParams.get('session')).toBe('s1');
+  });
+
+  it('encodes the source key', async () => {
+    const { exploreRound } = await import('./endpoints');
+    await exploreRound('favourites', { limit: 24 });
+    const url = new URL(captured.url, 'http://x');
+    expect(url.pathname).toBe('/api/explore/favourites/round');
+  });
+});
+
 describe('search endpoint URL builder', () => {
   // The dev-mode zod schema runs in vitest (since `dev` is true),
   // so the mocked response must satisfy the SearchResponse shape.

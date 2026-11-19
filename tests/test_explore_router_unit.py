@@ -6,11 +6,14 @@ a fake Qdrant that records every call. No real Qdrant, no HTTP.
 
 The contract:
 
-- POSITIVES are the album's member photos.
+- POSITIVES are the album's member photos — LIVE, so an up-vote
+  (which joins the album) counts in the next round.
 - NEGATIVES are the session's down-votes.
-- EXCLUSIONS are the seen-set plus the album's own members, so a
-  photo is never served twice and the album does not fill the
-  results.
+- EXCLUSIONS are the photos the user ACTED ON plus the album's own
+  members, so a judged photo never comes back and the album does
+  not fill the results.
+- A VOTE never redraws the round — the photos the user is looking
+  at stay put. Only an explicit advance draws the next one.
 - Dead member ids are filtered before they reach `recommend()`,
   which 404s the whole call when any seed id is missing.
 - The HNSW breadth is pinned, so the round's latency is bounded.
@@ -167,7 +170,7 @@ def test_the_downvotes_become_the_negatives():
         f"/api/explore/album%3A1/vote?session={session}",
         json={"photo_id": target, "vote": "down"},
     )
-    client.get(f"/api/explore/album%3A1/round?session={session}")
+    client.get(f"/api/explore/album%3A1/round?session={session}&advance=true")
 
     second_call = qdrant.recommend_calls[1]
     assert target in second_call["negative"]
@@ -185,6 +188,59 @@ def test_the_seen_set_and_the_album_are_excluded():
     # The album's own members never appear in the results — the
     # user is hunting for more like the album, not the album.
     assert {"a", "b"} <= excluded
+
+
+def test_only_the_photos_the_user_judged_are_excluded():
+    """The seen-set is the acted-on set, not the served set.
+
+    Serving a photo is not a verdict on it. A photo the user
+    scrolled past without voting on stays a candidate for a later
+    round; the ones they judged never come back.
+    """
+    index_db = _FakeIndexDB({1: ["a"]})
+    qdrant = _FakeQdrant(pool=["a", "x", "y", "z"])
+    client = _client(_make_router(index_db, qdrant))
+
+    first = client.get("/api/explore/album%3A1/round?limit=2").json()
+    session = first["session_id"]
+    served = [r["id"] for r in first["results"]]
+
+    # The user judges one of the two they were shown.
+    client.post(
+        f"/api/explore/album%3A1/vote?session={session}",
+        json={"photo_id": served[0], "vote": "down"},
+    )
+    client.get(f"/api/explore/album%3A1/round?session={session}&advance=true")
+
+    excluded = set(qdrant.recommend_calls[1]["exclude_ids"])
+    # The judged photo is excluded — it must never come back.
+    assert served[0] in excluded
+    # The one they merely looked at is still a candidate.
+    assert served[1] not in excluded
+
+
+def test_an_upvoted_photo_is_excluded_from_the_next_round():
+    """An up-vote joins the album, so it is a member — and members
+    are excluded from the results."""
+    index_db = _FakeIndexDB({1: ["a"]})
+    qdrant = _FakeQdrant(pool=["a", "x", "y", "z"])
+    client = _client(_make_router(index_db, qdrant))
+
+    first = client.get("/api/explore/album%3A1/round").json()
+    session = first["session_id"]
+    target = first["results"][0]["id"]
+
+    client.post(
+        f"/api/explore/album%3A1/vote?session={session}",
+        json={"photo_id": target, "vote": "up"},
+    )
+    client.get(f"/api/explore/album%3A1/round?session={session}&advance=true")
+
+    call = qdrant.recommend_calls[1]
+    # It joined the album, so it is a positive of the next round...
+    assert target in call["positive"]
+    # ...and a member, so it is excluded from the results.
+    assert target in set(call["exclude_ids"])
 
 
 def test_dead_member_ids_are_filtered_before_the_recommend():
@@ -218,7 +274,7 @@ def test_dead_downvotes_are_filtered_too():
         f"/api/explore/album%3A1/vote?session={session}",
         json={"photo_id": "ghost", "vote": "down"},
     )
-    client.get(f"/api/explore/album%3A1/round?session={session}")
+    client.get(f"/api/explore/album%3A1/round?session={session}&advance=true")
     call = qdrant.recommend_calls[1]
     assert call["negative"] == []
 
@@ -264,7 +320,13 @@ def test_an_upvote_adds_to_the_album_and_invalidates_the_centroid():
     assert invalidated == [1]
 
 
-def test_the_round_is_reused_until_a_vote_invalidates_it():
+def test_the_round_is_reused_until_the_client_advances():
+    """The round survives votes. Only an advance draws the next one.
+
+    The photos the user is looking at must not change under them
+    while they vote — so a vote records the feedback and leaves the
+    materialised round exactly where it is.
+    """
     index_db = _FakeIndexDB({1: ["a"]})
     qdrant = _FakeQdrant(pool=["a", "x", "y", "z"])
     client = _client(_make_router(index_db, qdrant))
@@ -276,12 +338,16 @@ def test_the_round_is_reused_until_a_vote_invalidates_it():
     client.get(f"/api/explore/album%3A1/round?session={session}&offset=1&limit=1")
     assert len(qdrant.recommend_calls) == 1
 
-    # A vote invalidates it, so the next request re-queries.
+    # A vote does not invalidate it either.
     client.post(
         f"/api/explore/album%3A1/vote?session={session}",
         json={"photo_id": "x", "vote": "down"},
     )
     client.get(f"/api/explore/album%3A1/round?session={session}")
+    assert len(qdrant.recommend_calls) == 1
+
+    # Only an explicit advance draws the next round.
+    client.get(f"/api/explore/album%3A1/round?session={session}&advance=true")
     assert len(qdrant.recommend_calls) == 2
 
 
