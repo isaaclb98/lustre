@@ -1,7 +1,7 @@
 """
 search/routers/explore.py — the Explore feedback loop.
 
-GET /api/explore/{source}/round?session=&offset=&limit=:
+GET /api/explore/{source}/round?session=&offset=&limit=&advance=:
     Serve a page of the current round. The round is materialised with
     one Qdrant `recommend()` call whose POSITIVES are the source's
     member photos and whose NEGATIVES are the photos the user
@@ -10,11 +10,19 @@ GET /api/explore/{source}/round?session=&offset=&limit=:
     than re-querying Qdrant, because offset-paging a recommend query
     returns duplicate rows at the page boundaries.
 
+    `advance` draws the NEXT round: the round the session is
+    serving is replaced by a freshly materialised one, built from
+    the feedback recorded so far, and the response is its first
+    page. The round stays put until the client asks for the next
+    one, so the photos the user is looking at do not change under
+    them while they vote.
+
 POST /api/explore/{source}/vote:
     Record a vote. `down` adds the photo to the session's negative
-    set and invalidates the current round, so the next round is
-    re-queried with the new negative. `up` adds the photo to the
-    source itself, which makes it a positive for every later round.
+    set, `up` adds the photo to the source itself, which makes it a
+    positive for every later round. Neither invalidates the current
+    round — the votes are the feedback the next round is built from,
+    and the user decides when to ask for it.
 
 `source` is a source key, not an album id: `album:{id}` for a user
 album, `favourites` for the built-in one. The built-in album has no
@@ -195,9 +203,10 @@ def build_explore_router(
 
         Positives are the album's members; negatives are the session's
         down-votes. Both are liveness-filtered first — see
-        `_liveness_filter`. The seen-set and the album's own members
-        are excluded so a photo is never served twice and the album's
-        contents do not fill the results.
+        `_liveness_filter`. The photos the user acted on and the
+        album's own members are excluded, so a photo the user judged
+        is never served twice and the album's contents do not fill the
+        results.
 
         Returns the hits with payloads, in recommend order.
 
@@ -274,6 +283,17 @@ def build_explore_router(
             int,
             Query(ge=1, le=EXPLORE_ROUND_SIZE, description="photos per page"),
         ] = 24,
+        advance: Annotated[
+            bool,
+            Query(
+                description=(
+                    "Draw the NEXT round: the round this session is "
+                    "serving is retired and a fresh one is materialised "
+                    "from the feedback recorded so far. The response "
+                    "is the new round's first page."
+                ),
+            ),
+        ] = False,
     ) -> SearchResponse | JSONResponse:
         """Serve a page of the current Explore round for a source."""
         started = time.monotonic()
@@ -293,9 +313,16 @@ def build_explore_router(
                     "session to explore this one"
                 )
 
+        # `advance` retires the round this session is serving and
+        # draws a fresh one. The down-votes and the acted-on set
+        # survive the retirement — they ARE the feedback the new
+        # round is built from.
+        if advance:
+            sess.clear_round()
+
         # Materialise the round if this session does not have one.
-        # A round is invalidated by a down-vote (the negatives change),
-        # so the vote handler clears `round_ids`.
+        # A round is retired by an explicit advance, never by a vote:
+        # the photos the user is looking at stay put while they vote.
         if not sess.round_ids:
             try:
                 hits = await asyncio.to_thread(
@@ -321,14 +348,14 @@ def build_explore_router(
         # list; the server never re-queries Qdrant with an offset,
         # because offset-paging a recommend query returns duplicate
         # rows at the page boundaries.
-        start = min(offset, len(sess.round_ids))
+        # An advance answers with the FIRST page of the new round —
+        # the offset belonged to the round that was just retired.
+        start = 0 if advance else min(offset, len(sess.round_ids))
         end = min(start + limit, len(sess.round_ids))
         page_ids = sess.round_ids[start:end]
-        # Only the ids actually SERVED are marked seen. Marking the
-        # whole round would discard the unserved remainder every time
-        # a vote invalidates the round, silently throwing away
-        # candidates the user never actually looked at.
-        sess.mark_seen(page_ids)
+        # The served ids are NOT marked seen. The seen-set tracks what
+        # the user ACTED ON: serving a photo is not a verdict on it.
+        # The vote handler marks the acted-on ids instead.
 
         results: list[SearchResult] = []
         if page_ids:
@@ -406,9 +433,11 @@ def build_explore_router(
 
         if vote == "down":
             added = sess.add_downvote(photo_id)
-            # The negatives changed, so the round is stale. Clearing
-            # it makes the next request re-query Qdrant.
-            sess.clear_round()
+            # The vote is the feedback the NEXT round is built from.
+            # It does NOT retire the round being served — the photos
+            # the user is looking at stay put until they ask for the
+            # next one.
+            sess.mark_seen([photo_id])
             return {
                 "session_id": session_id,
                 "photo_id": photo_id,
@@ -434,9 +463,10 @@ def build_explore_router(
         # favourite IS that album's membership.
         if kind == "album" and invalidate_album_centroid is not None:
             invalidate_album_centroid(album_id)
-        # The album grew, so the current round's positives changed
-        # too. Rebuild it on the next request.
-        sess.clear_round()
+        # The photo joined the album, so it is a positive for every
+        # later round and — as a member — excluded from their
+        # results. It is also acted on, so it joins the seen-set.
+        sess.mark_seen([photo_id])
         return {
             "session_id": session_id,
             "photo_id": photo_id,
