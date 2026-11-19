@@ -331,34 +331,108 @@ def test_downvote_becomes_a_negative_for_the_next_round(explore_client):
         f"/api/explore/album%3A{album_id}/vote?session={session}",
         json={"photo_id": target, "vote": "down"},
     )
-    # The next round is rebuilt with the new negative, so the
+    # The next round is drawn with the new negative, so the
     # down-voted photo is not served again.
     after = explore_client.get(
-        f"/api/explore/album%3A{album_id}/round?session={session}&limit=2"
+        f"/api/explore/album%3A{album_id}/round?session={session}&limit=2&advance=true"
     ).json()
     served = {r["id"] for r in after["results"]}
     assert target not in served
 
 
-def test_a_round_is_not_served_twice(explore_client):
-    """The seen-set keeps a photo from coming back in a later round."""
+def test_a_vote_leaves_the_round_on_screen(explore_client):
+    """The photos the user is looking at do not change when they vote.
+
+    This is the whole point of the explicit advance: the user can
+    add three photos to the album and reject six, and the round they
+    are looking at stays exactly where it is until they ask for the
+    next one.
+    """
+    album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
+    first = explore_client.get(
+        f"/api/explore/album%3A{album_id}/round?limit=3"
+    ).json()
+    session = first["session_id"]
+    first_ids = [r["id"] for r in first["results"]]
+    assert first_ids
+
+    explore_client.post(
+        f"/api/explore/album%3A{album_id}/vote?session={session}",
+        json={"photo_id": first_ids[0], "vote": "down"},
+    )
+
+    # The next request WITHOUT advance serves the same round.
+    after = explore_client.get(
+        f"/api/explore/album%3A{album_id}/round?session={session}&limit=3"
+    ).json()
+    assert [r["id"] for r in after["results"]] == first_ids
+
+
+def test_advance_draws_the_next_round(explore_client):
+    """An advance retires the round and draws a fresh one."""
+    album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
+    first = explore_client.get(
+        f"/api/explore/album%3A{album_id}/round?limit=3"
+    ).json()
+    session = first["session_id"]
+
+    explore_client.post(
+        f"/api/explore/album%3A{album_id}/vote?session={session}",
+        json={"photo_id": first["results"][0]["id"], "vote": "down"},
+    )
+    after = explore_client.get(
+        f"/api/explore/album%3A{album_id}/round?session={session}&limit=3&advance=true"
+    ).json()
+    assert after["results"]
+    # The session carries over — the votes are the feedback the new
+    # round is built from.
+    assert after["session_id"] == session
+    # The down-voted photo is gone; the others are eligible again.
+    served = {r["id"] for r in after["results"]}
+    assert first["results"][0]["id"] not in served
+
+
+def test_advance_ignores_the_offset(explore_client):
+    """An advance answers with the FIRST page of the new round.
+
+    The offset belonged to the round that was just retired, so
+    carrying it over would skip the head of the new one.
+    """
+    album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
+    first = explore_client.get(
+        f"/api/explore/album%3A{album_id}/round?limit=2"
+    ).json()
+    session = first["session_id"]
+
+    after = explore_client.get(
+        f"/api/explore/album%3A{album_id}/round?session={session}&limit=2&offset=4&advance=true"
+    ).json()
+    assert after["offset"] == 0
+
+
+def test_a_judged_photo_is_not_served_again(explore_client):
+    """The seen-set keeps a photo the user JUDGED from coming back.
+
+    A photo they merely scrolled past was never judged, so it stays
+    a candidate — but the one they voted on never comes back.
+    """
     album_id = _make_album(explore_client, [CAT_ID, DOG_ID, BIRD_ID])
     first = explore_client.get(
         f"/api/explore/album%3A{album_id}/round?limit=3"
     ).json()
     session = first["session_id"]
     first_ids = {r["id"] for r in first["results"]}
+    judged = next(iter(first_ids))
 
-    # A vote invalidates the round, so the next round is rebuilt.
     explore_client.post(
         f"/api/explore/album%3A{album_id}/vote?session={session}",
-        json={"photo_id": next(iter(first_ids)), "vote": "down"},
+        json={"photo_id": judged, "vote": "down"},
     )
     second = explore_client.get(
-        f"/api/explore/album%3A{album_id}/round?session={session}&limit=3"
+        f"/api/explore/album%3A{album_id}/round?session={session}&limit=3&advance=true"
     ).json()
     second_ids = {r["id"] for r in second["results"]}
-    assert not (first_ids & second_ids)
+    assert judged not in second_ids
 
 
 def test_upvote_adds_the_photo_to_the_album(explore_client):

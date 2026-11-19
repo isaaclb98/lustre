@@ -2,8 +2,9 @@
 
 The store holds the three pieces of per-session state: the
 down-votes (which become the negatives of the next round), the
-seen-set (which keeps a photo from being served twice), and the
-materialised round (which the client pages through).
+seen-set (the photos the user ACTED ON, which keeps a judged photo
+from being served again), and the materialised round (which the
+client pages through).
 
 No Qdrant involved — the store is pure bookkeeping.
 """
@@ -100,6 +101,41 @@ def test_mark_seen_accumulates():
     sess.mark_seen(["a", "b"])
     sess.mark_seen(["b", "c"])
     assert sess.seen == {"a", "b", "c"}
+
+
+def test_the_seen_set_tracks_acted_on_photos():
+    """The seen-set is the photos the user VOTED on.
+
+    A photo that was served and passed over is still a candidate for
+    a later round — scrolling past something is not a rejection.
+    Only an act of judgement puts a photo in the set.
+    """
+    sess = ExploreSession(source='album:1')
+    sess.mark_seen(["acted-on"])
+    assert sess.seen == {"acted-on"}
+    # A served-but-unvoted photo was never marked, so it is not here.
+    assert "served-only" not in sess.seen
+
+
+def test_clear_round_leaves_the_feedback_alone():
+    """Retiring the round drops the round, not the votes.
+
+    The down-votes and the seen-set ARE the feedback the next round
+    is built from — they have to survive the round they were cast
+    against.
+    """
+    sess = ExploreSession(source='album:1')
+    sess.add_downvote("a")
+    sess.mark_seen(["a"])
+    sess.set_round(["x", "y"], {"x": 0.9, "y": 0.8})
+    assert sess.round_ids == ["x", "y"]
+
+    sess.clear_round()
+
+    assert sess.round_ids == []
+    assert sess.round_scores == {}
+    assert sess.downvotes == ["a"]
+    assert sess.seen == {"a"}
 
 
 def test_clear_drops_every_session():

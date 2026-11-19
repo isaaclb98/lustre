@@ -2414,6 +2414,18 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "description": "Draw the NEXT round: the round this session is serving is retired and a fresh one is materialised from the feedback recorded so far. The response is the new round's first page.",
+            "in": "query",
+            "name": "advance",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Draw the NEXT round: the round this session is serving is retired and a fresh one is materialised from the feedback recorded so far. The response is the new round's first page.",
+              "title": "Advance",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {

@@ -14,8 +14,11 @@ Three pieces of state live here, all scoped to one session:
   `dislikes` table, because that table feeds the permanent For You
   taste signal and an exploratory veto is not the same thing as
   "never show me this again".
-- `seen` — every id served so far. Excluded from later rounds so a
-  photo never comes back.
+- `seen` — every id the user ACTED ON (voted), not every id
+  served. Excluded from later rounds, so a photo the user rejected
+  never comes back. A photo that was served and passed over is
+  still a candidate for a later round: scrolling past something is
+  not a rejection.
 - `round_ids` — the ids of the round currently being served, plus
   `round_scores`, the score each one earned in that round's
   `recommend()` call. The client pages through the id list; the
@@ -106,7 +109,13 @@ class ExploreSession:
         return True
 
     def mark_seen(self, point_ids: list[str]) -> None:
-        """Record ids as served, so later rounds skip them."""
+        """Record ids the user acted on, so later rounds skip them.
+
+        The seen-set is the ACTED-ON set: the photos the user voted
+        on, not the ones the server happened to serve. A photo that
+        was served and passed over is still a candidate for a later
+        round — it was never rejected.
+        """
         self.seen.update(point_ids)
 
     def set_round(
