@@ -319,11 +319,17 @@
   /* Wrap the header actions so Download + Delete sit on the
      same row with consistent spacing. The .actions wrapper
      fills the role of the gutter that was implicit when only
-     Download was present. */
+     Download was present.
+
+     This page carries more actions than any other header, so the
+     row wraps onto a second line when the slot is too narrow for
+     them rather than spilling out of the header card. */
   .actions {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--s-2);
     align-items: center;
+    justify-content: flex-end;
   }
   /* Non-fatal error banner — a failed rename has to be visible,
      otherwise the dialog closes and the header still shows the
