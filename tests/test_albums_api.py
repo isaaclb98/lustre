@@ -575,3 +575,104 @@ def test_album_delete_invalidates_centroid_cache(app_with_qdrant):
 
     centroids_after = app_with_qdrant.get("/api/centroids").json()["dynamic_centroids"]
     assert not any(c["name"] == f"album:{album_id}" for c in centroids_after)
+
+# ---------------- duplicate ----------------
+
+
+def test_duplicate_album_copies_the_members(app_with_qdrant):
+    """A duplicate carries the source album's photos with it."""
+    album_id = app_with_qdrant.post(
+        "/api/albums", json={"name": "studio"},
+    ).json()["id"]
+    app_with_qdrant.post(f"/api/albums/{album_id}/members/{CAT_ID}")
+    app_with_qdrant.post(f"/api/albums/{album_id}/members/{DOG_ID}")
+
+    resp = app_with_qdrant.post(f"/api/albums/{album_id}/duplicate")
+    assert resp.status_code == 200
+    copy = resp.json()
+    assert copy["id"] != album_id
+    assert copy["name"] == "studio (copy)"
+    assert copy["member_count"] == 2
+
+    members = app_with_qdrant.get(
+        f"/api/albums/{copy['id']}?limit=50",
+    ).json()["members"]
+    assert {m["id"] for m in members} == {CAT_ID, DOG_ID}
+
+
+def test_duplicate_album_leaves_the_original_alone(app_with_qdrant):
+    """Duplicating must not disturb the album it was made from."""
+    album_id = app_with_qdrant.post(
+        "/api/albums", json={"name": "studio"},
+    ).json()["id"]
+    app_with_qdrant.post(f"/api/albums/{album_id}/members/{CAT_ID}")
+
+    app_with_qdrant.post(f"/api/albums/{album_id}/duplicate")
+
+    original = app_with_qdrant.get(f"/api/albums/{album_id}").json()
+    assert original["name"] == "studio"
+    assert original["member_total"] == 1
+    assert [m["id"] for m in original["members"]] == [CAT_ID]
+
+
+def test_duplicate_album_derives_a_free_name(app_with_qdrant):
+    """`albums.name` is UNIQUE, so the copy gets its own name.
+
+    The first duplicate is "<name> (copy)", the next "<name> (copy
+    2)", and so on.
+    """
+    album_id = app_with_qdrant.post(
+        "/api/albums", json={"name": "studio"},
+    ).json()["id"]
+
+    first = app_with_qdrant.post(f"/api/albums/{album_id}/duplicate").json()
+    second = app_with_qdrant.post(f"/api/albums/{album_id}/duplicate").json()
+    third = app_with_qdrant.post(f"/api/albums/{album_id}/duplicate").json()
+
+    assert first["name"] == "studio (copy)"
+    assert second["name"] == "studio (copy 2)"
+    assert third["name"] == "studio (copy 3)"
+    assert len({first["id"], second["id"], third["id"]}) == 3
+
+
+def test_duplicate_album_copies_the_description(app_with_qdrant):
+    album_id = app_with_qdrant.post(
+        "/api/albums",
+        json={"name": "studio", "description": "natural light only"},
+    ).json()["id"]
+
+    copy = app_with_qdrant.post(f"/api/albums/{album_id}/duplicate").json()
+    assert copy["description"] == "natural light only"
+
+
+def test_duplicate_album_of_an_empty_album(app_with_qdrant):
+    """A copy of an empty album is an empty album, not an error."""
+    album_id = app_with_qdrant.post(
+        "/api/albums", json={"name": "empty"},
+    ).json()["id"]
+
+    copy = app_with_qdrant.post(f"/api/albums/{album_id}/duplicate").json()
+    assert copy["member_count"] == 0
+    assert copy["first_member_id"] == ""
+
+
+def test_duplicate_album_of_a_missing_album_is_404(app_with_qdrant):
+    resp = app_with_qdrant.post("/api/albums/999999/duplicate")
+    assert resp.status_code == 404
+
+
+def test_duplicate_album_registers_its_own_centroid(app_with_qdrant):
+    """The copy is usable as a search primitive straight away."""
+    album_id = app_with_qdrant.post(
+        "/api/albums", json={"name": "studio"},
+    ).json()["id"]
+    app_with_qdrant.post(f"/api/albums/{album_id}/members/{CAT_ID}")
+
+    copy_id = app_with_qdrant.post(
+        f"/api/albums/{album_id}/duplicate",
+    ).json()["id"]
+
+    centroids = app_with_qdrant.get("/api/centroids").json()["dynamic_centroids"]
+    names = [c["name"] for c in centroids]
+    assert f"album:{copy_id}" in names
+    assert f"album:{album_id}" in names

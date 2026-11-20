@@ -8,6 +8,7 @@ Albums CRUD + membership:
 - GET    /api/albums/{id}                  — album detail with paged members
 - PATCH  /api/albums/{id}                  — rename / update description
 - DELETE /api/albums/{id}                  — delete album + unregister centroid
+- POST   /api/albums/{id}/duplicate         — copy an album + its members
 - POST   /api/albums/{id}/members/{fid}    — add favourite as member + invalidate centroid
 - DELETE /api/albums/{id}/members/{fid}    — remove member + invalidate centroid
 - GET    /api/albums/by-favorite/{fid}     — list albums containing a given favourite
@@ -77,6 +78,25 @@ def build_albums_router(
                 return AlbumSummary(**a)
         # Shouldn't happen — we just inserted this row.
         raise HTTPException(status_code=500, detail="album not found after create")
+
+    @router.post("/api/albums/{album_id}/duplicate", response_model=AlbumSummary)
+    async def duplicate_album(album_id: int) -> AlbumSummary:
+        """Copy an album and its members into a new, uniquely-named album.
+
+        The copy gets its own centroid, so it is usable as a search
+        primitive straight away — exactly like an album the user made
+        by hand.
+        """
+        try:
+            album = await asyncio.to_thread(
+                index_db.duplicate_album, album_id,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if album is None:
+            raise HTTPException(status_code=404, detail="Album not found")
+        register_album_centroid(album["id"])
+        return AlbumSummary(**album)
 
     @router.get("/api/albums", response_model=AlbumsListResponse)
     async def list_albums() -> AlbumsListResponse:
