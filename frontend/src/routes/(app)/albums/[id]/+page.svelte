@@ -10,7 +10,6 @@
    * count to drive `has_more`.
    */
   import { page } from '$app/stores';
-  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import {
@@ -132,7 +131,17 @@
     }
   }
 
-  onMount(load);
+  // Re-fetch whenever the route param changes. The page component
+  // is reused across a navigation from /albums/A to /albums/B (same
+  // dynamic route), so without this the user keeps looking at the
+  // previous album's photos and name under the new album's URL.
+  // "Duplicate" navigates to the copy it just made, so it would
+  // land on a page showing the album it was copied from.
+  $effect(() => {
+    const id = String($page.params.id);
+    if (!id) return;
+    load();
+  });
 
   function items(): Item[] {
     return members.map((m: Member) => ({
