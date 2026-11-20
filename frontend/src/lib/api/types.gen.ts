@@ -249,6 +249,30 @@ export interface paths {
         patch: operations["update_album_api_albums__album_id__patch"];
         trace?: never;
     };
+    "/api/albums/{album_id}/duplicate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Duplicate Album
+         * @description Copy an album and its members into a new, uniquely-named album.
+         *
+         *     The copy gets its own centroid, so it is usable as a search
+         *     primitive straight away — exactly like an album the user made
+         *     by hand.
+         */
+        post: operations["duplicate_album_api_albums__album_id__duplicate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/albums/{album_id}/members/{favorite_id}": {
         parameters: {
             query?: never;
@@ -1806,6 +1830,37 @@ export interface operations {
                 "application/json": components["schemas"]["AlbumUpdateRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    duplicate_album_api_albums__album_id__duplicate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                album_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

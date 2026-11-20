@@ -1760,6 +1760,46 @@
         "summary": "Update Album"
       }
     },
+    "/api/albums/{album_id}/duplicate": {
+      "post": {
+        "description": "Copy an album and its members into a new, uniquely-named album.\n\nThe copy gets its own centroid, so it is usable as a search\nprimitive straight away \u2014 exactly like an album the user made\nby hand.",
+        "operationId": "duplicate_album_api_albums__album_id__duplicate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "album_id",
+            "required": true,
+            "schema": {
+              "title": "Album Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Duplicate Album"
+      }
+    },
     "/api/albums/{album_id}/members/{favorite_id}": {
       "delete": {
         "operationId": "remove_album_member_api_albums__album_id__members__favorite_id__delete",

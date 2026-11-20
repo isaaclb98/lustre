@@ -74,9 +74,18 @@
     gap: var(--s-4);
     width: var(--grid-width, 100%);
     max-width: 100%;
+    /* A wide action row must not crowd the title out. The album
+       page carries six actions, and with the actions slot unable
+       to shrink the title block collapsed to zero width in the
+       640-1024px band. Letting the row drop to its own line keeps
+       both readable. */
+    flex-wrap: wrap;
   }
   .text {
-    flex: 1;
+    /* The basis is a readable floor for the title block, so the
+       wrap decision below is made against a sane minimum rather
+       than against zero. */
+    flex: 1 1 12ch;
     min-width: 0;
   }
   h1 {
@@ -102,7 +111,10 @@
     font-size: var(--fs-sm);
   }
   .actions {
-    flex-shrink: 0;
+    /* May give up room so the row can wrap; the actions slot is
+       the wide one on pages that carry many of them. */
+    flex: 0 1 auto;
+    min-width: 0;
   }
   @media (max-width: 640px) {
     /* Drop the --grid-width constraint on mobile — it derives

@@ -291,6 +291,20 @@ export async function deleteAlbum(albumId: number) {
   await apiDelete(`/api/albums/${albumId}`);
 }
 
+/**
+ * Copy an album and its photos into a new album.
+ *
+ * The backend names the copy for you — "<name> (copy)", then
+ * "<name> (copy 2)" and so on — because album names are unique.
+ * Returns the new album so the caller can navigate to it.
+ */
+export function duplicateAlbum(albumId: number) {
+  return apiPost<AlbumSummary>(`/api/albums/${albumId}/duplicate`, undefined, {
+    schema: Z.AlbumSummary,
+    schemaName: 'AlbumSummary'
+  });
+}
+
 /** Add a photo to an album. Idempotent — backend no-ops on duplicate. */
 export async function addPhotoToAlbum(albumId: number, pointId: string) {
   await apiPost(`/api/albums/${albumId}/members/${encodeURIComponent(pointId)}`);

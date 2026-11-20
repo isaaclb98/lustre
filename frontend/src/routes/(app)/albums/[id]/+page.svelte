@@ -10,13 +10,13 @@
    * count to drive `has_more`.
    */
   import { page } from '$app/stores';
-  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import {
     getAlbum,
     removePhotoFromAlbum,
     deleteAlbum,
+    duplicateAlbum,
     updateAlbum
   } from '$lib/api/endpoints';
   import { preferences } from '$lib/stores/preferences';
@@ -65,6 +65,10 @@
   // otherwise the dialog closes and the header still shows the
   // old name with no explanation.
   let renameError = $state<string | null>(null);
+  // Same story for a failed duplicate — the page must not look like
+  // nothing happened.
+  let duplicateError = $state<string | null>(null);
+  let duplicating = $state(false);
   let offset = $state(0);
   let hasMore = $state(false);
 
@@ -132,7 +136,17 @@
     }
   }
 
-  onMount(load);
+  // Re-fetch whenever the route param changes. The page component
+  // is reused across a navigation from /albums/A to /albums/B (same
+  // dynamic route), so without this the user keeps looking at the
+  // previous album's photos and name under the new album's URL.
+  // "Duplicate" navigates to the copy it just made, so it would
+  // land on a page showing the album it was copied from.
+  $effect(() => {
+    const id = String($page.params.id);
+    if (!id) return;
+    load();
+  });
 
   function items(): Item[] {
     return members.map((m: Member) => ({
@@ -213,6 +227,33 @@
     }
   }
 
+  /**
+   * Duplicate this album. The backend copies the members and names
+   * the copy ("<name> (copy)", "<name> (copy 2)" ...), so the user
+   * lands in the copy and can rename it there if they want.
+   *
+   * No confirmation dialog: duplicating adds a new album, it
+   * destroys nothing, and the new album is a separate thing the
+   * user can delete again. The button is disabled while the copy is
+   * in flight so a double-click cannot make two copies.
+   */
+  async function onDuplicateAlbum() {
+    if (!detail || duplicating) return;
+    duplicating = true;
+    duplicateError = null;
+    try {
+      const copy = await duplicateAlbum(detail.id);
+      await goto(resolve(`/albums/${copy.id}`));
+    } catch (e) {
+      duplicateError =
+        e instanceof ApiError && e.status === 400
+          ? 'Could not duplicate this album — the copy name is taken.'
+          : 'Could not duplicate this album. Please try again.';
+    } finally {
+      duplicating = false;
+    }
+  }
+
   /** Delete the current album. Same dialog pattern as the list
    * page's remove() — confirm the destructive action, then
    * navigate back to /albums once the backend acknowledges. */
@@ -276,6 +317,14 @@
         {/if}
         <Button
           variant="secondary"
+          onclick={onDuplicateAlbum}
+          disabled={duplicating}
+          title={`Copy album ${detail?.name ?? ''} and its photos into a new one`}
+        >
+          {duplicating ? 'Duplicating…' : 'Duplicate'}
+        </Button>
+        <Button
+          variant="secondary"
           onclick={onRenameAlbum}
           title={`Rename album ${detail?.name ?? ''}`}
         >
@@ -289,6 +338,9 @@
   </PageHeader>
   {#if renameError}
     <div class="rename-error">{renameError}</div>
+  {/if}
+  {#if duplicateError}
+    <div class="rename-error">{duplicateError}</div>
   {/if}
   {#if items().length === 0 && !loadingMore}
     <div class="state empty">No photos in this album yet. Open a photo to add it from the lightbox.</div>
@@ -310,11 +362,17 @@
   /* Wrap the header actions so Download + Delete sit on the
      same row with consistent spacing. The .actions wrapper
      fills the role of the gutter that was implicit when only
-     Download was present. */
+     Download was present.
+
+     This page carries more actions than any other header, so the
+     row wraps onto a second line when the slot is too narrow for
+     them rather than spilling out of the header card. */
   .actions {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--s-2);
     align-items: center;
+    justify-content: flex-end;
   }
   /* Non-fatal error banner — a failed rename has to be visible,
      otherwise the dialog closes and the header still shows the

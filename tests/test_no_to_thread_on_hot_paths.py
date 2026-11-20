@@ -37,7 +37,12 @@ BASELINE: dict[str, int] = {
     # scroll, a delete) is rare enough that blocking the event loop
     # for it does not matter.
     "admin_orphans.py": 0,
-    "albums.py": 15,
+    # 16: the album duplicate is the 16th to_thread in this router —
+    # one hop wrapping the copy (a read of the source album, the
+    # insert of the copy, and the membership copy). It is a user
+    # action on a SQLite write, so it must not run on the event
+    # loop; every other album route hops the same way.
+    "albums.py": 16,
     "collections.py": 0,
     "centroids.py": 0,
     "centroids_list.py": 0,

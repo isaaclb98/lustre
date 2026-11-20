@@ -361,3 +361,64 @@ describe('search endpoint URL builder', () => {
     expect(captured.url).not.toContain('/api/centroids/');
   });
 });
+/**
+ * The album duplicate. The endpoint takes no body — the backend
+ * derives the copy's name, because album names are UNIQUE and the
+ * copy needs a name of its own ("<name> (copy)", "<name> (copy 2)").
+ * The response is the new album, so the caller can navigate to it.
+ */
+describe('duplicateAlbum', () => {
+  const summary = {
+    id: 42,
+    name: 'studio (copy)',
+    description: 'natural light only',
+    cover_favorite_id: '',
+    first_member_id: 'p1',
+    member_count: 2,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z'
+  };
+
+  let captured: any;
+  beforeEach(() => {
+    captured = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: any, init: any) => {
+        captured = { url: String(_url), init };
+        return new Response(JSON.stringify(summary), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        });
+      })
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('POSTs to the album duplicate endpoint', async () => {
+    const { duplicateAlbum } = await import('./endpoints');
+    await duplicateAlbum(7);
+    expect(captured.url).toBe('/api/albums/7/duplicate');
+    expect(captured.init?.method).toBe('POST');
+  });
+
+  it('returns the new album so the caller can navigate to it', async () => {
+    const { duplicateAlbum } = await import('./endpoints');
+    const copy = await duplicateAlbum(7);
+    expect(copy.id).toBe(42);
+    expect(copy.name).toBe('studio (copy)');
+    expect(copy.member_count).toBe(2);
+  });
+
+  it('sends no body — the backend names the copy itself', async () => {
+    const { duplicateAlbum } = await import('./endpoints');
+    await duplicateAlbum(7);
+    // A body would be read as an album name override; the contract
+    // is deliberately body-less.
+    const body = captured.init?.body;
+    expect(body === undefined || body === null || body === '').toBe(true);
+  });
+});
+

@@ -34,6 +34,24 @@ _COUNT_CACHE_TTL_S = 10.0
 
 DEFAULT_INDEX_DB_PATH = "./data/images.db"
 
+# The album summary projection: the album row, its member count, and
+# the member whose photo leads the album card. Shared by
+# `list_albums` and `duplicate_album` so the two never drift on the
+# shape they return.
+_ALBUM_SUMMARY_SELECT = """
+    SELECT a.id, a.name, a.description, a.cover_favorite_id,
+           a.created_at, a.updated_at,
+           (SELECT COUNT(*) FROM album_memberships m
+            WHERE m.album_id = a.id) AS member_count,
+           COALESCE(
+             (SELECT m.favorite_id FROM album_memberships m
+              WHERE m.album_id = a.id
+              ORDER BY m.added_at DESC, m.favorite_id DESC LIMIT 1),
+             ''
+           ) AS first_member_id
+    FROM albums a
+"""
+
 
 class ImageNotInCacheError(KeyError):
     """Raised when user state is requested for a photo missing from the cache."""
@@ -1490,6 +1508,89 @@ class IndexDB:
             raise RuntimeError("sqlite INSERT did not return lastrowid")
         return int(cur.lastrowid)
 
+    def duplicate_album(self, album_id: int) -> dict[str, Any] | None:
+        """Copy an album and its members into a new album.
+
+        Returns the new album's summary row, or None when the source
+        album does not exist.
+
+        `albums.name` is UNIQUE, so the copy cannot keep the source's
+        name: it gets "<name> (copy)", then "<name> (copy 2)",
+        "<name> (copy 3)" and so on until the name is free.
+
+        The description and the cover are carried over, and every
+        membership row is copied with its original `added_at` — the
+        duplicate is the same curation, not an empty shell that
+        happens to share a name.
+
+        Both inserts share one transaction: a copy with no members
+        (or a member with no album) would be a half-made album.
+        """
+        with self._lock:
+            source = self._conn.execute(
+                """
+                SELECT name, description, cover_favorite_id
+                FROM albums WHERE id = ?
+                """,
+                (album_id,),
+            ).fetchone()
+            if source is None:
+                return None
+            name = self._free_album_name(source["name"])
+            now = _utc_now()
+            try:
+                cur = self._conn.execute(
+                    """
+                    INSERT INTO albums
+                      (name, description, cover_favorite_id,
+                       created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        name,
+                        source["description"] or "",
+                        source["cover_favorite_id"] or "",
+                        now,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError as e:
+                raise ValueError(f"album name already exists: {name!r}") from e
+            if cur.lastrowid is None:
+                raise RuntimeError("sqlite INSERT did not return lastrowid")
+            new_id = int(cur.lastrowid)
+            self._conn.execute(
+                """
+                INSERT INTO album_memberships (album_id, favorite_id, added_at)
+                SELECT ?, favorite_id, added_at
+                FROM album_memberships WHERE album_id = ?
+                """,
+                (new_id, album_id),
+            )
+            row = self._conn.execute(
+                _ALBUM_SUMMARY_SELECT + " WHERE a.id = ?",
+                (new_id,),
+            ).fetchone()
+            self._conn.commit()
+        return dict(row) if row else None
+
+    def _free_album_name(self, base: str) -> str:
+        """Return an album name derived from `base` that is not taken.
+
+        "<base> (copy)" first, then "<base> (copy 2)", "<base> (copy
+        3)". The caller must hold `self._lock` — the check and the
+        insert that follows it have to be atomic against the UNIQUE
+        constraint on `albums.name`.
+        """
+        candidate = f"{base} (copy)"
+        n = 1
+        while self._conn.execute(
+            "SELECT 1 FROM albums WHERE name = ?", (candidate,),
+        ).fetchone() is not None:
+            n += 1
+            candidate = f"{base} (copy {n})"
+        return candidate
+
     def rename_album(
         self, album_id: int, name: str, description: str | None = None,
     ) -> bool:
@@ -1582,20 +1683,7 @@ class IndexDB:
         """
         with self._lock:
             rows = self._conn.execute(
-                """
-                SELECT a.id, a.name, a.description, a.cover_favorite_id,
-                       a.created_at, a.updated_at,
-                       (SELECT COUNT(*) FROM album_memberships m
-                        WHERE m.album_id = a.id) AS member_count,
-                       COALESCE(
-                         (SELECT m.favorite_id FROM album_memberships m
-                          WHERE m.album_id = a.id
-                          ORDER BY m.added_at DESC, m.favorite_id DESC LIMIT 1),
-                         ''
-                       ) AS first_member_id
-                FROM albums a
-                ORDER BY a.name ASC
-                """
+                _ALBUM_SUMMARY_SELECT + " ORDER BY a.name ASC"
             ).fetchall()
         return [dict(r) for r in rows]
 
