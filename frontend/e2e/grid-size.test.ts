@@ -270,13 +270,13 @@ test.describe('Grid size preference', () => {
     // tick or two after the route mounts. Reading them once catches
     // the empty pre-publish value; POLL for them instead.
     //
-    // Medium config: 192 in the square grid, 240 in masonry (a
+    // Medium config: 180 in the square grid, 240 in masonry (a
     // masonry tile is not cropped to a square, so the ladder starts
     // one rung higher). There is no gutter in any theme.
     const expected = await page.evaluate(() => {
       const masonry =
         document.documentElement.getAttribute('data-masonry') === '1';
-      const tile = masonry ? '240px' : '192px';
+      const tile = masonry ? '240px' : '180px';
       return `${tile} / 0px`;
     });
     await expect

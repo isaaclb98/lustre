@@ -91,6 +91,22 @@ describe('the masonry ladder', () => {
     }
   });
 
+  it('gives every rung of BOTH ladders the same 1440px row', () => {
+    // This is the promise that was broken: the middle rung was 192,
+    // and 8 x 192 = 1536 — so the "medium" (square) and "small"
+    // (masonry) views had a WIDER row than the other two.
+    //
+    // The row width is not a cosmetic number. The settings page,
+    // the page header, the album grid and the photo grid all size
+    // themselves to it, so a row that changed width with the size
+    // preference resized every piece of chrome keyed to it — the
+    // settings menu included, which is where it was noticed.
+    for (const size of SIZES) {
+      expect(rowWidthOf(GRID_SIZE_CONFIG[size])).toBe(1440);
+      expect(rowWidthOf(MASONRY_GRID_SIZE_CONFIG[size])).toBe(1440);
+    }
+  });
+
   it('gives the true large four columns at half again the width', () => {
     // The masonry's large rung is the square grid's large rung at
     // HALF AGAIN the width: 240 -> 360, and two thirds of the

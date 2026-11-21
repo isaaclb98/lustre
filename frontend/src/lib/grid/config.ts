@@ -8,8 +8,15 @@
  * row slicing, the request sizing — reads from here so those four
  * consumers can never drift apart.
  *
- * Tile size: 240/192/144 px. Large matches the Round-55 default;
+ * Tile size: 240/180/144 px. Large matches the Round-55 default;
  * medium and small pack progressively more photos per row.
+ *
+ * Every rung's row is 1440px wide: 6x240, 8x180, 10x144. That is
+ * the ladder's other promise (see below), and it is why the middle
+ * rung is 180 and not 192 — 192x8 is 1536, which would make the
+ * row a different width from the other two. A row that changed
+ * width with the size preference resized every piece of chrome
+ * keyed to it, including the settings page's own width.
  *
  * There is NO GUTTER. The grid's photos touch, edge to edge, the
  * way the presentation wall's do — that is now the only rule, so
@@ -40,7 +47,7 @@ export interface GridSizeConfig {
 
 export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
   large: { tile: 240, maxCols: 6, rows: 4 },
-  medium: { tile: 192, maxCols: 8, rows: 4 },
+  medium: { tile: 180, maxCols: 8, rows: 4 },
   small: { tile: 144, maxCols: 10, rows: 4 }
 };
 
@@ -59,7 +66,7 @@ export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
  *
  * The masonry ladder therefore starts one rung higher: the 240px
  * the square grid calls "large" is masonry's "medium", and the
- * square grid's "medium" (192) is masonry's "small". Masonry's
+ * square grid's "medium" (180) is masonry's "small". Masonry's
  * "large" is a rung above both — 360px, four columns.
  *
  * Why 360 and four columns: the ladder's other promise is that
@@ -67,11 +74,16 @@ export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
  * not sprawl across a wide monitor. The square grid's large row is
  * 6 x 240 = 1440px. Masonry's large row is 4 x 360 = 1440px —
  * the same width, two thirds of the columns, half again the photo.
+ *
+ * That 1440px row is why the masonry's small rung is 180 and not
+ * 192: 8x192 is 1536, so a 192 tile would make the SMALL view
+ * wider than the large one — the opposite of what a denser view
+ * should do. Every rung in both ladders is now 1440px.
  */
 export const MASONRY_GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
   large: { tile: 360, maxCols: 4, rows: 4 },
   medium: { tile: 240, maxCols: 6, rows: 4 },
-  small: { tile: 192, maxCols: 8, rows: 4 }
+  small: { tile: 180, maxCols: 8, rows: 4 }
 };
 
 /**
