@@ -181,6 +181,17 @@ class RadioEmbedder:
             groups.setdefault(tuple(tensor.shape[-2:]), []).append(idx)
 
         out: list[list[float] | None] = [None] * len(tensors)
+        log_vram = os.environ.get("LOG_EMBED_VRAM", "0").lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        if log_vram and self._device == "cuda":
+            from contextlib import suppress
+
+            with suppress(Exception):
+                torch.cuda.reset_peak_memory_stats()
         for indices in groups.values():
             batch = torch.stack([tensors[i] for i in indices]).to(self._device)
             with torch.no_grad():
@@ -193,6 +204,23 @@ class RadioEmbedder:
             values = summary.cpu().tolist()
             for slot, vector in zip(indices, values, strict=True):
                 out[slot] = vector
+        if log_vram and self._device == "cuda":
+            from contextlib import suppress as _suppress
+
+            with _suppress(Exception):
+                import sys as _sys
+
+                peak_mb = torch.cuda.max_memory_allocated() / (1024 * 1024)
+                # The peak over the WHOLE call, not one group: the
+                # groups are per-shape, so a single group's peak
+                # would under-report what the card actually held.
+                print(
+                    f"[embed_vram] photos={len(images)} groups={len(groups)} "
+                    f"device={self._device} peak={peak_mb:.0f}MB "
+                    f"resolution={self._long_edge}",
+                    file=_sys.stderr,
+                    flush=True,
+                )
         return [v for v in out if v is not None]
 
     # -- Internals ---------------------------------------------------------
