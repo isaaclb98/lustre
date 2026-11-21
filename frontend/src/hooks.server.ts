@@ -18,6 +18,7 @@
  * reads — so one variable drives both processes and the dev server
  * cannot disagree with the backend about which theme is live.
  */
+import { createHash } from 'node:crypto';
 import { dev } from '$app/environment';
 import type { Handle } from '@sveltejs/kit';
 import { DEFAULT_THEME, THEME_ATTRIBUTE } from '$lib/theme';
@@ -84,9 +85,19 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   );
 
+  // The stamped body is LONGER than the original — the markers are
+  // added to it — so the original's content-length would cut the
+  // response off mid-document, and the original's ETag would let a
+  // browser revalidate against bytes that no longer exist (a 304
+  // serves the STALE body, which is the one that was truncated).
+  // Recompute both.
+  const headers = new Headers(response.headers);
+  headers.delete('content-length');
+  headers.set('etag', `"${createHash('sha1').update(stamped).digest('hex')}"`);
+
   return new Response(stamped, {
     status: response.status,
     statusText: response.statusText,
-    headers: response.headers
+    headers
   });
 };
