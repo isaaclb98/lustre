@@ -140,6 +140,11 @@ jobs:
           # Without this, the dev_server only exposes the API —
           # playwright tests would 404 on every page load.
           FRONTEND_DIR: ${{ github.workspace }}/frontend/build
+          # The DISPLAY thumbnail's smaller variants — the dense
+          # view's assets. The e2e server publishes them on the
+          # shell and the srcset lists them, so the browser picks
+          # the smallest that covers the tile.
+          THUMBNAIL_VARIANT_SIZES: "240,480"
         run: |
           set -euo pipefail
           mkdir -p .dev-test-logs

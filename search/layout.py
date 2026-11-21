@@ -23,8 +23,10 @@ import re
 __all__ = [
     "MASONRY_ATTRIBUTE",
     "THUMBNAIL_SIZE_ATTRIBUTE",
+    "THUMBNAIL_VARIANTS_ATTRIBUTE",
     "inject_masonry",
     "inject_thumbnail_size",
+    "inject_thumbnail_variants",
 ]
 
 # The attribute the layout mode travels on. Must match the frontend's
@@ -57,6 +59,43 @@ THUMBNAIL_SIZE_ATTRIBUTE = "data-thumbnail-size"
 _DATA_THUMBNAIL_SIZE_ATTR = re.compile(
     rb"\s+data-thumbnail-size=[\"'][^\"']*[\"']"
 )
+
+# The attribute the DISPLAY thumbnail's smaller variants travel on.
+#
+# The frontend builds a `srcset` so the browser fetches the smallest
+# asset that covers the tile it is about to paint. That needs the
+# ladder's sizes, and they are a deployment-level number (the
+# indexer generates them, the router serves them), so they ride
+# the shell like the theme and the layout mode do.
+#
+# The value is a comma-separated list of long edges, e.g.
+# "192,384". The canonical (data-thumbnail-size) is NOT in the list:
+# it is the fallback the router serves when a variant is missing.
+THUMBNAIL_VARIANTS_ATTRIBUTE = "data-thumbnail-variants"
+
+_DATA_THUMBNAIL_VARIANTS_ATTR = re.compile(
+    rb"\s+data-thumbnail-variants=[\"'][^\"']*[\"']"
+)
+
+
+def inject_thumbnail_variants(html: bytes, sizes: tuple[int, ...]) -> bytes:
+    """Return `html` with the thumbnail's variant ladder stamped onto <html>.
+
+    Idempotent: an existing data-thumbnail-variants attribute is
+    replaced rather than duplicated. An empty ladder stamps nothing
+    — the frontend then builds a single-entry srcset, which is what
+    a deployment without variants wants.
+    """
+    if not sizes:
+        return html
+
+    def replace(match: re.Match[bytes]) -> bytes:
+        attrs = _DATA_THUMBNAIL_VARIANTS_ATTR.sub(b"", match.group(1) or b"")
+        value = ",".join(str(int(s)) for s in sorted(sizes))
+        attr = f' {THUMBNAIL_VARIANTS_ATTRIBUTE}="{value}"'.encode()
+        return b"<html" + attrs + attr + b">"
+
+    return _HTML_TAG.sub(replace, html, count=1)
 
 
 def inject_thumbnail_size(html: bytes, size: int) -> bytes:

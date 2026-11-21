@@ -20,7 +20,6 @@ from indexer.thumbnails import (
     THUMBNAIL_DIR,
     THUMBNAIL_QUALITY,
     THUMBNAIL_SIZE,
-    THUMBNAIL_SIZES,
     CHROMA_SUBSAMPLING,
     _HAS_PYVIPS,
     _PIL_FORCE,
@@ -382,40 +381,129 @@ class TestSizedThumbnailPath:
         assert a != b
 
 
+class TestThumbnailVariantLadder:
+    """The ladder of smaller display variants.
+
+    It is the DENSE view's assets. A 180px tile does not need the
+    canonical bitmap, and handing it one wastes bandwidth and decode
+    time for pixels the browser scales straight back down.
+    """
+
+    def test_empty_by_default(self):
+        from indexer.thumbnails import parse_variant_sizes
+
+        assert parse_variant_sizes("") == ()
+
+    def test_parsed_from_a_comma_separated_list(self):
+        from indexer.thumbnails import parse_variant_sizes
+
+        assert parse_variant_sizes("192,384") == (192, 384)
+
+    def test_junk_entries_are_ignored(self):
+        """A typo in a deployment's environment should cost it its
+        smaller variants, not its whole thumbnail pipeline."""
+        from indexer.thumbnails import parse_variant_sizes
+
+        assert parse_variant_sizes("192,,bogus,384") == (192, 384)
+
+    def test_sorted_and_deduplicated(self):
+        from indexer.thumbnails import parse_variant_sizes
+
+        assert parse_variant_sizes("384,192,384") == (192, 384)
+
+    def test_the_ladder_is_independent_of_the_canonical(self):
+        """The display size and the variant ladder are separate
+        numbers: raising the canonical does not change which smaller
+        variants exist, and vice versa.
+
+        This is the whole point of the split — the canonical's size
+        is a DISPLAY decision, and the ladder is which smaller
+        assets the dense view asks for.
+        """
+        from indexer.thumbnails import parse_variant_sizes
+
+        assert parse_variant_sizes("192") == (192,)
+        # A variant at or above the canonical is skipped at WRITE
+        # time (it would be an upscale), not here — so the ladder
+        # itself stays a plain list of sizes.
+        assert parse_variant_sizes("192,640") == (192, 640)
+
+
 class TestComputeThumbnailWritesSizedVariants:
-    """compute_thumbnail() should write the downscaled siblings alongside
-    the canonical 256px file so the frontend srcset can pick the smallest
-    variant that fits the rendered tile."""
+    """compute_thumbnail() writes the downscaled siblings alongside the
+    canonical file so the frontend srcset can pick the smallest variant
+    that fits the rendered tile.
+
+    The variants are the DENSE view's assets: a 180px tile does not
+    need the canonical 640px bitmap, and handing it one wastes both
+    bandwidth and decode time for pixels the browser scales back
+    down.
+
+    The ladder is empty by default (a deployment opts in), so these
+    tests patch it in.
+    """
+
+    LADDER = (192, 384)
+
+    def _install(self, tmp_path, monkeypatch):
+        """Point the thumbnail writer at a temp dir, with a canonical
+        above every rung of the ladder.
+
+        A variant at or above the canonical is skipped (it would be
+        an upscale), so the canonical is raised to clear the ladder.
+        """
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_SIZE", 512)
+        monkeypatch.setattr(
+            "indexer.thumbnails.THUMBNAIL_VARIANT_SIZES", self.LADDER
+        )
 
     def test_writes_all_sized_variants(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
+        self._install(tmp_path, monkeypatch)
         img = Image.new("RGB", (1024, 1024), color="purple")
         compute_thumbnail(img, "varsize1")
-        for w in THUMBNAIL_SIZES:
+        for w in self.LADDER:
             assert sized_thumbnail_path("varsize1", w).exists(), f"missing w={w}"
 
-    def test_sized_variants_are_smaller_than_canonical(self, tmp_path, monkeypatch):
+    def test_sized_variants_keep_the_native_aspect_ratio(self, tmp_path, monkeypatch):
+        self._install(tmp_path, monkeypatch)
+        """A variant is the SAME photo at a smaller size — never a
+        square crop.
+
+        The canonical is native-aspect, so a square variant would
+        mean the same photo is cropped in the small asset and whole
+        in the large one, and the masonry's no-crop promise would
+        hold only for the tiles that happened to get the canonical.
+        """
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            "indexer.thumbnails.THUMBNAIL_VARIANT_SIZES", self.LADDER
+        )
+        img = Image.new("RGB", (900, 1200), color="orange")
+        compute_thumbnail(img, "aspectvar")
+        for w in self.LADDER:
+            with Image.open(sized_thumbnail_path("aspectvar", w)) as v:
+                assert v.size == (int(w * 900 / 1200), w)
+
+    def test_sized_variants_are_smaller_than_canonical(self, tmp_path, monkeypatch):
+        self._install(tmp_path, monkeypatch)
         img = Image.new("RGB", (1024, 1024), color="orange")
         compute_thumbnail(img, "sizechk1")
         canonical = thumbnail_path("sizechk1")
         with Image.open(canonical) as t:
             canonical_size = t.size[0]
-        for w in THUMBNAIL_SIZES:
+        for w in self.LADDER:
             assert w < canonical_size, f"variant w={w} should be < canonical {canonical_size}"
             with Image.open(sized_thumbnail_path("sizechk1", w)) as v:
-                assert v.size == (w, w)
+                assert max(v.size) == w
 
-    def test_sized_variants_are_skipped_if_larger_than_source(self, tmp_path, monkeypatch):
-        """If the canonical 256px source is itself smaller than a sized
-        variant, we'd be upscaling — that's worse than the canonical
-        file. Skip those variants and the endpoint's 404-fallback serves
-        the canonical instead."""
+    def test_sized_variants_are_skipped_if_larger_than_canonical(self, tmp_path, monkeypatch):
+        """A variant at or above the canonical would be an upscale —
+        worse than serving the canonical file. The endpoint's
+        404-fallback serves the canonical instead."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
-        # Patch the variant list to include an "impossible" 999-px variant
-        # alongside a small one, then check only the small one is written.
         monkeypatch.setattr(
-            "indexer.thumbnails.THUMBNAIL_SIZES", (200, 999)
+            "indexer.thumbnails.THUMBNAIL_VARIANT_SIZES", (200, 999)
         )
         img = Image.new("RGB", (1024, 1024), color="blue")
         compute_thumbnail(img, "skipbig1")

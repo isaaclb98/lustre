@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_THUMBNAIL_SIZE,
   masonryFromAttribute,
+  parseThumbnailVariants,
   thumbnailWidthFor
 } from './layout';
 
@@ -21,6 +22,27 @@ describe('masonryFromAttribute', () => {
     expect(masonryFromAttribute('')).toBe(false);
     expect(masonryFromAttribute('0')).toBe(false);
     expect(masonryFromAttribute('false')).toBe(false);
+  });
+});
+
+describe('parseThumbnailVariants', () => {
+  it('is empty when the deployment publishes no ladder', () => {
+    // No variants means a single-entry srcset — the canonical — which
+    // is what a deployment that generates no variants wants.
+    expect(parseThumbnailVariants(null)).toEqual([]);
+    expect(parseThumbnailVariants('')).toEqual([]);
+  });
+
+  it('reads a comma-separated ladder of long edges', () => {
+    expect(parseThumbnailVariants('192,384')).toEqual([192, 384]);
+  });
+
+  it('is sorted, so the srcset lists the smallest first', () => {
+    expect(parseThumbnailVariants('384,192')).toEqual([192, 384]);
+  });
+
+  it('ignores junk rather than breaking the ladder', () => {
+    expect(parseThumbnailVariants('192,,bogus,384')).toEqual([192, 384]);
   });
 });
 

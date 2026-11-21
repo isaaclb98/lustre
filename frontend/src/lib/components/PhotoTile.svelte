@@ -17,7 +17,7 @@
   import { onMount } from 'svelte';
   import { thumbUrl, photoUrl } from '../api/endpoints';
   import { blurhashToDataUrl } from './blurhash-bg';
-  import { thumbnailWidthFor } from '$lib/layout';
+  import { thumbnailWidthFor, thumbnailVariants } from '$lib/layout';
   import Icon from './Icon.svelte';
 
   type Props = {
@@ -264,23 +264,25 @@
     e.preventDefault();
     onContextMenu?.(pointId, e);
   }
-  // Best-effort tile-width hint for the first-screen srcset. We can't
-  // measure the tile itself from here (no DOM ref on the wrapping
-  // grid cell), so we approximate from window.innerWidth divided by
-  // the auto-fill column target. Falls back to 384 on SSR / dev
-  // edge cases. Cached per-tile via $derived so we only recompute
-  // when the breakpoint flips.
-  //
-  // Post the model-variant migration plan: the only thumbnail variant
-  // served is 384×384 (matches so400m model input resolution). So
-  // `eagerSrcWidth` and `eagerSrcset` reflect that single asset —
-  // no srcset ladder needed, just a single src.
-  function tileSizeGuess(): number | undefined {
+  /**
+   * The tile's rendered width, for the `sizes` attribute.
+   *
+   * The grid publishes its track width as `--grid-tile-size` on
+   * :root (see PhotoGrid), and that is the number the browser will
+   * actually paint. Reading it makes `sizes` EXACT — the browser
+   * then picks the right asset for the tile it is about to draw,
+   * rather than one chosen by a heuristic that drifts from the
+   * grid's real geometry.
+   *
+   * The masonry does not even need this: its tile width is a fixed
+   * ladder value, and the caller passes it in.
+   */
+  function wallTileGuess(): number | undefined {
     if (typeof window === 'undefined') return undefined;
     const w = window.innerWidth;
-    // Mirror PhotoGrid's `auto-fill minmax(180px, 1fr)` heuristic.
-    const cols = Math.max(1, Math.floor((Math.min(w, 1600) + 20) / (180 + 20)));
-    return Math.floor((Math.min(w, 1600) - (cols - 1) * 20) / cols);
+    const t = tileWidth ?? 240;
+    const cols = Math.max(1, Math.round(w / t));
+    return Math.floor(w / cols);
   }
   // True for the first three tiles of the first visible row. These
   // are the tiles a user is staring at on first paint — we want them
@@ -312,9 +314,36 @@
   let eagerSrcWidth = $derived(
     thumbnailWidthFor(thumbnailSize, photoWidth, photoHeight)
   );
-  let eagerSrcset = $derived(
-    `${thumbUrl(pointId, thumbnailSize)} ${eagerSrcWidth}w`
-  );
+
+  /**
+   * The srcset is a LADDER, not a single entry.
+   *
+   * The deployment's canonical thumbnail is sized for the LARGEST
+   * tile (360px in the masonry). A dense view renders 180px tiles,
+   * and handing each of them the canonical is pure waste: the
+   * browser downloads three times the pixels it needs and then
+   * scales the image back down.
+   *
+   * So the deployment publishes a ladder of smaller variants (see
+   * `thumbnailVariants`), and each one is advertised with the
+   * width it REALLY is for this photo — the same aspect-ratio
+   * correction the canonical gets, because a portrait's variant is
+   * narrower than its long edge too. Advertising the long edge
+   * would tell the browser the image is wider than it is, and it
+   * would then pick a lower density than the one it needs.
+   *
+   * The canonical is last: it is the fallback the router serves
+   * when a variant is absent, and the browser walks the list
+   * upward, so the smallest asset that covers the tile wins.
+   */
+  let eagerSrcset = $derived.by(() => {
+    const entries = $thumbnailVariants.map((variant) => {
+      const width = thumbnailWidthFor(variant, photoWidth, photoHeight);
+      return `${thumbUrl(pointId, variant)} ${width}w`;
+    });
+    entries.push(`${thumbUrl(pointId, thumbnailSize)} ${eagerSrcWidth}w`);
+    return entries.join(', ');
+  });
 
   /**
    * Where the photo comes from at the size the caller asked for.
@@ -340,9 +369,7 @@
   let fullSrc = $derived(
     wantsFullWidth && typeof srcWidth === 'number'
       ? photoUrl(pointId, srcWidth)
-      : isEager
-        ? thumbUrl(pointId, eagerSrcWidth)
-        : thumbUrl(pointId, thumbnailSize)
+      : thumbUrl(pointId, thumbnailSize)
   );
   // Sizes attribute must reflect the actual rendered tile width
   // so the browser picks the right srcset entry. Without this,
@@ -362,29 +389,29 @@
   // renders — so the guess below, which mirrors the uniform grid's
   // heuristic, would understate it.
   let eagerSizes = $derived.by(() => {
-    // The masonry's tile width is EXACT and does not depend on the
-    // viewport: the grid drops COLUMNS on a narrow screen, it never
-    // shrinks the tiles. So the masonry advertises one width, not
-    // the uniform grid's breakpoint ladder.
+    // The tile width is EXACT in both grids, and it does not depend
+    // on the viewport.
     //
-    // That distinction matters: the ladder's 120px breakpoint would
-    // advertise a 288px masonry tile as 120px on a phone, and the
-    // browser would then pick its lowest-density source for a tile
-    // that is nearly three times wider — under-fetching exactly
-    // where the pixels are scarcest.
-    if (masonry) return `${tileWidth}px`;
+    // The masonry places each tile at the ladder's fixed width. The
+    // uniform grid's tracks are fixed too — `repeat(auto-fit,
+    // <tile>px)` collapses EMPTY tracks and never resizes a filled
+    // one, so a tile is the same width at every viewport. What
+    // changes with the viewport is the COLUMN COUNT: a narrow
+    // screen shows fewer columns, it does not shrink the photos.
+    //
+    // So both grids advertise one width, and the browser picks the
+    // variant that covers it at the device's DPR. That matters in
+    // the DENSE view: a 144px tile advertised as 240px makes the
+    // browser fetch a 240w source for a 144px slot — two thirds
+    // more pixels than the tile can show.
+    //
+    // The presentation wall is the exception: its tracks are 1fr,
+    // so its tiles stretch to fill the screen and the width has to
+    // be derived from the viewport.
+    if (!wall) return `${tileWidth}px`;
 
-    // The uniform grid's tile width follows the viewport (the CSS
-    // grid's auto-fit tracks grow and shrink), so the guess
-    // mirrors that heuristic.
-    const w = tileSizeGuess() ?? 384;
-    // Pick the smallest variant >= w so the browser has enough
-    // pixels to render crisply at this DPR.
-    const variant = w <= 120 ? 120 : w <= 180 ? 180 : w <= 240 ? 240 : 384;
-    // Re-derive the breakpoint from `w`: below 600px viewport the
-    // tiles are ~120-180px, above that they're ~240px, above
-    // 1200px they grow further (capped at our thumbnail variant).
-    return `(max-width: 600px) ${Math.min(variant, 120)}px, (max-width: 1200px) ${Math.min(variant, 180)}px, ${variant}px`;
+    const w = wallTileGuess() ?? tileWidth;
+    return `${w}px`;
   });
 </script>
 

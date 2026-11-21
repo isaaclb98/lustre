@@ -1980,7 +1980,11 @@ def create_app(
             and switches palette and grid geometry accordingly.
             """
             return shell_response(
-                path, _cfg.theme, _cfg.masonry, _cfg.thumbnail_size
+                path,
+                _cfg.theme,
+                _cfg.masonry,
+                _cfg.thumbnail_size,
+                _cfg.thumbnail_variants,
             )
 
         # SPA fallback — every non-API, non-asset path returns

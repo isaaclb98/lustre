@@ -86,6 +86,46 @@ THUMBNAIL_DIR = os.environ.get("THUMBNAIL_DIR", "/app/data/thumbnails")
 # slightly SMALLER for non-square sources.
 THUMBNAIL_SIZE: int = int(os.environ.get("THUMBNAIL_SIZE", "384"))
 
+# The DISPLAY thumbnail's smaller variants, as long edges.
+#
+# These are for a dense view mode: the grid renders a tile at a
+# fixed CSS width, and a tile of 192 CSS px needs a much smaller
+# asset than a tile of 360. Serving the 640 canonical to a 192px
+# tile wastes the bandwidth AND the decode cost for pixels the
+# browser scales straight back down.
+#
+# Each variant is the SAME native-aspect photo at a smaller long
+# edge, written as a `w{size}.webp` sibling of the canonical. The
+# thumbnail router serves `?w={size}` from that sibling, and falls
+# back to the canonical when it is absent — so a variant that was
+# never generated is a slower response, never a broken image.
+#
+# Empty by default: a deployment opts in. The values are the long
+# edges, and a variant at or above the canonical is skipped (it
+# would be an upscale).
+def parse_variant_sizes(raw: str) -> tuple[int, ...]:
+    """Parse the variant ladder from its environment value.
+
+    A comma-separated list of long edges. Entries that are not
+    positive integers are ignored rather than raising: a typo in a
+    deployment's environment should cost the deployment its smaller
+    variants, not its whole thumbnail pipeline.
+
+    The result is sorted and de-duplicated, so the ladder is a
+    strict sequence however the deployment spelled it.
+    """
+    sizes = {
+        int(part)
+        for part in raw.split(",")
+        if part.strip().isdigit() and int(part) > 0
+    }
+    return tuple(sorted(sizes))
+
+
+THUMBNAIL_VARIANT_SIZES: tuple[int, ...] = parse_variant_sizes(
+    os.environ.get("THUMBNAIL_VARIANT_SIZES", "")
+)
+
 
 def thumbnail_target_size(
     width: int, height: int, size: int | None = None
@@ -133,12 +173,6 @@ THUMBNAIL_QUALITY = 80
 # already-saturated content (skin tones and low-saturation
 # backgrounds are unaffected).
 CHROMA_SUBSAMPLING = "4:4:4"
-# Sized variants the frontend srcset advertises. Post-migration
-# this is empty: a single 384px asset covers the common rendering
-# sizes (up to 192 CSS px at 2× DPR = 384 px at the bitmap level)
-# without the storage overhead of three variants. The frontend
-# requests `?w=384` and the router serves the canonical 384px file.
-THUMBNAIL_SIZES: tuple[int, ...] = ()
 
 
 # Resize in linear-light sRGB, not gamma-encoded sRGB. PIL's
@@ -364,13 +398,19 @@ def _compute_thumbnail_pyvips(path: Path, point_id: str) -> Path | None:
         )
 
         # Sized variants. Same pipeline at smaller dimensions.
-        for size in THUMBNAIL_SIZES:
+        for size in THUMBNAIL_VARIANT_SIZES:
             if size >= THUMBNAIL_SIZE:
                 continue
+            # NO crop: the variant keeps the source's aspect ratio,
+            # exactly like the canonical. `crop="centre"` here would
+            # make the variant a SQUARE while the canonical is
+            # native-aspect — so the same photo would be cropped in
+            # the small asset and whole in the large one, and the
+            # masonry's no-crop promise would hold only for the
+            # tiles that happened to get the canonical.
             variant = img.thumbnail_image(
                 size,
                 height=size,
-                crop="centre",
             )
             variant_path = sized_thumbnail_path(point_id, size)
             variant.write_to_file(
@@ -476,13 +516,13 @@ def _compute_thumbnail_pil(image: Image.Image, point_id: str) -> Path | None:
         # first; siblings are extra variants the browser may pick.
         #
         # All advertised sizes are smaller than the canonical edge
-        # (we control THUMBNAIL_SIZES), so the loop below always runs
+        # (we control THUMBNAIL_VARIANT_SIZES), so the loop below always runs
         # at least once. If a future maintainer adds a variant that's
         # >= the canonical, we'd be upscaling — which is worse than
         # serving the canonical file. The endpoint's 404-fallback to
         # the canonical handles that automatically; we skip the write
         # to avoid garbage files on disk.
-        for size in THUMBNAIL_SIZES:
+        for size in THUMBNAIL_VARIANT_SIZES:
             if size >= THUMBNAIL_SIZE:
                 continue
             # Same linear-light resize as the canonical thumb so
@@ -496,7 +536,7 @@ def _compute_thumbnail_pil(image: Image.Image, point_id: str) -> Path | None:
                 variant = thumb.resize(variant_target, Image.Resampling.LANCZOS)
             variant_path = sized_thumbnail_path(point_id, size)
             # Same 4:4:4 chroma + sRGB profile as the canonical;
-            # sized variants are an edge case (THUMBNAIL_SIZES is
+            # sized variants are an edge case (the ladder is
             # currently empty) but the encode should match the
             # canonical for consistent color rendering across
             # the srcset.

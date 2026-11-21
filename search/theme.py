@@ -31,7 +31,11 @@ from pathlib import Path
 
 from fastapi.responses import Response
 
-from search.layout import inject_masonry, inject_thumbnail_size
+from search.layout import (
+    inject_masonry,
+    inject_thumbnail_size,
+    inject_thumbnail_variants,
+)
 
 __all__ = [
     "THEMES",
@@ -77,10 +81,16 @@ def inject_theme(html: bytes, theme: str) -> bytes:
 # Stamped shells, keyed by (path, mtime, size, theme, masonry,
 # thumbnail size). The shell is static for the life of a deployment,
 # so this is read and patched once, not once per request.
-_SHELL_CACHE: dict[tuple[str, int, int, str, bool, int], bytes] = {}
+_SHELL_CACHE: dict[tuple[str, int, int, str, bool, int, tuple[int, ...]], bytes] = {}
 
 
-def _shell_bytes(path: Path, theme: str, masonry: bool, thumbnail_size: int) -> bytes:
+def _shell_bytes(
+    path: Path,
+    theme: str,
+    masonry: bool,
+    thumbnail_size: int,
+    thumbnail_variants: tuple[int, ...] = (),
+) -> bytes:
     stat = path.stat()
     key = (
         str(path),
@@ -89,12 +99,16 @@ def _shell_bytes(path: Path, theme: str, masonry: bool, thumbnail_size: int) -> 
         theme,
         masonry,
         thumbnail_size,
+        thumbnail_variants,
     )
     cached = _SHELL_CACHE.get(key)
     if cached is None:
-        cached = inject_thumbnail_size(
-            inject_masonry(inject_theme(path.read_bytes(), theme), masonry),
-            thumbnail_size,
+        cached = inject_thumbnail_variants(
+            inject_thumbnail_size(
+                inject_masonry(inject_theme(path.read_bytes(), theme), masonry),
+                thumbnail_size,
+            ),
+            thumbnail_variants,
         )
         # One deployment serves one shell; a rebuilt shell must not
         # leave the previous one behind.
@@ -108,6 +122,7 @@ def shell_response(
     theme: str,
     masonry: bool = False,
     thumbnail_size: int = 384,
+    thumbnail_variants: tuple[int, ...] = (),
 ) -> Response:
     """Serve the SPA shell with the deployment's theme applied.
 
@@ -125,7 +140,7 @@ def shell_response(
     srcset that claims the wrong image width.
     """
     stat = path.stat()
-    body = _shell_bytes(path, theme, masonry, thumbnail_size)
+    body = _shell_bytes(path, theme, masonry, thumbnail_size, thumbnail_variants)
     etag = hashlib.md5(body).hexdigest()  # noqa: S324
     return Response(
         content=body,

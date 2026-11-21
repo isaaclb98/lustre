@@ -643,6 +643,7 @@ class Config:
     # actually is, and that is a deployment-level number (dev
     # renders 512, production 384).
     thumbnail_size: int = 384
+    thumbnail_variants: tuple[int, ...] = ()
 
 
 def _int(name: str, default: int) -> int:
@@ -854,6 +855,11 @@ def load() -> Config:
         theme=_theme("LUSTRE_THEME", "light"),
         masonry=_bool("LUSTRE_MASONRY", False),
         thumbnail_size=_int("THUMBNAIL_SIZE", 384),
+        thumbnail_variants=tuple(
+            int(part)
+            for part in _str("THUMBNAIL_VARIANT_SIZES", "").split(",")
+            if part.strip().isdigit()
+        ),
         test_mode=bool(
             os.environ.get("SEARCH_TEST_MODE")
             or os.environ.get("SEARCH_NO_MODEL")

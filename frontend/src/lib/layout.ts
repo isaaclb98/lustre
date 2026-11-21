@@ -74,6 +74,45 @@ export const THUMBNAIL_SIZE_ATTRIBUTE = 'data-thumbnail-size';
  */
 export const DEFAULT_THUMBNAIL_SIZE = 384;
 
+/**
+ * The attribute the backend stamps the DISPLAY thumbnail's smaller
+ * variants onto.
+ *
+ * These are the dense view's assets: a tile of 180 CSS px needs a
+ * far smaller bitmap than a tile of 360, and serving it the
+ * canonical wastes both bandwidth and decode time for pixels the
+ * browser scales straight back down.
+ *
+ * The value is a comma-separated list of long edges ("192,384").
+ */
+export const THUMBNAIL_VARIANTS_ATTRIBUTE = 'data-thumbnail-variants';
+
+/**
+ * The deployment's thumbnail variant ladder, read once at module
+ * load.
+ *
+ * Empty when the deployment generates no variants, and then the
+ * srcset is a single entry — the canonical — which is exactly what
+ * a deployment without variants wants.
+ */
+export function parseThumbnailVariants(raw: string | null | undefined): number[] {
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+}
+
+export function readThumbnailVariants(): number[] {
+  if (typeof document === 'undefined') return [];
+  return parseThumbnailVariants(
+    document.documentElement.getAttribute(THUMBNAIL_VARIANTS_ATTRIBUTE)
+  );
+}
+
+export const thumbnailVariants = readable(readThumbnailVariants());
+
 export function readThumbnailSize(): number {
   if (typeof document === 'undefined') return DEFAULT_THUMBNAIL_SIZE;
   const raw = document.documentElement.getAttribute(THUMBNAIL_SIZE_ATTRIBUTE);
