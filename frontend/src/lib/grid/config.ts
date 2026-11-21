@@ -60,14 +60,16 @@ export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
  * The masonry ladder therefore starts one rung higher: the 240px
  * the square grid calls "large" is masonry's "medium", and the
  * square grid's "medium" (192) is masonry's "small". Masonry's
- * "large" is a rung above both — 288px, five columns.
+ * "large" is a rung above both — 360px, four columns.
  *
- * The column cap keeps the row's width where the square grid keeps
- * it: a bigger tile means fewer columns, so the row still spans
- * ~1440px rather than sprawling across a wide monitor.
+ * Why 360 and four columns: the ladder's other promise is that
+ * the ROW keeps its width whatever the tile size, so the grid does
+ * not sprawl across a wide monitor. The square grid's large row is
+ * 6 x 240 = 1440px. Masonry's large row is 4 x 360 = 1440px —
+ * the same width, two thirds of the columns, half again the photo.
  */
 export const MASONRY_GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
-  large: { tile: 288, maxCols: 5, rows: 4 },
+  large: { tile: 360, maxCols: 4, rows: 4 },
   medium: { tile: 240, maxCols: 6, rows: 4 },
   small: { tile: 192, maxCols: 8, rows: 4 }
 };

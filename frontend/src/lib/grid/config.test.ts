@@ -91,6 +91,17 @@ describe('the masonry ladder', () => {
     }
   });
 
+  it('gives the true large four columns at half again the width', () => {
+    // The masonry's large rung is the square grid's large rung at
+    // HALF AGAIN the width: 240 -> 360, and two thirds of the
+    // columns, 6 -> 4. The row stays 1440px either way.
+    expect(MASONRY_GRID_SIZE_CONFIG.large.tile).toBe(360);
+    expect(MASONRY_GRID_SIZE_CONFIG.large.maxCols).toBe(4);
+    expect(rowWidthOf(MASONRY_GRID_SIZE_CONFIG.large)).toBe(
+      rowWidthOf(GRID_SIZE_CONFIG.large)
+    );
+  });
+
   it('is used by gridConfigFor when masonry is on', () => {
     for (const size of SIZES) {
       expect(gridConfigFor(size, true)).toEqual(
