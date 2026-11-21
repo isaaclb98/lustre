@@ -88,6 +88,17 @@
             ],
             "title": "Blurhash"
           },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -95,6 +106,17 @@
           "path": {
             "title": "Path",
             "type": "string"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
           }
         },
         "required": [

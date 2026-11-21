@@ -60,6 +60,13 @@ def build_albums_router(
     """Build the albums router with the live dependencies."""
     router = APIRouter()
 
+    def _maybe_int(v: Any) -> int | None:
+        try:
+            iv = int(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+        return iv if iv and iv > 0 else None
+
     @router.post("/api/albums", response_model=AlbumSummary)
     async def create_album(body: AlbumCreateRequest) -> AlbumSummary:
         try:
@@ -142,6 +149,10 @@ def build_albums_router(
                     path=str(row["path"]),
                     added_at=str(row["added_at"] or ""),
                     blurhash=row.get("blurhash") or None,
+                    # The photo's dimensions, so the grid can lay the
+                    # tile out at the photo's own aspect ratio.
+                    width=_maybe_int(row.get("width")),
+                    height=_maybe_int(row.get("height")),
                 )
                 for row in rows
             ],

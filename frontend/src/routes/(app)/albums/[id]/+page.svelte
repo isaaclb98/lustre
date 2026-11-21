@@ -35,6 +35,12 @@
     url?: string;
     blurhash?: string | null;
     is_favorite?: boolean;
+    // The photo's own dimensions. The masonry lays a tile out at the
+    // photo's aspect ratio, and it needs them to do that before the
+    // image arrives — without them every member falls back to a
+    // square and the album grid renders as a grid of squares.
+    width?: number | null;
+    height?: number | null;
   };
   type Item = {
     id: string;
@@ -42,6 +48,8 @@
     score_str?: string;
     blurhash?: string | null;
     is_favorite?: boolean;
+    width?: number | null;
+    height?: number | null;
   };
 
   // Photos per request — derived from the column count the grid
@@ -153,7 +161,9 @@
       id: m.point_id ?? m.id,
       path: m.path,
       blurhash: m.blurhash ?? null,
-      is_favorite: m.is_favorite ?? true
+      is_favorite: m.is_favorite ?? true,
+      width: m.width ?? null,
+      height: m.height ?? null
     }));
   }
 
