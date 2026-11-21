@@ -17,6 +17,7 @@ real model."
 from __future__ import annotations
 
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,17 @@ class VisionEncoder:
         self._pretrained = pretrained
         self.device = device
         self.test_mode = test_mode
+
+        # The embedders resolve their device from the DEVICE env var,
+        # and they are built once, lazily, on the first embed. An
+        # explicit device has to be authoritative: it used to be
+        # ignored, so an index run that asked for `--device cuda`
+        # embedded on the CPU and was ~20x slower than it should be.
+        if device and device != os.environ.get("DEVICE"):
+            logger.info(
+                "DEVICE=%s (was %r)", device, os.environ.get("DEVICE")
+            )
+            os.environ["DEVICE"] = device
 
         from lustre_kernel.registry import get as _registry_get
 
