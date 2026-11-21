@@ -551,9 +551,25 @@
       if (!layout) return;
       const rect = gridWrapper?.getBoundingClientRect();
       if (!rect) return;
-      const bottomOfGrid = rect.top + layout.height;
-      const viewportBottom = window.scrollY + window.innerHeight;
-      if (bottomOfGrid - viewportBottom < PRE_FETCH_AHEAD * window.innerHeight) {
+      // How much of the laid-out grid is still below the fold.
+      //
+      // `rect.top` is VIEWPORT-relative and `layout.height` is the
+      // grid's own height, so `rect.top + layout.height` is the
+      // grid's bottom in viewport coordinates. The viewport's own
+      // bottom is `window.innerHeight` in that same space — and the
+      // scroll terms cancel, because the grid's document offset
+      // (rect.top + scrollY) and the viewport's (scrollY +
+      // innerHeight) both carry the same scrollY.
+      //
+      // Comparing against `scrollY + innerHeight` instead would mix
+      // the two spaces: that understates the remaining gap by
+      // exactly the scroll distance, so the further down the page
+      // the user is, the sooner the next page is fetched. Measured
+      // at the bottom of a page: 3282px of gap reported against
+      // 5976px of actual gap — thirteen viewports of content left
+      // while the grid thought there were two.
+      const remaining = rect.top + layout.height - window.innerHeight;
+      if (remaining < PRE_FETCH_AHEAD * window.innerHeight) {
         preFetchController?.abort();
         preFetchController = new AbortController();
         onLoadMore?.(preFetchController.signal);
