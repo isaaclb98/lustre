@@ -157,14 +157,26 @@ test.describe('Grid size preference', () => {
       const limit = Number(url.searchParams.get('limit'));
 
       // The rendered track count is the ground truth for "how many
-      // columns does this page actually show".
-      await page.waitForSelector('.grid-row', { timeout: 15000 });
+      // columns does this page actually show". Two layouts render
+      // the grid: the uniform grid (rows in a CSS grid) and masonry
+      // (tiles positioned absolutely into columns), and the layout
+      // is a deployment choice — so read the columns from whichever
+      // one is live.
+      await page.waitForSelector('.tile', { timeout: 15000 });
       const renderedCols = await page.evaluate(() => {
         const row = document.querySelector('.grid-row');
-        if (!row) return 0;
-        return getComputedStyle(row).gridTemplateColumns
-          .split(' ')
-          .filter(Boolean).length;
+        if (row) {
+          return getComputedStyle(row).gridTemplateColumns
+            .split(' ')
+            .filter(Boolean).length;
+        }
+        // Masonry: one column per distinct left edge.
+        const lefts = new Set(
+          Array.from(document.querySelectorAll('.tile')).map((t) =>
+            Math.round((t as HTMLElement).getBoundingClientRect().left)
+          )
+        );
+        return lefts.size;
       });
 
       expect(renderedCols).toBeGreaterThan(0);
@@ -197,13 +209,21 @@ test.describe('Grid size preference', () => {
       await page.goto('/random', { waitUntil: 'domcontentloaded' });
       const req = await requestPromise;
       const limit = Number(new URL(req.url()).searchParams.get('limit'));
-      await page.waitForSelector('.grid-row', { timeout: 15000 });
+      await page.waitForSelector('.tile', { timeout: 15000 });
       const cols = await page.evaluate(() => {
         const row = document.querySelector('.grid-row');
-        if (!row) return 0;
-        return getComputedStyle(row).gridTemplateColumns
-          .split(' ')
-          .filter(Boolean).length;
+        if (row) {
+          return getComputedStyle(row).gridTemplateColumns
+            .split(' ')
+            .filter(Boolean).length;
+        }
+        // Masonry: one column per distinct left edge.
+        const lefts = new Set(
+          Array.from(document.querySelectorAll('.tile')).map((t) =>
+            Math.round((t as HTMLElement).getBoundingClientRect().left)
+          )
+        );
+        return lefts.size;
       });
       return { limit, cols };
     };
@@ -234,6 +254,15 @@ test.describe('Grid size preference', () => {
     //
     // Medium config: 192/8. The leading-zero trimmed values should
     // be '192px' and '8px'.
+    //
+    // The GUTTER is theme-dependent: the dark theme draws its grid
+    // with no gutter at all (its photos touch), so the expected gap
+    // follows the theme the deployment is serving.
+    const expectedGap = await page.evaluate(() =>
+      document.documentElement.getAttribute('data-theme') === 'dark'
+        ? '0px'
+        : '8px'
+    );
     await expect
       .poll(
         async () =>
@@ -245,6 +274,6 @@ test.describe('Grid size preference', () => {
           }),
         { timeout: 10_000, message: 'the grid vars must be published' }
       )
-      .toBe('192px / 8px');
+      .toBe(`192px / ${expectedGap}`);
   });
 });

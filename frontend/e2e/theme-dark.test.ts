@@ -94,17 +94,42 @@ async function albumWithPhotos(page: Page): Promise<number> {
  */
 async function gridGeometry(page: Page) {
   return page.evaluate(() => {
+    // The grid has TWO layouts: the uniform grid (rows of tiles in
+    // a CSS grid) and masonry (tiles positioned absolutely, packed
+    // into columns). The measurements have to hold in both — the
+    // layout is a deployment choice, not the test's to make.
     const row = document.querySelector('.grid-row');
-    if (!row) return null;
-    const tiles = Array.from(row.querySelectorAll('.tile')) as HTMLElement[];
+    const scope = row ?? document;
+    const tiles = Array.from(scope.querySelectorAll('.tile')) as HTMLElement[];
     if (tiles.length < 2) return null;
-    const cs = getComputedStyle(row);
     const tcs = getComputedStyle(tiles[0]);
     const a = tiles[0].getBoundingClientRect();
-    const b = tiles[1].getBoundingClientRect();
+
+    // The rendered space between two neighbours. In the uniform grid
+    // that is the row's own gap, read off two tiles in the same
+    // row. In masonry the tiles are in columns, so it is the
+    // distance between two adjacent columns' left edges, less the
+    // tile width.
+    let gapBetweenTiles: number;
+    if (row) {
+      const b = tiles[1].getBoundingClientRect();
+      gapBetweenTiles = Math.round(b.x - (a.x + a.width));
+    } else {
+      const lefts = Array.from(
+        new Set(tiles.map((t) => Math.round(t.getBoundingClientRect().left)))
+      ).sort((x, y) => x - y);
+      gapBetweenTiles =
+        lefts.length > 1 ? Math.round(lefts[1] - lefts[0] - a.width) : 0;
+    }
+
     return {
-      gap: cs.gap,
-      gapBetweenTiles: Math.round(b.x - (a.x + a.width)),
+      masonry: !row,
+      // The effective gutter. The uniform grid has a row whose CSS
+      // gap IS the gutter; masonry has no row, so the gutter is the
+      // rendered space between two columns. Same meaning, both
+      // layouts.
+      gap: row ? getComputedStyle(row).gap : `${gapBetweenTiles}px`,
+      gapBetweenTiles,
       radius: tcs.borderRadius,
       borderWidth: tcs.borderWidth,
       borderStyle: tcs.borderStyle,
@@ -116,9 +141,11 @@ async function gridGeometry(page: Page) {
 
 /** Wait for a grid with at least two tiles, and return its geometry. */
 async function waitForGrid(page: Page) {
-  await page.waitForSelector('.grid-row .tile', { timeout: 30000 });
+  // Both layouts render `.tile` elements — the uniform grid inside
+  // `.grid-row`, masonry directly in the wrapper.
+  await page.waitForSelector('.tile', { timeout: 30000 });
   await page.waitForFunction(
-    () => document.querySelectorAll('.grid-row .tile').length >= 2,
+    () => document.querySelectorAll('.tile').length >= 2,
     undefined,
     { timeout: 30000 }
   );
@@ -184,8 +211,14 @@ test.describe('dark theme', () => {
       expect(geom.borderWidth).not.toBe('0px');
     }
 
-    // Square tiles in both themes.
-    expect(geom.width).toBe(geom.height);
+    // The uniform grid squares its tiles in both themes. Masonry
+    // does not: each tile is as tall as the photo's own aspect
+    // ratio, so a square photo is square and a portrait is not.
+    if (geom.masonry) {
+      expect(geom.width).toBeGreaterThan(0);
+    } else {
+      expect(geom.width).toBe(geom.height);
+    }
   });
 
   test('switching the marker switches the rendering', async ({ page }) => {

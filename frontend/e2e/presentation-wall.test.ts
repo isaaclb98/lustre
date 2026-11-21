@@ -192,24 +192,52 @@ test.describe('presentation wall', () => {
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     const geom = await page.evaluate(() => {
-      const row = document.querySelector('.grid-row')!;
-      const tiles = Array.from(row.querySelectorAll('.tile')) as HTMLElement[];
-      const cs = getComputedStyle(row);
+      // Two layouts render the grid: the uniform grid (rows in a CSS
+      // grid) and masonry (tiles positioned absolutely into columns).
+      const row = document.querySelector('.grid-row');
+      const scope = row ?? document;
+      const tiles = Array.from(scope.querySelectorAll('.tile')) as HTMLElement[];
+      if (tiles.length < 2) return null;
       const tcs = getComputedStyle(tiles[0]);
       const a = tiles[0].getBoundingClientRect();
-      const b = tiles[1].getBoundingClientRect();
+      let gapBetweenTiles: number;
+      if (row) {
+        const b = tiles[1].getBoundingClientRect();
+        gapBetweenTiles = Math.round(b.x - (a.x + a.width));
+      } else {
+        const lefts = Array.from(
+          new Set(tiles.map((t) => Math.round(t.getBoundingClientRect().left)))
+        ).sort((x, y) => x - y);
+        gapBetweenTiles =
+          lefts.length > 1 ? Math.round(lefts[1] - lefts[0] - a.width) : 0;
+      }
       return {
-        gap: cs.gap,
+        masonry: !row,
+        gap: row ? getComputedStyle(row).gap : `${gapBetweenTiles}px`,
         radius: tcs.borderRadius,
         borderStyle: tcs.borderStyle,
-        gapBetweenTiles: Math.round(b.x - (a.x + a.width))
+        gapBetweenTiles
       };
     });
+    expect(geom).not.toBeNull();
 
-    expect(geom.gap).not.toBe('0px');
-    expect(geom.gapBetweenTiles).toBeGreaterThan(0);
-    expect(geom.radius).not.toBe('0px');
-    expect(geom.borderStyle).not.toBe('none');
+    // The gutter is theme-dependent: the dark theme draws the app
+    // grid with NO gutter (its photos touch), which is deliberately
+    // the same look the wall has. In the dark theme there is nothing
+    // to tell the two apart by their tiles — what must not leak is
+    // the wall's frame, and the app chrome is checked separately.
+    const theme = await page.evaluate(() =>
+      document.documentElement.getAttribute('data-theme')
+    );
+    if (theme === 'dark') {
+      expect(geom!.gap).toBe('0px');
+      expect(geom!.gapBetweenTiles).toBe(0);
+    } else {
+      expect(geom!.gap).not.toBe('0px');
+      expect(geom!.gapBetweenTiles).toBeGreaterThan(0);
+      expect(geom!.radius).not.toBe('0px');
+      expect(geom!.borderStyle).not.toBe('none');
+    }
   });
 
   test('the app chrome is still on the ordinary routes', async ({ page }) => {

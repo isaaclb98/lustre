@@ -238,7 +238,15 @@
   let columns = $derived(
     tileSize > 0 && containerWidth > 0
       ? wall
-        ? wallColumnsForWidth(containerWidth, config)
+        ? Math.min(
+            wallColumnsForWidth(containerWidth, config),
+            // The wall fills the screen with the photos it has. An
+            // album with fewer photos than the viewport has columns
+            // would leave empty tracks at the right, and a strip of
+            // page background beside the photos is exactly what the
+            // wall is not allowed to have.
+            Math.max(1, items.length)
+          )
         : columnsForWidth(containerWidth, config)
       : ESTIMATED_COLUMNS
   );
@@ -262,7 +270,11 @@
   // returns each photo's own width and height, so a tile can be
   // sized in the same paint as the layout and nothing reflows when a
   // thumbnail arrives.
-  const masonry = $derived(masonryEnabled($preferences));
+  // The presentation wall is EXEMPT. It is a gapless square field
+  // by design — the photos touch pixel-to-pixel and fill the
+  // viewport — so the masonry layout must not touch it. The wall's
+  // own tile config (square corners, no gutter) still applies.
+  const masonry = $derived(masonryEnabled($preferences) && !wall);
 
   const masonryLayout = $derived(
     masonry ? layoutMasonry(items, { tile: TILE, gap: GAP, columns }) : null

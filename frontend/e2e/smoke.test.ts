@@ -400,17 +400,37 @@ test('Search page infinite-scrolls: scrolls append a second page', async ({ page
   // must be a multiple of it — that is the whole-row guarantee,
   // visible in the DOM.
   const renderedCols = await page.evaluate(() => {
+    // Two layouts render the grid: the uniform grid (rows in a CSS
+    // grid) and masonry (tiles positioned absolutely into columns).
+    // The layout is a deployment choice, so read the column count
+    // from whichever one is live.
     const row = document.querySelector('section.results .grid-row');
-    if (!row) return 0;
-    return getComputedStyle(row).gridTemplateColumns
-      .split(' ')
-      .filter(Boolean).length;
+    if (row) {
+      return {
+        cols: getComputedStyle(row).gridTemplateColumns
+          .split(' ')
+          .filter(Boolean).length,
+        masonry: false
+      };
+    }
+    const lefts = new Set(
+      Array.from(document.querySelectorAll('section.results .tile')).map(
+        (t) => Math.round((t as HTMLElement).getBoundingClientRect().left)
+      )
+    );
+    return { cols: lefts.size, masonry: true };
   });
-  expect(renderedCols).toBeGreaterThan(0);
+  expect(renderedCols.cols).toBeGreaterThan(0);
 
   const initial = await page.locator('section.results .grid-tile').count();
   expect(initial).toBeGreaterThan(0);
-  expect(initial % renderedCols).toBe(0);
+  // The uniform grid's virtualizer renders WHOLE ROWS, so the tile
+  // count in the DOM is a multiple of the column count. Masonry
+  // renders the visible band instead, which is not a whole number of
+  // rows — there the guarantee lives on the REQUEST, not the DOM.
+  if (!renderedCols.masonry) {
+    expect(initial % renderedCols.cols).toBe(0);
+  }
 
   // The grid is VIRTUALIZED: only the rows in view are in the DOM,
   // so the RENDERED tile count can go DOWN as the window moves. The
@@ -455,5 +475,7 @@ test('Search page infinite-scrolls: scrolls append a second page', async ({ page
     .toBeGreaterThan(0);
   const final = await page.locator('section.results .grid-tile').count();
   // The appended page keeps the whole-row guarantee.
-  expect(final % renderedCols).toBe(0);
+  if (!renderedCols.masonry) {
+    expect(final % renderedCols.cols).toBe(0);
+  }
 });
