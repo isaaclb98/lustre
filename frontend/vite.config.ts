@@ -59,6 +59,13 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: false,
+    // Vite refuses a request whose Host header it does not
+    // recognise (the DNS-rebinding guard). The dev server is
+    // reached over the tailnet by its device hostname, so the
+    // tailnet's domain has to be allowed — without this every
+    // request through `tailscale serve` comes back 403
+    // "Blocked request".
+    allowedHosts: ['.burmese-mermaid.ts.net'],
     proxy: {
       // Proxy API + photo + zip endpoints to FastAPI in dev. In prod
       // (k8s cluster) the Deployment sets API_PROXY_TARGET to the
