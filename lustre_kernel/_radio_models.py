@@ -52,6 +52,7 @@ import logging
 import os
 import threading
 from collections.abc import Sequence
+from typing import Any
 
 from PIL import Image
 
@@ -99,7 +100,11 @@ class RadioEmbedder:
         self._dim = dim
         self._long_edge = long_edge
         self._revision = revision
-        self._model = None
+        # Typed as Any: the checkpoint is a torch.nn.Module whose shape
+        # is only known at runtime, and mypy would otherwise infer
+        # `None` from the initial assignment and treat every use as
+        # unreachable.
+        self._model: Any = None
         self._device = self._resolve_device()
         self._lock = threading.Lock()
 
@@ -134,7 +139,8 @@ class RadioEmbedder:
 
         with torch.no_grad():
             features = adaptor.encode_text(tokens, normalize=True)
-        return features.float().cpu().tolist()
+        vectors: list[list[float]] = features.float().cpu().tolist()
+        return vectors
 
     def embed_image(self, image: Image.Image) -> list[float]:
         return self.embed_images([image])[0]
@@ -186,10 +192,16 @@ class RadioEmbedder:
         return "cpu"
 
     def _ensure_loaded(self) -> None:
-        if self._model is not None:
+        # The fast path avoids the lock: the model is loaded once and
+        # every later call finds it already there.
+        loaded = self._model
+        if loaded is not None:
             return
         with self._lock:
-            if self._model is not None:
+            # Re-check under the lock: another thread may have
+            # finished loading while this one waited for it.
+            loaded = self._model
+            if loaded is not None:
                 return
             import torch
 
@@ -197,7 +209,7 @@ class RadioEmbedder:
                 "Loading C-RADIOv4 (%s) with the %s adaptor from %s",
                 RADIO_VERSION, RADIO_ADAPTOR, RADIO_HUB_REPO,
             )
-            model = torch.hub.load(
+            model = torch.hub.load(  # type: ignore[no-untyped-call]
                 RADIO_HUB_REPO,
                 "radio_model",
                 version=RADIO_VERSION,
@@ -210,7 +222,7 @@ class RadioEmbedder:
             self._model = model
             logger.info("C-RADIOv4 loaded on %s", self._device)
 
-    def _prepare(self, image: Image.Image):
+    def _prepare(self, image: Image.Image) -> Any:
         """Resize to native aspect and convert to a float tensor.
 
         The long edge becomes `resolution`; the short edge follows
@@ -239,7 +251,7 @@ class RadioEmbedder:
         return torch.from_numpy(array).permute(2, 0, 1)
 
 
-def _move_to_device(tokens, device: str):
+def _move_to_device(tokens: Any, device: str) -> Any:
     """Move a tokenizer batch to `device`, whatever shape it comes in.
 
     The adaptor's tokenizer returns a transformers `BatchEncoding`
