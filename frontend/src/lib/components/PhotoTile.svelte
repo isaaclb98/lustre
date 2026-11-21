@@ -17,6 +17,7 @@
   import { onMount } from 'svelte';
   import { thumbUrl, photoUrl } from '../api/endpoints';
   import { blurhashToDataUrl } from './blurhash-bg';
+  import { thumbnailWidthFor } from '$lib/layout';
   import Icon from './Icon.svelte';
 
   type Props = {
@@ -146,6 +147,24 @@
      */
     masonry?: boolean;
     /**
+     * The deployment's thumbnail long edge, in pixels.
+     *
+     * The grid's srcset has to state the width the image IS. The
+     * thumbnail's size is a deployment-level number — the dev stack
+     * renders 512, production 384 — so it comes from the shell
+     * rather than being hardcoded here.
+     */
+    thumbnailSize?: number;
+    /**
+     * The grid's fixed tile width, in pixels.
+     *
+     * The masonry's tile is exactly this wide; the uniform grid's
+     * tracks stretch to fill the row. The `sizes` attribute has to
+     * advertise the tile's real width, or the browser picks the
+     * wrong density for the image.
+     */
+    tileWidth?: number;
+    /**
      * The photo's ratio falls outside the layout's bounds, so its
      * tile is NOT the photo's own shape.
      *
@@ -169,7 +188,21 @@
      * At or below 384 the thumbnail is used — it is already the
      * right size and it is what every other grid renders.
      */
-    srcWidth?: number;
+    srcWidth?: number | null;
+    /**
+     * The photo's own dimensions, in pixels.
+     *
+     * The srcset states the width the thumbnail IS, and that is
+     * derived from the photo's own aspect ratio — so the height
+     * matters as much as the width.
+     *
+     * These are NOT the fetch width: `srcWidth` says how big to
+     * fetch, and only a surface that lets the user zoom asks for
+     * more than the thumbnail. The grid passes the dimensions and
+     * leaves `srcWidth` unset, so it keeps rendering the thumbnail.
+     */
+    photoWidth?: number | null;
+    photoHeight?: number | null;
   };
   let {
     pointId,
@@ -192,9 +225,13 @@
     wall = false,
     masonry = false,
     clamped = false,
+    thumbnailSize = 384,
+    tileWidth = 240,
     readOnly = false,
     label = '',
-    srcWidth
+    srcWidth,
+    photoWidth,
+    photoHeight
   }: Props = $props();
 
   // Pre-computed data URL takes priority (caller already decoded
@@ -257,12 +294,27 @@
   let isEager = $derived(
     eager || eagerIndex === 0 || eagerIndex === 1 || eagerIndex === 2
   );
-  // Rendered srcset width for the eager tiles. The single-variant
-  // pipeline serves 384×384; the rounded-up × 2 calculation would
-  // be 480, but the backend only generates 384 (no 480), so just
-  // pin to 384.
-  let eagerSrcWidth = $derived(384);
-  let eagerSrcset = $derived(`${thumbUrl(pointId, 384)} 384w`);
+  // Rendered srcset width for the eager tiles.
+  //
+  // A `srcset` entry states the width the image IS, and the
+  // thumbnail's width is NOT the thumbnail's long edge: a portrait
+  // photo's thumbnail is 384 wide and 512 tall, so advertising the
+  // long edge (512) tells the browser the image is wider than it
+  // is. The browser then believes it has more pixels than it does
+  // and picks a lower density — which is how a 135px-wide image
+  // ends up filling a 240px tile.
+  //
+  // So the width is computed from the photo's own aspect ratio and
+  // the deployment's thumbnail size. When the photo's dimensions
+  // are unknown, the long edge is the best guess available — and an
+  // over-stated width is the safe direction, because the browser
+  // then treats the image as the smaller asset it is.
+  let eagerSrcWidth = $derived(
+    thumbnailWidthFor(thumbnailSize, photoWidth, photoHeight)
+  );
+  let eagerSrcset = $derived(
+    `${thumbUrl(pointId, thumbnailSize)} ${eagerSrcWidth}w`
+  );
 
   /**
    * Where the photo comes from at the size the caller asked for.
@@ -278,16 +330,19 @@
    * for more than the photo has simply gives the photo's own size
    * back — the worst case is a soft image, never a broken one.
    */
-  const THUMBNAIL_MAX_WIDTH = 384;
+  // The deployment's thumbnail size cannot change under a live page
+  // (a change means a new shell), so capturing it once is correct.
+  // svelte-ignore state_referenced_locally
+  const THUMBNAIL_MAX_WIDTH = thumbnailSize;
   let wantsFullWidth = $derived(
     typeof srcWidth === 'number' && srcWidth > THUMBNAIL_MAX_WIDTH
   );
   let fullSrc = $derived(
-    wantsFullWidth
+    wantsFullWidth && typeof srcWidth === 'number'
       ? photoUrl(pointId, srcWidth)
       : isEager
         ? thumbUrl(pointId, eagerSrcWidth)
-        : thumbUrl(pointId, 384)
+        : thumbUrl(pointId, thumbnailSize)
   );
   // Sizes attribute must reflect the actual rendered tile width
   // so the browser picks the right srcset entry. Without this,
@@ -298,18 +353,23 @@
   // 240w of pixels, blurry at 2x DPR).
   //
   // Post the model-variant migration plan, the only thumbnail
-  // variant served is 384×384 — the srcset is a single 384w entry,
-  // so the `sizes` attribute just needs to advertise the tile's
-  // rendered CSS pixels at each breakpoint.
+  // variant served is the deployment's thumbnail size — the srcset
+  // is a single entry, so the `sizes` attribute just needs to
+  // advertise the tile's rendered CSS pixels at each breakpoint.
+  //
+  // In the masonry the tile's width is the grid's fixed tile size
+  // (240 / 192 / 144), NOT the auto-fit track the uniform grid
+  // renders — so the guess below, which mirrors the uniform grid's
+  // heuristic, would understate it.
   let eagerSizes = $derived.by(() => {
-    const w = tileSizeGuess() ?? 384;
+    // The masonry's tile width is exact, so use it.
+    const w = masonry ? tileWidth : (tileSizeGuess() ?? 384);
     // Pick the smallest variant >= w so the browser has enough
-    // pixels to render crisply at this DPR. With a single 384w
-    // variant, this is just `w` for any w <= 384.
+    // pixels to render crisply at this DPR.
     const variant = w <= 120 ? 120 : w <= 180 ? 180 : w <= 240 ? 240 : 384;
     // Re-derive the breakpoint from `w`: below 600px viewport the
     // tiles are ~120-180px, above that they're ~240px, above
-    // 1200px they grow further (capped at our 384 variant).
+    // 1200px they grow further (capped at our thumbnail variant).
     return `(max-width: 600px) ${Math.min(variant, 120)}px, (max-width: 1200px) ${Math.min(variant, 180)}px, ${variant}px`;
   });
 </script>

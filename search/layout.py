@@ -20,7 +20,12 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["MASONRY_ATTRIBUTE", "inject_masonry"]
+__all__ = [
+    "MASONRY_ATTRIBUTE",
+    "THUMBNAIL_SIZE_ATTRIBUTE",
+    "inject_masonry",
+    "inject_thumbnail_size",
+]
 
 # The attribute the layout mode travels on. Must match the frontend's
 # MASONRY_ATTRIBUTE in frontend/src/lib/layout.ts.
@@ -32,6 +37,43 @@ _HTML_TAG = re.compile(rb"<html(\s[^>]*)?>", re.IGNORECASE)
 # An existing data-masonry attribute, so re-stamping replaces rather
 # than duplicates it.
 _DATA_MASONRY_ATTR = re.compile(rb"\s+data-masonry=[\"'][^\"']*[\"']")
+
+
+# The attribute the thumbnail's long edge travels on.
+#
+# The frontend builds a `srcset` for the grid's thumbnails, and a
+# `srcset` entry has to state the width the image actually IS. The
+# thumbnail's long edge is a deployment-level number (THUMBNAIL_SIZE),
+# and it is not the same on every deployment: the dev stack renders
+# 512, production renders 384. A srcset that claims the wrong width
+# makes the browser pick the wrong density — and a portrait photo's
+# thumbnail is NARROWER than its long edge, so claiming the long edge
+# is wrong for it too.
+#
+# So the deployment publishes the number and the frontend reads it
+# back, the same way the theme and the layout mode travel.
+THUMBNAIL_SIZE_ATTRIBUTE = "data-thumbnail-size"
+
+_DATA_THUMBNAIL_SIZE_ATTR = re.compile(
+    rb"\s+data-thumbnail-size=[\"'][^\"']*[\"']"
+)
+
+
+def inject_thumbnail_size(html: bytes, size: int) -> bytes:
+    """Return `html` with the thumbnail's long edge stamped onto <html>.
+
+    Idempotent: an existing data-thumbnail-size attribute is replaced
+    rather than duplicated.
+    """
+    if size <= 0:
+        return html
+
+    def replace(match: re.Match[bytes]) -> bytes:
+        attrs = _DATA_THUMBNAIL_SIZE_ATTR.sub(b"", match.group(1) or b"")
+        attr = f' {THUMBNAIL_SIZE_ATTRIBUTE}="{int(size)}"'.encode()
+        return b"<html" + attrs + attr + b">"
+
+    return _HTML_TAG.sub(replace, html, count=1)
 
 
 def inject_masonry(html: bytes, enabled: bool) -> bytes:

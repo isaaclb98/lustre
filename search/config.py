@@ -113,6 +113,16 @@ def get_vector_dim() -> int:
 # Thumbnail storage path (inside container)
 THUMBNAIL_DIR = os.environ.get("THUMBNAIL_DIR", "/app/data/thumbnails")
 
+# The thumbnail's long edge, in pixels. Read at import time because
+# the thumbnail router's `?w=` cap is a FastAPI query parameter
+# annotation, which is evaluated when the route is built.
+#
+# This must agree with the indexer's THUMBNAIL_SIZE: the indexer
+# renders the canonical thumbnail at that long edge, and the router
+# serves it. A request beyond it asks for an asset that does not
+# exist.
+THUMBNAIL_SIZE = int(os.environ.get("THUMBNAIL_SIZE", "384"))
+
 
 # Variant reconciliation against Qdrant. Replaces the older file-based
 # tracking (data/siglip_variant.json). Qdrant is the single source of
@@ -627,6 +637,13 @@ class Config:
     # own preference (in the browser) overrides this default.
     masonry: bool = False
 
+    # The thumbnail's long edge, in pixels. The indexer renders
+    # thumbnails at this size, and the frontend builds its `srcset`
+    # from it — a srcset entry has to state the width the image
+    # actually is, and that is a deployment-level number (dev
+    # renders 512, production 384).
+    thumbnail_size: int = 384
+
 
 def _int(name: str, default: int) -> int:
     raw = os.environ.get(name)
@@ -836,6 +853,7 @@ def load() -> Config:
         log_level=_str("LOG_LEVEL", "INFO"),
         theme=_theme("LUSTRE_THEME", "light"),
         masonry=_bool("LUSTRE_MASONRY", False),
+        thumbnail_size=_int("THUMBNAIL_SIZE", 384),
         test_mode=bool(
             os.environ.get("SEARCH_TEST_MODE")
             or os.environ.get("SEARCH_NO_MODEL")

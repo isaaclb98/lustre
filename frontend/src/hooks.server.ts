@@ -22,7 +22,11 @@ import { createHash } from 'node:crypto';
 import { dev } from '$app/environment';
 import type { Handle } from '@sveltejs/kit';
 import { DEFAULT_THEME, THEME_ATTRIBUTE } from '$lib/theme';
-import { MASONRY_ATTRIBUTE } from '$lib/layout';
+import {
+  DEFAULT_THUMBNAIL_SIZE,
+  MASONRY_ATTRIBUTE,
+  THUMBNAIL_SIZE_ATTRIBUTE
+} from '$lib/layout';
 
 /** The themes the frontend ships. Mirrors THEMES in search/theme.py. */
 const THEMES = ['light', 'dark'] as const;
@@ -56,6 +60,19 @@ function configuredMasonry(): boolean {
   return raw === '1' || raw === 'true' || raw === 'yes';
 }
 
+/**
+ * The configured thumbnail size.
+ *
+ * The same value the backend stamps onto the shell it serves, read
+ * from the same environment. The grid's srcset has to state the
+ * width the image IS, and that is the deployment's thumbnail size.
+ */
+function configuredThumbnailSize(): number {
+  const raw = (process.env.THUMBNAIL_SIZE ?? '').trim();
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_THUMBNAIL_SIZE;
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
   const response = await resolve(event);
 
@@ -67,6 +84,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   const theme = configuredTheme();
   const masonry = configuredMasonry();
+  const thumbnailSize = configuredThumbnailSize();
   const html = await response.text();
   const stamped = html.replace(
     /<html(\s[^>]*)?>/i,
@@ -79,9 +97,16 @@ export const handle: Handle = async ({ event, resolve }) => {
         .replace(
           new RegExp(`\\s${MASONRY_ATTRIBUTE}=("[^"]*"|'[^']*'|[^\\s>]+)`, 'i'),
           ''
+        )
+        .replace(
+          new RegExp(
+            `\\s${THUMBNAIL_SIZE_ATTRIBUTE}=("[^"]*"|'[^']*'|[^\\s>]+)`,
+            'i'
+          ),
+          ''
         );
       const marker = masonry ? ` ${MASONRY_ATTRIBUTE}="1"` : '';
-      return `<html${without} ${THEME_ATTRIBUTE}="${theme}"${marker}>`;
+      return `<html${without} ${THEME_ATTRIBUTE}="${theme}"${marker} ${THUMBNAIL_SIZE_ATTRIBUTE}="${thumbnailSize}">`;
     }
   );
 

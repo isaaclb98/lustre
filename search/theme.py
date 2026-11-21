@@ -31,7 +31,7 @@ from pathlib import Path
 
 from fastapi.responses import Response
 
-from search.layout import inject_masonry
+from search.layout import inject_masonry, inject_thumbnail_size
 
 __all__ = [
     "THEMES",
@@ -74,18 +74,28 @@ def inject_theme(html: bytes, theme: str) -> bytes:
     return _HTML_TAG.sub(replace, html, count=1)
 
 
-# Stamped shells, keyed by (path, mtime, size, theme, masonry). The
-# shell is static for the life of a deployment, so this is read and
-# patched once, not once per request.
-_SHELL_CACHE: dict[tuple[str, int, int, str, bool], bytes] = {}
+# Stamped shells, keyed by (path, mtime, size, theme, masonry,
+# thumbnail size). The shell is static for the life of a deployment,
+# so this is read and patched once, not once per request.
+_SHELL_CACHE: dict[tuple[str, int, int, str, bool, int], bytes] = {}
 
 
-def _shell_bytes(path: Path, theme: str, masonry: bool) -> bytes:
+def _shell_bytes(path: Path, theme: str, masonry: bool, thumbnail_size: int) -> bytes:
     stat = path.stat()
-    key = (str(path), stat.st_mtime_ns, stat.st_size, theme, masonry)
+    key = (
+        str(path),
+        stat.st_mtime_ns,
+        stat.st_size,
+        theme,
+        masonry,
+        thumbnail_size,
+    )
     cached = _SHELL_CACHE.get(key)
     if cached is None:
-        cached = inject_masonry(inject_theme(path.read_bytes(), theme), masonry)
+        cached = inject_thumbnail_size(
+            inject_masonry(inject_theme(path.read_bytes(), theme), masonry),
+            thumbnail_size,
+        )
         # One deployment serves one shell; a rebuilt shell must not
         # leave the previous one behind.
         _SHELL_CACHE.clear()
@@ -93,7 +103,12 @@ def _shell_bytes(path: Path, theme: str, masonry: bool) -> bytes:
     return cached
 
 
-def shell_response(path: Path, theme: str, masonry: bool = False) -> Response:
+def shell_response(
+    path: Path,
+    theme: str,
+    masonry: bool = False,
+    thumbnail_size: int = 384,
+) -> Response:
     """Serve the SPA shell with the deployment's theme applied.
 
     The response carries an ETag over the STAMPED bytes, so a client
@@ -104,10 +119,13 @@ def shell_response(path: Path, theme: str, masonry: bool = False) -> Response:
     The masonry marker rides on the same bytes: it is the same kind
     of deployment-level choice, and the ETag has to cover it too —
     a shell cached under the square-grid ETag must never be served
-    to a deployment that has since switched to masonry.
+    to a deployment that has since switched to masonry. The
+    thumbnail's size rides along for the same reason: a shell
+    carrying the wrong thumbnail size makes the frontend build a
+    srcset that claims the wrong image width.
     """
     stat = path.stat()
-    body = _shell_bytes(path, theme, masonry)
+    body = _shell_bytes(path, theme, masonry, thumbnail_size)
     etag = hashlib.md5(body).hexdigest()  # noqa: S324
     return Response(
         content=body,

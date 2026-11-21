@@ -22,7 +22,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from search.config import THUMBNAIL_DIR
+from search.config import THUMBNAIL_DIR, THUMBNAIL_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def build_thumbnails_router() -> APIRouter:
     @router.get("/thumb/{point_id}")
     async def get_thumbnail(
         point_id: str,
-        # Round-perf (issue #2): frontend srcset asks for a target width
+        # Round-perf (issue #2): the frontend's srcset asks for a target width
         # so the browser can pick the smallest variant that fits its
         # current rendered size. We don't generate new variants on
         # demand (that'd be a slow first-hit and burn disk) — instead
@@ -43,7 +43,14 @@ def build_thumbnails_router() -> APIRouter:
         # Pre-migration cap was 256. The indexer now produces a
         # single 384px variant (matches the so400m model input
         # resolution), so the cap moves up to 384 to match.
-        w: int | None = Query(None, ge=64, le=384),
+        #
+        # The cap is the deployment's THUMBNAIL_SIZE: the indexer
+        # renders the canonical thumbnail at that long edge, so a
+        # request beyond it asks for an asset that does not exist.
+        # The dev stack renders 512 (the C-RADIOv4 model's input
+        # resolution), production 384 — a hardcoded 384 rejected the
+        # dev stack's own request with a 422.
+        w: int | None = Query(None, ge=64, le=THUMBNAIL_SIZE),
     ) -> FileResponse:
         """
         Serve a pre-generated WebP thumbnail, optionally sized.

@@ -29,6 +29,7 @@
   import ImageContextMenu from './ImageContextMenu.svelte';
   import Lightbox from './Lightbox.svelte';
   import { preferences, masonryEnabled } from '$lib/stores/preferences';
+  import { thumbnailSize } from '$lib/layout';
   import { theme } from '$lib/theme';
   import { gridConfigFor, type GridSizeConfig } from '$lib/grid/config';
   import { columnsForWidth, wallColumnsForWidth } from '$lib/grid/geometry';
@@ -708,6 +709,10 @@
               label={tileLabel(entry.item)}
               masonry
               clamped={entry.clamped}
+              thumbnailSize={$thumbnailSize}
+              tileWidth={TILE}
+              photoWidth={entry.item.width}
+              photoHeight={entry.item.height}
               {readOnly}
             />
           </div>
@@ -743,6 +748,10 @@
                 votedDown={downVoted?.has(item.id) ?? false}
                 voteUpLabel={voteUpLabel}
                 label={tileLabel(item)}
+                thumbnailSize={$thumbnailSize}
+                tileWidth={TILE}
+                photoWidth={item.width}
+                photoHeight={item.height}
                 {wall}
                 {readOnly}
               />

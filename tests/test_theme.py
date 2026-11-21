@@ -205,6 +205,41 @@ def test_masonry_follows_the_env_var(monkeypatch):
     assert load().masonry is False
 
 
+def test_the_thumbnail_size_is_published_on_the_shell():
+    """The shell must carry the deployment's thumbnail size.
+
+    The grid's `srcset` has to state the width the image IS, and the
+    thumbnail's size is a deployment-level number (dev renders 512,
+    production 384). The backend publishes it on the shell, the same
+    way the theme and the layout mode travel.
+    """
+    from search.layout import inject_thumbnail_size
+
+    html = b"<html lang=\"en\"><head></head></html>"
+    stamped = inject_thumbnail_size(html, 512)
+    assert b'data-thumbnail-size="512"' in stamped
+    # The rest of the tag survives.
+    assert b'<html lang="en"' in stamped
+
+
+def test_the_thumbnail_size_replaces_rather_than_duplicates():
+    from search.layout import inject_thumbnail_size
+
+    html = b'<html lang="en" data-thumbnail-size="384">'
+    stamped = inject_thumbnail_size(html, 512)
+    assert stamped.count(b"data-thumbnail-size") == 1
+    assert b'data-thumbnail-size="512"' in stamped
+
+
+def test_the_thumbnail_size_follows_the_env_var(monkeypatch):
+    from search.config import load
+
+    monkeypatch.setenv("THUMBNAIL_SIZE", "512")
+    assert load().thumbnail_size == 512
+    monkeypatch.delenv("THUMBNAIL_SIZE")
+    assert load().thumbnail_size == 384
+
+
 def test_the_served_shell_carries_the_masonry_marker(shell_dir, monkeypatch):
     """LUSTRE_MASONRY=1 stamps the marker onto the shell.
 

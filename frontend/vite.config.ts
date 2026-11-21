@@ -49,6 +49,14 @@ function themeFromRootEnv() {
       if (!process.env.LUSTRE_MASONRY && rootEnv.LUSTRE_MASONRY) {
         process.env.LUSTRE_MASONRY = rootEnv.LUSTRE_MASONRY;
       }
+      // And so does the thumbnail size: the grid's srcset states the
+      // width the image IS, so the dev server has to know the size
+      // the dev backend's indexer renders. The value does not carry
+      // the LUSTRE_ prefix, so it needs its own load.
+      const sizeEnv = loadEnv(config.mode, repoRoot, 'THUMBNAIL_');
+      if (!process.env.THUMBNAIL_SIZE && sizeEnv.THUMBNAIL_SIZE) {
+        process.env.THUMBNAIL_SIZE = sizeEnv.THUMBNAIL_SIZE;
+      }
     }
   };
 }
