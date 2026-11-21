@@ -38,7 +38,10 @@ from qdrant_client import QdrantClient
 
 from indexer import orphan_scan, upsert
 from indexer import scan as scan_mod
-from indexer.image_loader import letterbox_resize, load_image_pil_with_dims
+from indexer.image_loader import (
+    load_image_pil_with_dims,
+    prepare_for_embedding,
+)
 from indexer.retry import RetryExhausted, retry_with_backoff
 from indexer.scan import ScanCancelled
 from indexer.thumbnails import generate_thumbnail_for_path, thumbnail_path
@@ -974,7 +977,15 @@ def main(argv=None):
                         _emit_progress({"event": "warming_up", "model": args.model})
                         encoder = VisionEncoder(arch=args.model, device=args.device)
 
-                    vecs = encoder.embed_batch([letterbox_resize(img) for (_, img, _sw, _sh) in loaded])
+                    # The model's own preprocess policy decides: the
+                    # SigLIP2 models want the square letterbox, the
+                    # native-aspect models (C-RADIOv4) want the picture
+                    # as it is. Calling letterbox_resize() here directly
+                    # forced the square canvas onto every model.
+                    vecs = encoder.embed_batch([
+                        prepare_for_embedding(img, args.model)
+                        for (_, img, _sw, _sh) in loaded
+                    ])
                 except Exception as exc:
                     if _is_cuda_oom(exc):
                         # An OOM is a run-level failure, not a per-file

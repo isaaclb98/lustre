@@ -271,6 +271,60 @@ def test_embed_images_rejects_non_pil(radio_embedder):
 
 # ----- Image loader policy -----
 
+def test_prepare_for_embedding_follows_the_model_policy():
+    """The policy helper: native models keep the picture, the
+    SigLIP2 models get the square canvas."""
+    from indexer.image_loader import prepare_for_embedding
+
+    img = Image.new("RGB", (400, 800))
+
+    native = prepare_for_embedding(img, RADIO_MODEL)
+    assert native is img
+    assert native.size == (400, 800)
+
+    letterboxed = prepare_for_embedding(img, "ViT-so400m-patch16-384")
+    assert letterboxed.size == (384, 384)
+
+
+def test_the_indexer_does_not_letterbox_behind_the_policys_back():
+    """The embed path must go through the policy, not around it.
+
+    `local_sync` used to call `letterbox_resize()` directly, which
+    silently forced the square canvas onto every model — including
+    the native-aspect ones. The embeddings in the dev collection
+    were letterboxed as a result, while every other code path
+    (the loader, the pipeline) honoured the policy.
+    """
+    import ast
+    from pathlib import Path
+
+    from indexer import local_sync
+
+    source = Path(local_sync.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    direct_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "letterbox_resize"
+    ]
+    assert not direct_calls, (
+        "indexer/local_sync.py calls letterbox_resize directly — the "
+        "model's own preprocess policy must decide how an image is "
+        "prepared for embedding"
+    )
+
+    used = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+    }
+    assert "prepare_for_embedding" in used
+
+
 def test_loader_does_not_letterbox_for_native_models(tmp_path):
     """A native model must get the image as decoded — no black bars."""
     from indexer.image_loader import load
