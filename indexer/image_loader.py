@@ -250,11 +250,23 @@ def load(
     path: Path, *, model_name: str = "ViT-so400m-patch16-384",
 ) -> tuple[Image.Image, int | None, int | None]:
     """
-    Load + EXIF-correct + RGB-convert + letterbox. Returns
-    `(letterboxed_image, source_width, source_height)` where
-    `source_width` / `source_height` are the original pixel
-    dimensions of the file on disk (after EXIF transpose, before
-    the letterbox squashes the image to the model's resolution).
+    Load + EXIF-correct + RGB-convert + preprocess. Returns
+    `(image, source_width, source_height)` where `source_width` /
+    `source_height` are the original pixel dimensions of the file on
+    disk (after EXIF transpose, before any resize).
+
+    How the image is prepared depends on the model's registered
+    `preprocess` policy:
+
+    - `"letterbox"` (the SigLIP2 models) — resized to fit the
+      model's square resolution and padded with black. The model
+      was trained on square inputs.
+
+    - `"native"` (C-RADIOv4) — returned as decoded. The model's
+      ViT interpolates its position embeddings, so it takes the
+      image at its own aspect ratio; the embedder does the resize.
+      Letterboxing here would put black bars back into the picture
+      that the native path exists to avoid.
 
     Round‑30: returns source dims so the ingest pipeline can
     persist them in the qdrant payload. The photo page
@@ -284,7 +296,8 @@ def load(
     # load_image_pil below).
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         from lustre_kernel.registry import get as _registry_get
-        size = _registry_get(model_name).resolution
+        spec = _registry_get(model_name)
+        size = spec.resolution
         # 2× the model's resolution is enough room for the letterbox
         # to keep the full image visible while capping the decoder at
         # a small fraction of the source file's pixels. Override via
@@ -308,6 +321,8 @@ def load(
     # re‑capture img.width / img.height here — those reflect the
     # post‑draft size (see load_image_pil's warning), not the
     # source. Source dims come from the same open as the decode.
+    if getattr(spec, "preprocess", "letterbox") == "native":
+        return img, source_w, source_h
     return letterbox_resize(img, size=size), source_w, source_h
 
 
