@@ -23,6 +23,58 @@ async function appReady(page: Page) {
   await page.waitForSelector('header.topbar', { timeout: 10000 });
 }
 
+/**
+ * The photo ids the SERVER delivered, batch by batch.
+ *
+ * The Random page's contract is a session cursor: the server shuffles
+ * the library once, hands out a session id, and slices that deck by
+ * offset — so the photos a client receives across its requests are
+ * distinct, and the whole walk covers the deck exactly once.
+ *
+ * Reading that from the NETWORK rather than the DOM is what makes the
+ * assertion layout-independent. The DOM's tile count is a function of
+ * the viewport: the uniform grid virtualises by rows and the masonry
+ * renders only the visible band, so in both cases the number of tiles
+ * in the document says nothing about how many photos were fetched.
+ * The server's batches say exactly that.
+ *
+ * Attach this BEFORE the first navigation — the page fetches on mount.
+ */
+interface RandomBatch {
+  ids: string[];
+  sessionTotal: number;
+  hasMore: boolean;
+}
+
+async function collectRandomBatches(page: Page): Promise<RandomBatch[]> {
+  const batches: RandomBatch[] = [];
+  page.on('response', (res) => {
+    if (!res.url().includes('/api/random')) return;
+    void res
+      .json()
+      .then(
+        (body: {
+          results?: { id: string }[];
+          session_total?: number;
+          has_more?: boolean;
+        }) => {
+          if (!Array.isArray(body?.results)) return;
+          batches.push({
+            ids: body.results.map((r) => r.id),
+            sessionTotal: body.session_total ?? 0,
+            hasMore: !!body.has_more
+          });
+        }
+      )
+      .catch(() => {
+        /* not JSON — ignore */
+      });
+  });
+  return batches;
+}
+
+
+
 /** Wait for an element matching the locator. Polls up to `timeout`
  *  ms. SvelteKit dev hydration races the test — without polling,
  *  the first attempt to find a chip/grid can fire before the
@@ -260,6 +312,7 @@ test('Right-click opens the photo context menu', async ({ page }) => {
  * reliable.
  */
 test('Random page infinite-scrolls: scrolling loads more tiles', async ({ page }) => {
+  const batches = await collectRandomBatches(page);
   await page.goto(APP + '/random');
   await appReady(page);
   await waitFor(page, '.grid-tile', 10000);
@@ -270,6 +323,8 @@ test('Random page infinite-scrolls: scrolling loads more tiles', async ({ page }
 
   const initial = await page.locator('.grid-tile').count();
   expect(initial).toBeGreaterThan(0);
+  const initialDelivered = batches.flatMap((b) => b.ids).length;
+  expect(initialDelivered).toBeGreaterThan(0);
 
   // The page body is the scroll container — the grid uses
   // createWindowVirtualizer, so scrolling window reaches the sentinel.
@@ -280,14 +335,17 @@ test('Random page infinite-scrolls: scrolling loads more tiles', async ({ page }
     await page.waitForTimeout(800);
   }
 
-  const final = await page.locator('.grid-tile').count();
-  // The session cursor guarantees fresh photos on every scroll
-  // (no duplicates), so the items array grows with each batch and
-  // the virtualizer renders more visible tiles as the page grows.
-  expect(final).toBeGreaterThan(initial);
+  // Count the photos the page has LOADED, not the tiles the DOM
+  // holds. The two are different numbers: the uniform grid
+  // virtualises by rows, and the masonry band renders only the
+  // visible slice — in both cases the DOM's tile count is a
+  // function of the VIEWPORT, not of how much has been fetched.
+  // The photos the server delivered are the thing that grows.
+  const delivered = batches.flatMap((b) => b.ids);
+  expect(delivered.length).toBeGreaterThan(initialDelivered);
 
   const endVisible = await page.locator('.end').isVisible().catch(() => false);
-  expect(endVisible || final > initial).toBe(true);
+  expect(endVisible || delivered.length > initialDelivered).toBe(true);
 });
 
 test('Random page walks through the full session without duplicates', async ({ page }) => {
@@ -296,84 +354,76 @@ test('Random page walks through the full session without duplicates', async ({ p
    * page visits every photo in the library exactly once, then the
    * scroll stops (has_more goes false, sentinel unmounts).
    *
-   * The virtualizer only renders visible rows, so we harvest
-   * photo IDs from thumb URLs as we scroll — accumulating unique
-   * IDs across all visible positions, not at any one moment.
+   * The photo ids come from the SERVER's responses, not from the
+   * rendered thumbnails. The DOM's tiles are a window onto the deck
+   * — the uniform grid virtualises by rows, the masonry renders only
+   * the visible band — so the thumbnails in the document cannot say
+   * how much of the deck has been walked. The server's batches can.
    *
    * Requires the dev server to have indexed photos. The default
    * demo dataset is 182; this should reliably walk the whole
    * library in ~10 scroll iterations.
    */
+  const batches = await collectRandomBatches(page);
   await page.goto(APP + '/random');
   await appReady(page);
   await waitFor(page, '.grid-tile', 10000);
   await page.waitForTimeout(500);
 
-  // Get session_total from the first API response. The page made
-  // the call on mount, so the headers/body are already in flight.
-  const firstResp = await page.evaluate(async () => {
-    // Re-fetch to capture the response — the original call already
-    // completed by the time the test starts running.
-    const r = await fetch('/api/random?limit=1');
-    return r.json();
-  });
-  const sessionTotal = firstResp.session_total;
-  expect(sessionTotal).toBeGreaterThan(20);
-
-  // Walk the session by harvesting unique photo IDs from visible
-  // thumb URLs. The virtualizer only renders visible rows, so we
-  // count IDs across all scroll positions.
-  const allIds = new Set<string>();
-  const harvest = async () => {
-    const ids = await page.evaluate(() => {
-      const ids: string[] = [];
-      for (const img of document.querySelectorAll('img')) {
-        const m = (img.src || '').match(/\/thumb\/([^/?#]+)/);
-        if (m) ids.push(m[1]);
-      }
-      return ids;
-    });
-    for (const id of ids) allIds.add(id);
-  };
-
-  // Initial harvest
-  await harvest();
-
-  // Scroll repeatedly until has_more is false.
+  // The session's size, from the server's own first response. It is
+  // read from the batch rather than from a probe fetch: a probe
+  // would open a SECOND session, and its photos would land in the
+  // batch list alongside the walk's own.
   let iterations = 0;
   const maxIterations = 50;
+  while (iterations < maxIterations && batches.length === 0) {
+    iterations++;
+    await page.waitForTimeout(200);
+  }
+  const sessionTotal = batches[0]?.sessionTotal ?? 0;
+  expect(sessionTotal).toBeGreaterThan(20);
+
+  // Walk the session by scrolling until the server stops handing out
+  // photos.
+  iterations = 0;
   while (iterations < maxIterations) {
     iterations++;
+    const before = batches.length;
     // Trigger more loads by scrolling to the bottom.
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await page.waitForTimeout(600);
-    await harvest();
 
-    // Check if scroll has stopped firing. We do this by checking
-    // the last /api/random response's has_more via a fresh call.
-    await page.evaluate(async () => {
-      // Use a HEAD-like probe: fetch with limit=0 won't change
-      // session state but returns the current has_more.
-      // Actually we need to read from the component state. The
-      // simpler approach: just check if __random_loading stays false
-      // for a full second.
-      return null;
-    });
-
-    // Break when we've seen all session_total unique ids.
-    if (allIds.size >= sessionTotal) break;
+    // The server has stopped handing out photos when it says
+    // has_more is false, or when a scroll produces no new batch.
+    const last = batches[batches.length - 1];
+    if (last && !last.hasMore) break;
+    if (batches.length === before) break;
   }
 
-  // Every photo in the library was visited exactly once.
+  // The session's contract: the photos the server delivered across
+  // the whole walk are the deck, each exactly once.
+  //
+  // The ids come from the server's own responses rather than from
+  // the rendered thumbnails. The DOM cannot answer this question:
+  // the uniform grid virtualises by rows and the masonry renders
+  // only the visible band, so the thumbnails in the document are a
+  // window onto the deck, not the deck. (The masonry's window is the
+  // narrower of the two — a jump to the bottom skips the photos in
+  // between, which were never rendered and so never harvested.)
+  const delivered = batches.flatMap((b) => b.ids);
+  const allIds = new Set(delivered);
   expect(allIds.size).toBe(sessionTotal);
+  // And no photo was delivered twice.
+  expect(delivered.length).toBe(allIds.size);
 
   // Confirm the scroll has stopped: no more new batches arriving.
-  // After scrolling to the bottom and waiting, harvesting should
-  // not increase the unique count.
+  // After scrolling to the bottom and waiting, the server should
+  // not hand out another photo.
   await page.waitForTimeout(1500);
-  const beforeIdle = allIds.size;
-  await harvest();
-  expect(allIds.size).toBe(beforeIdle);
+  const beforeIdle = batches.flatMap((b) => b.ids).length;
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForTimeout(600);
+  expect(batches.flatMap((b) => b.ids).length).toBe(beforeIdle);
 });
 
 test('Search page infinite-scrolls: scrolls append a second page', async ({ page }) => {

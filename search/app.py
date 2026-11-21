@@ -2006,11 +2006,35 @@ def create_app(
     return app
 
 
-# Build the module-level `app` so production servers (`gunicorn search.app:app`)
-# can load it directly. The defaults are loaded from env once at import time;
-# tests that need a custom config call `create_app(cfg=..., qdrant=...)`
-# explicitly and ignore the module-level instance.
-app: FastAPI = create_app()
+# The module-level `app` is built LAZILY, on first attribute access.
+#
+# Production servers load it by name (`gunicorn search.app:app`), and
+# the loader resolves that with a getattr — so a PEP 562 module
+# `__getattr__` serves them exactly as an eagerly-built attribute
+# would.
+#
+# It used to be built at import time. That made merely IMPORTING this
+# module build an app: read the config, connect to Qdrant, reconcile
+# the stored vector dim against the env variant, and open the photo
+# cache. Every importer inherited those side effects — the demo
+# server, the OpenAPI dumper, the test suite — and each of them
+# could point at whatever QDRANT_URL happened to be in the
+# environment. On a host that also runs the production stack the
+# default URL is a REAL production Qdrant, so an incidental import
+# could inspect the production collection and refuse to start on a dim
+# mismatch. The build now happens when someone actually asks for the
+# app.
+_app: FastAPI | None = None
+
+
+def __getattr__(name: str):
+    """Build the module-level app on first access (PEP 562)."""
+    if name == "app":
+        global _app
+        if _app is None:
+            _app = create_app()
+        return _app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if __name__ == "__main__":  # pragma: no cover
