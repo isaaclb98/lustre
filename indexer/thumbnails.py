@@ -1,8 +1,10 @@
 """
 indexer/thumbnails.py — generate WebP thumbnails at index time.
 
-Thumbnails are 384×384 max dimension, WebP q80 4:4:4. Storage
-layout: {THUMBNAIL_DIR}/{prefix}/{point_id}.webp
+Thumbnails keep the SOURCE's aspect ratio — never cropped,
+squashed or letterboxed. The LONG edge is capped at THUMBNAIL_SIZE
+(the default 384); the short edge follows the source. WebP q80
+4:4:4. Storage layout: {THUMBNAIL_DIR}/{prefix}/{point_id}.webp
 
 Two-level prefix (first 2 chars of point_id) avoids putting 2M files
 in one directory. ~8K files per bucket at 2M scale.
@@ -62,7 +64,51 @@ except ImportError:
     _HAS_PYVIPS = False
 
 THUMBNAIL_DIR = os.environ.get("THUMBNAIL_DIR", "/app/data/thumbnails")
-THUMBNAIL_SIZE = (384, 384)  # matches the so400m model input res
+# The thumbnail's LONG edge, in pixels. The short edge follows the
+# source's aspect ratio: the thumbnail is never cropped, squashed or
+# letterboxed. A portrait photo produces a portrait thumbnail.
+#
+# This is the same number the C-RADIOv4 embedder uses for its input's
+# long edge — the model's input IS the thumbnail's geometry, so the
+# embedding sees exactly the framing the thumbnail shows. See
+# `lustre_kernel/_radio_models.py`.
+#
+# The default is unchanged from the SigLIP2 era (384 = the old model
+# input) so a deployment that does not set it keeps its current
+# storage footprint; the geometry change alone makes the files
+# slightly SMALLER for non-square sources.
+THUMBNAIL_SIZE: int = int(os.environ.get("THUMBNAIL_SIZE", "384"))
+
+
+def thumbnail_target_size(
+    width: int, height: int, size: int | None = None
+) -> tuple[int, int]:
+    """Target dimensions for a native-aspect thumbnail.
+
+    The image is scaled so its LONG edge is `size`, and the short edge
+    follows the source's aspect ratio. Never upscales a source that
+    is already smaller than the cap.
+
+    This is the same rule Immich applies to its non-cropping resize
+    (`fit: 'inside'`): the picture fits inside a size x size box with
+    its aspect preserved, so the long edge is the cap. Immich's own
+    thumbnail is a square centre-crop instead (`fit: 'outside'`), which
+    is the behaviour this replaces.
+
+    The cap is on the LONG edge rather than the short one because it
+    bounds the file size: a short-edge cap lets an extreme panorama
+    grow without limit, while a long-edge cap keeps every thumbnail
+    within size x size.
+    """
+    if size is None:
+        size = THUMBNAIL_SIZE
+    if width <= 0 or height <= 0:
+        return (size, size)
+    scale = size / max(width, height)
+    if scale >= 1.0:
+        # Already within the cap — keep the source dimensions.
+        return (width, height)
+    return (max(1, round(width * scale)), max(1, round(height * scale)))
 # Quality 80 — top of the Instagram / Google Photos / Apple Photos
 # range. Preserves fine detail (faces, fabric, foliage) without the
 # ~20% byte bloat of going to 85+. Below 70 starts eating high-
@@ -290,17 +336,13 @@ def _compute_thumbnail_pyvips(path: Path, point_id: str) -> Path | None:
     out_path = thumbnail_path(point_id)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        # Load, smart-crop to centre, resize to THUMBNAIL_SIZE.
-        # The 'centre' crop is the same geometric center-crop
-        # the PIL path uses; the alternative 'attention' crop
-        # uses entropy-based saliency (what Immich does) but
-        # shifts the framing unpredictably — a center-crop
-        # is what the user has been seeing, so keep it.
+        # Load and resize to fit INSIDE a THUMBNAIL_SIZE box, keeping
+        # the source's aspect ratio. No crop: the thumbnail shows the
+        # whole picture, so a portrait stays portrait.
         img: Any = _pv.Image.new_from_file(str(path))
         thumb = img.thumbnail_image(
-            THUMBNAIL_SIZE[0],
-            height=THUMBNAIL_SIZE[1],
-            crop="centre",
+            THUMBNAIL_SIZE,
+            height=THUMBNAIL_SIZE,
         )
         # WebP encode. libvips auto-selects 4:4:4 chroma at Q>=80
         # (matches Immich/PhotoPrism). effort=4 mirrors the
@@ -316,7 +358,7 @@ def _compute_thumbnail_pyvips(path: Path, point_id: str) -> Path | None:
 
         # Sized variants. Same pipeline at smaller dimensions.
         for size in THUMBNAIL_SIZES:
-            if size >= THUMBNAIL_SIZE[0]:
+            if size >= THUMBNAIL_SIZE:
                 continue
             variant = img.thumbnail_image(
                 size,
@@ -382,25 +424,24 @@ def _compute_thumbnail_pil(image: Image.Image, point_id: str) -> Path | None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Work on a copy to avoid mutating the pipeline's image.
-        # Center-crop to a square (the shorter side), then resize to
-        # THUMBNAIL_SIZE. The frontend displays thumbnails in 1:1 boxes
-        # with object-fit: cover, so square-cropped images fill the box
-        # rather than letterboxing with empty bands.
+        # Resize to the native-aspect target — no crop, no letterbox:
+        # the long edge becomes THUMBNAIL_SIZE and the short edge
+        # follows the source's aspect ratio.
         thumb = image.copy()
-        w, h = thumb.size
-        side = min(w, h)
-        left = (w - side) // 2
-        top = (h - side) // 2
-        thumb = thumb.crop((left, top, left + side, top + side))
+        # Unpack explicitly: a malformed image raises ValueError here,
+        # which the except below catches, rather than a TypeError
+        # from a star-unpack of a bogus size.
+        src_w, src_h = thumb.size
+        target = thumbnail_target_size(src_w, src_h)
         # Resize in linear-light sRGB (see _resize_in_linear_light
-        # for why). The crop stays in sRGB — gamma correction
-        # is only meaningful at the resampling step, where
-        # neighboring pixels are weighted-averaged.
+        # for why). Gamma correction is only meaningful at the
+        # resampling step, where neighboring pixels are
+        # weighted-averaged.
         if _LINEAR_RESIZE:
             thumb_rgb = thumb.convert("RGB")
-            thumb = _resize_in_linear_light(thumb_rgb, THUMBNAIL_SIZE)
+            thumb = _resize_in_linear_light(thumb_rgb, target)
         else:
-            thumb = thumb.resize(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+            thumb = thumb.resize(target, Image.Resampling.LANCZOS)
         # Force 4:4:4 chroma subsampling on the WebP encode. PIL's
         # default for quality<95 is 4:2:0, which subsamples the
         # chroma channels and visibly mutes saturated colors at
@@ -435,14 +476,17 @@ def _compute_thumbnail_pil(image: Image.Image, point_id: str) -> Path | None:
         # the canonical handles that automatically; we skip the write
         # to avoid garbage files on disk.
         for size in THUMBNAIL_SIZES:
-            if size >= THUMBNAIL_SIZE[0]:
+            if size >= THUMBNAIL_SIZE:
                 continue
             # Same linear-light resize as the canonical thumb so
-            # the srcset doesn't have a per-size color shift.
+            # the srcset doesn't have a per-size color shift. The
+            # variant keeps the canonical's aspect ratio — only the
+            # long edge shrinks.
+            variant_target = thumbnail_target_size(src_w, src_h, size)
             if _LINEAR_RESIZE:
-                variant = _resize_in_linear_light(thumb, (size, size))
+                variant = _resize_in_linear_light(thumb, variant_target)
             else:
-                variant = thumb.resize((size, size), Image.Resampling.LANCZOS)
+                variant = thumb.resize(variant_target, Image.Resampling.LANCZOS)
             variant_path = sized_thumbnail_path(point_id, size)
             # Same 4:4:4 chroma + sRGB profile as the canonical;
             # sized variants are an edge case (THUMBNAIL_SIZES is

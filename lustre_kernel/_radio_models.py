@@ -272,14 +272,22 @@ def register_into(registry: Registry) -> None:
     RADIO path needs runtime bits the SigLIP2 path does not
     (`einops` for torch.hub's dependency check, `git` for the
     clone). Keeping them apart means a host without those still
-    gets the SigLIP2 registrations.
+    gets the open_clip registrations.
+
+    The input's long edge is the THUMBNAIL_SIZE, not a number of
+    this module's own: the model's input IS the thumbnail's
+    geometry, so the embedding sees exactly the framing the
+    thumbnail shows. `indexer/thumbnails.py` owns the setting; it
+    is read from the environment here because the kernel cannot
+    import the indexer (the architecture test forbids it).
     """
-    embedder = RadioEmbedder(dim=1536, long_edge=512)
+    long_edge = int(os.environ.get("THUMBNAIL_SIZE", "384"))
+    embedder = RadioEmbedder(dim=1536, long_edge=long_edge)
     registry.register(
         ModelSpec(
             name="C-RADIOv4-SO400M",
             dim=1536,
-            resolution=512,
+            resolution=long_edge,
             revision="c-radio-v4-so400m",
             text=embedder,
             vision=embedder,

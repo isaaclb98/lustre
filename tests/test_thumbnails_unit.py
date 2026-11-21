@@ -88,21 +88,22 @@ class TestComputeThumbnail:
         result = compute_thumbnail(img, "abc123")
         assert result == thumbnail_path("abc123")
 
-    def test_thumbnail_dimensions_are_square(self, tmp_path, monkeypatch):
-        """Output should be exactly 384x384 (square-cropped, not letterboxed)."""
+    def test_thumbnail_keeps_the_source_aspect_ratio(self, tmp_path, monkeypatch):
+        """Output is native aspect: the long edge is capped, the short
+        edge follows the source. No crop, no squash, no letterbox."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
         img = Image.new("RGB", (1024, 768), color="green")
         result = compute_thumbnail(img, "abc123")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            assert thumb.size == (384, 288)
 
-    def test_smaller_image_upscaled_to_target(self, tmp_path, monkeypatch):
-        """Smaller square inputs are resized up to 384x384 (center-crop is no-op)."""
+    def test_smaller_image_is_not_upscaled(self, tmp_path, monkeypatch):
+        """A source already within the cap keeps its dimensions."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
         img = Image.new("RGB", (64, 64), color="red")
         result = compute_thumbnail(img, "small123")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            assert thumb.size == (64, 64)
 
     def test_square_image(self, tmp_path, monkeypatch):
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
@@ -111,39 +112,63 @@ class TestComputeThumbnail:
         with Image.open(result) as thumb:
             assert thumb.size == (384, 384)
 
-    def test_portrait_image_becomes_square(self, tmp_path, monkeypatch):
-        """Tall portrait: center-crop the shorter (width) side, resize to square."""
+    def test_portrait_image_stays_portrait(self, tmp_path, monkeypatch):
+        """Tall portrait: the long edge is capped, the width follows."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
         img = Image.new("RGB", (400, 800), color="red")
         result = compute_thumbnail(img, "tall1234")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            assert thumb.size == (192, 384)
 
-    def test_landscape_image_becomes_square(self, tmp_path, monkeypatch):
-        """Wide landscape: center-crop the shorter (height) side, resize to square."""
+    def test_landscape_image_stays_landscape(self, tmp_path, monkeypatch):
+        """Wide landscape: the long edge is capped, the height follows."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
         img = Image.new("RGB", (800, 400), color="red")
         result = compute_thumbnail(img, "wide1234")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            assert thumb.size == (384, 192)
 
-    def test_center_crop_uses_center_of_image(self, tmp_path, monkeypatch):
-        """A 4x4 image with distinct corners — center crop should sample center."""
+    def test_no_crop_the_whole_picture_survives(self, tmp_path, monkeypatch):
+        """The thumbnail is the whole picture, not a centre crop.
+
+        A red band across the TOP of the source must still be at the
+        top of the thumbnail -- under the old square centre-crop it
+        was cropped away entirely.
+        """
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
-        # Build a 4x4 image where the center 2x2 is red, the borders are blue.
-        # Up-res to a larger image so center-crop has meaningful content.
+        img = Image.new("RGB", (400, 800), color="blue")
+        img.paste(Image.new("RGB", (400, 100), color="red"), (0, 0))
+        result = compute_thumbnail(img, "crop123")
+        with Image.open(result) as thumb:
+            assert thumb.size == (192, 384)
+            top = thumb.convert("RGB").crop((0, 0, 192, 20))
+            bottom = thumb.convert("RGB").crop((0, 364, 192, 384))
+            assert top.getpixel((96, 10))[0] > 150, "the red top band was cropped away"
+            assert bottom.getpixel((96, 10))[2] > 150, "the blue bottom was cropped away"
+
+    def test_nothing_is_cropped_away(self, tmp_path, monkeypatch):
+        """The whole picture survives — nothing is cropped.
+
+        A red band across the middle of a portrait source must still
+        be in the middle of the thumbnail. The old square centre-crop
+        would have kept it but thrown away the top and bottom.
+        """
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
         img = Image.new("RGB", (100, 400), color="blue")
         # Paint the center column red
         for y in range(150, 250):
             for x in range(100):
                 img.putpixel((x, y), (255, 0, 0))
         result = compute_thumbnail(img, "center12")
-        # Resized 384x384 should be predominantly red (center was red)
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
-            # Sample the center pixel — should be reddish
-            r, g, b = thumb.getpixel((128, 128))
+            # Portrait source -> portrait thumbnail, long edge capped.
+            assert thumb.size == (96, 384)
+            # The red band is still at the vertical middle.
+            r, g, b = thumb.getpixel((48, 192))
             assert r > g  # red dominates over blue
+            # And the top of the picture is the source's top (blue).
+            r, g, b = thumb.getpixel((48, 4))
+            assert b > r
 
     def test_rgba_image_converted(self, tmp_path, monkeypatch):
         """RGBA images should still produce valid WebP output."""
@@ -262,7 +287,24 @@ class TestThumbnailConstants:
         # Post the model-variant migration plan, the thumbnail is
         # 384×384 (matching the so400m model input resolution). Pre-
         # migration this was 256×256.
-        assert THUMBNAIL_SIZE == (384, 384)
+        assert THUMBNAIL_SIZE == 384
+
+    def test_thumbnail_target_size_caps_the_long_edge(self):
+        """The sizing policy: long edge capped, aspect preserved."""
+        from indexer.thumbnails import thumbnail_target_size
+
+        # Portrait: the long edge is the height.
+        assert thumbnail_target_size(1080, 1350) == (307, 384)
+        # Landscape: the long edge is the width.
+        assert thumbnail_target_size(1920, 1080) == (384, 216)
+        # Square.
+        assert thumbnail_target_size(800, 800) == (384, 384)
+        # Already within the cap -> untouched.
+        assert thumbnail_target_size(200, 100) == (200, 100)
+        # An explicit size overrides the default.
+        assert thumbnail_target_size(1080, 1350, 500) == (400, 500)
+        # Degenerate input.
+        assert thumbnail_target_size(0, 0) == (384, 384)
 
     def test_thumbnail_quality_is_80(self):
         # Post the 256→384 / q50→q80 thumbnail pipeline rework
@@ -423,7 +465,9 @@ class TestPyvipsPath:
         assert result is not None
         assert result.exists()
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            # The source is 640x480; the long edge is capped at 384
+            # and the aspect ratio is preserved.
+            assert thumb.size == (384, 288)
             assert thumb.format == "WEBP"
             # libvips auto-4:4:4 + ICC embed: the file MUST
             # carry the sRGB profile (matches what the PIL
@@ -466,6 +510,9 @@ class TestPyvipsPath:
         )
         assert result is not None
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            # The PIL path works from the IN-MEMORY image (16x16),
+            # not the source path — and a source already within the
+            # cap is not upscaled.
+            assert thumb.size == (16, 16)
             # PIL path also embeds the profile.
             assert thumb.info.get("icc_profile") == _SRGB_PROFILE_BYTES

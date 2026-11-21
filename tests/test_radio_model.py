@@ -36,8 +36,12 @@ def test_radio_model_is_registered():
     spec = registry.get(RADIO_MODEL)
     assert spec.name == RADIO_MODEL
     assert spec.dim == 1536
-    # The long edge of the native-aspect input, not a square.
-    assert spec.resolution == 512
+    # The long edge of the native-aspect input, not a square — and it
+    # is the THUMBNAIL_SIZE, because the model's input IS the
+    # thumbnail's geometry.
+    from indexer.thumbnails import THUMBNAIL_SIZE
+
+    assert spec.resolution == THUMBNAIL_SIZE
     assert spec.preprocess == "native"
 
 

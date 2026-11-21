@@ -96,13 +96,22 @@ def _reencode_one(
         # pipeline. The libvips path will load it, apply linear-
         # light resize to THUMBNAIL_SIZE (same as current, so a
         # no-op), and re-encode with 4:4:4 + ICC.
+        #
+        # NOTE: this script re-encodes the EXISTING asset; it does
+        # not change its geometry. A thumbnail written by the
+        # pre-native-aspect pipeline is a square crop, and it stays
+        # a square crop here — moving those to native aspect means
+        # regenerating them from the source photos.
         from PIL import Image
 
         with Image.open(source_thumb) as im:
-            if im.size != THUMBNAIL_SIZE:
-                # Thumbnail isn't the canonical 384x384. It's
-                # either a sized variant or a legacy smaller
-                # asset. Skip — we only re-encode the canonical.
+            # The canonical thumbnail's LONG edge is THUMBNAIL_SIZE
+            # (the short edge follows the source's aspect ratio), so
+            # that — not an exact size match — is what identifies it.
+            if max(im.size) != THUMBNAIL_SIZE:
+                # Thumbnail isn't the canonical. It's either a sized
+                # variant or a legacy smaller asset. Skip — we only
+                # re-encode the canonical.
                 return (point_id, "skip-non-canonical")
 
         if out_dir is not None:
