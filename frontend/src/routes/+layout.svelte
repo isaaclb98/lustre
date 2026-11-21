@@ -18,13 +18,12 @@
   import { onNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
   import { preferences, masonryEnabled } from '$lib/stores/preferences';
-  import { theme } from '$lib/theme';
   import {
     GRID_HOVER_ZOOM,
     GRID_MOTION_EASE,
     GRID_MOTION_MS,
-    gridConfigFor,
-    tileRadiusFor
+    GRID_TILE_RADIUS,
+    gridConfigFor
   } from '$lib/grid/config';
   import { widthForColumns } from '$lib/grid/geometry';
 
@@ -51,21 +50,14 @@
   // row) via --grid-width, so changing TILE here also resizes the
   // chrome on every page.
   //
-  // Round-83: tile, gap, and max-cols now come from the user's
+  // Round-83: tile and max-cols now come from the user's
   // grid-size preference via GRID_SIZE_CONFIG. The numbers below
   // are derived so the ResizeObserver and any other reader see
   // the same values as PhotoGrid. Single source of truth.
   //
-  // Large is 240px tiles at 6 cols, 14px gap → a 1460px content
-  // width. The 384px source WebP is downscaled to 240 at dpr
-  // 1.53 — essentially 1:1 device-pixel mapping, which is the
-  // crispest the single-variant setup gets without going to
-  // larger source files.
+  // Large is 240px tiles at 6 cols → a 1440px content width. There
+  // is no gutter: the photos touch, edge to edge.
   //
-  // The theme is the second half of that decision. The dark theme's
-  // grid has no gutter at all — its photos touch, like the
-  // presentation wall's — so the gap and the tile radius are read
-  // through the theme rather than off the size preset alone.
   // Masonry has its own size ladder (see MASONRY_GRID_SIZE_CONFIG):
   // a masonry tile is not cropped to a square, so the same width
   // shows a smaller photo and the ladder starts one rung higher.
@@ -73,13 +65,9 @@
   // renders, or the CSS would lay out a different tile size than
   // the virtualizer assumes.
   const config = $derived(
-    gridConfigFor(
-      $preferences.gridSize,
-      $theme,
-      masonryEnabled($preferences)
-    )
+    gridConfigFor($preferences.gridSize, masonryEnabled($preferences))
   );
-  // Max row width = MAX_COLS * TILE + (MAX_COLS - 1) * GAP. Used
+  // Max row width = MAX_COLS * TILE. Used
   // as `--grid-row-max-width` so the CSS grid's max-width clamp
   // matches the JS math — without it, auto-fit would let tracks
   // grow past the cap and the row would fill the viewport.
@@ -100,29 +88,19 @@
     const publishSizeVars = () => {
       const root = document.documentElement.style;
       root.setProperty('--grid-tile-size', config.tile + 'px');
-      root.setProperty('--grid-gutter-size', config.gap + 'px');
       root.setProperty('--grid-row-max-width', ROW_MAX_WIDTH + 'px');
       root.setProperty('--grid-hover-zoom', String(GRID_HOVER_ZOOM));
       root.setProperty('--grid-motion-ms', GRID_MOTION_MS + 'ms');
       root.setProperty('--grid-motion-ease', GRID_MOTION_EASE);
       // The tile radius is published so the tile and the loading
       // skeleton — two different components — cannot drift apart
-      // in shape. The presentation wall overrides it on its own
-      // grid wrapper to 0, so its photos touch pixel-to-pixel.
-      // The dark theme's radius is 0 everywhere: sharp, no rounded
-      // aspects at all.
-      root.setProperty('--grid-tile-radius', tileRadiusFor($theme) + 'px');
+      // in shape. It is zero: the photos touch, with sharp corners.
+      root.setProperty('--grid-tile-radius', GRID_TILE_RADIUS + 'px');
     };
     publishSizeVars();
     const unsub = preferences.subscribe(() => publishSizeVars());
-    // The theme is fixed per deployment — the marker is stamped
-    // onto the shell — so this rarely fires. But it must fire at
-    // all: the gutter and the radius are part of the theme, and a
-    // change to the attribute has to reach the published vars.
-    const unsubTheme = theme.subscribe(() => publishSizeVars());
     return () => {
       unsub();
-      unsubTheme();
     };
   });
 

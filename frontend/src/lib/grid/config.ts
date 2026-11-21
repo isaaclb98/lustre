@@ -8,19 +8,13 @@
  * row slicing, the request sizing — reads from here so those four
  * consumers can never drift apart.
  *
- * The one exception is the Theme type, which is imported as a type
- * only: it names which palette the numbers belong to, and importing
- * it costs nothing at runtime.
- *
  * Tile size: 240/192/144 px. Large matches the Round-55 default;
  * medium and small pack progressively more photos per row.
  *
- * Gap: 14/8/4 px in the light theme. Larger photos get more
- * breathing room (the Round-38 design intent — 14px reads as
- * "personal photo library", tighter gaps read as utilitarian).
- * Smaller photos need a tighter gap to read as a continuous wall
- * instead of fragmenting into a grid of small squares. The dark
- * theme has no gutter at all — see gridConfigFor.
+ * There is NO GUTTER. The grid's photos touch, edge to edge, the
+ * way the presentation wall's do — that is now the only rule, so
+ * the geometry is not a function of the theme: one ladder, one
+ * shape, whatever the palette is doing.
  *
  * Max cols: 6/8/10. The CSS grid uses `auto-fit` with the tile
  * size as the track width, so a narrow viewport shows fewer cols;
@@ -34,22 +28,20 @@
  * part of the promise, and every page holds at least this many
  * rows once aligned to whole rows.
  */
-import type { Theme } from '$lib/theme';
 
 export type GridSize = 'large' | 'medium' | 'small';
 
 export interface GridSizeConfig {
   tile: number;
-  gap: number;
   maxCols: number;
   /** Rows of photos a page holds at maximum density. */
   rows: number;
 }
 
 export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
-  large: { tile: 240, gap: 14, maxCols: 6, rows: 4 },
-  medium: { tile: 192, gap: 8, maxCols: 8, rows: 4 },
-  small: { tile: 144, gap: 4, maxCols: 10, rows: 4 }
+  large: { tile: 240, maxCols: 6, rows: 4 },
+  medium: { tile: 192, maxCols: 8, rows: 4 },
+  small: { tile: 144, maxCols: 10, rows: 4 }
 };
 
 /**
@@ -66,18 +58,18 @@ export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
  * SMALLER, even though more of it is visible.
  *
  * The masonry ladder therefore starts one rung higher: the 240px
- * the square grid calls "large" is masonry's "medium", and
- * masonry's "large" is a new 288px rung above it.
+ * the square grid calls "large" is masonry's "medium", and the
+ * square grid's "medium" (192) is masonry's "small". Masonry's
+ * "large" is a rung above both — 288px, five columns.
  *
- * The gutter follows the tile (4/8/14/20 for 144/192/240/288), and
- * the column cap keeps the row's width where the square grid keeps
+ * The column cap keeps the row's width where the square grid keeps
  * it: a bigger tile means fewer columns, so the row still spans
- * ~1500px rather than sprawling across a wide monitor.
+ * ~1440px rather than sprawling across a wide monitor.
  */
 export const MASONRY_GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
-  large: { tile: 288, gap: 20, maxCols: 5, rows: 4 },
-  medium: { tile: 240, gap: 14, maxCols: 6, rows: 4 },
-  small: { tile: 192, gap: 8, maxCols: 8, rows: 4 }
+  large: { tile: 288, maxCols: 5, rows: 4 },
+  medium: { tile: 240, maxCols: 6, rows: 4 },
+  small: { tile: 192, maxCols: 8, rows: 4 }
 };
 
 /**
@@ -98,74 +90,50 @@ export const GRID_HOVER_ZOOM = 1.04;
  * skeleton — rendered by two different components — cannot drift
  * apart in shape.
  *
- * The default matches the app's `--r-1` (rounded tiles). The
- * presentation wall overrides it to 0: its photos touch
- * pixel-to-pixel, and a rounded corner would leave the background
- * showing through at every intersection.
+ * Zero: the grid's photos touch, and a rounded corner would leave
+ * the background showing through at every intersection.
  */
-export const GRID_TILE_RADIUS = 10;
+export const GRID_TILE_RADIUS = 0;
 
 /**
- * The grid configuration for a size under a theme.
+ * The grid configuration for a size.
  *
- * The dark theme draws the same tiles with no gutter at all: its
- * photos touch, exactly as the presentation wall's do. Everything
- * else — tile size, column cap, rows per page — is the user's
- * grid-size preference in either theme, so the two differ only in
- * how much space sits between the photos.
- *
- * The theme is a parameter rather than a lookup so this module
+ * The layout is a parameter rather than a lookup so this module
  * stays free of the DOM: it owns numbers, and the caller owns the
- * theme. The layout is a parameter for the same reason: masonry
- * has its own ladder (see MASONRY_GRID_SIZE_CONFIG), and every
- * consumer that must agree on these numbers (the layout's
- * published CSS vars, the grid's virtualizer, the column math, the
- * request sizing) calls this one function.
+ * rest. Masonry has its own ladder (see MASONRY_GRID_SIZE_CONFIG),
+ * and every consumer that must agree on these numbers (the
+ * layout's published CSS vars, the grid's virtualizer, the column
+ * math, the request sizing) calls this one function.
  */
-export function gridConfigFor(
-  size: GridSize,
-  theme: Theme,
-  masonry = false
-): GridSizeConfig {
-  const base = masonry ? MASONRY_GRID_SIZE_CONFIG[size] : GRID_SIZE_CONFIG[size];
-  return theme === 'dark' ? { ...base, gap: 0 } : base;
+export function gridConfigFor(size: GridSize, masonry = false): GridSizeConfig {
+  return masonry ? MASONRY_GRID_SIZE_CONFIG[size] : GRID_SIZE_CONFIG[size];
 }
 
 /**
- * The tile's corner radius under a theme.
+ * The presentation wall's grid config: the same ladder as the app
+ * grid.
  *
- * The dark theme is square: no rounded corners anywhere, so a photo
- * meets its neighbour at a right angle.
- */
-export function tileRadiusFor(theme: Theme): number {
-  return theme === 'dark' ? 0 : GRID_TILE_RADIUS;
-}
-
-/**
- * The presentation wall's grid config: square tiles, no gutter.
+ * The wall used to differ by its gutter alone — it is a square,
+ * gapless field by design. With the app grid gapless too, the wall
+ * is the app grid's own shape, and the only thing it still
+ * overrides is the row's width cap (a presentation fills the
+ * screen rather than keeping the app's row width).
  *
- * This is a SEPARATE config from GRID_SIZE_CONFIG rather than a
- * mutation of it, because the wall is one surface's look while
- * GRID_SIZE_CONFIG is the app-wide grid every other route renders.
- * The wall takes its tile SIZE from the user's grid-size
- * preference (so the photos stay as large as they asked for) and
- * overrides only the gap — and the gap is the whole point.
- *
- * Because the gap is 0, the column math in grid/geometry.ts
+ * Because there is no gutter, the column math in grid/geometry.ts
  * collapses to floor(width / tile), and a full row is exactly
- * cols × tile px — the row's max width and the CSS track count
+ * cols x tile px — the row's max width and the CSS track count
  * agree with the JS without a correction term.
  */
 export function wallConfig(base: GridSizeConfig): GridSizeConfig {
-  return { ...base, gap: 0 };
+  return base;
 }
 
 /**
  * Motion timing for the grid's own transitions, in ms.
  *
  * The app-wide `--t-fast` / `--ease-out` tokens are referenced
- * across the codebase but were never defined, so every transition
- * that names them currently resolves to nothing and the browser
+ * across the codebase but were never defined, so any transition
+ * that names one currently resolves to nothing and the browser
  * applies the initial `0s` duration — the animations do not run.
  * The grid carries its own pair rather than depending on tokens
  * that do not exist, and rather than switching on transitions
@@ -176,7 +144,7 @@ export const GRID_MOTION_MS = 100;
 /**
  * Easing for the grid's transitions. The app's historical
  * `--ease-out` curve (cubic-bezier(0.16, 0.84, 0.32, 1)), which
- * is what the pre-redesign tokens used.
+ * is what the pre-redesign tokens had.
  */
 export const GRID_MOTION_EASE = 'cubic-bezier(0.16, 0.84, 0.32, 1)';
 

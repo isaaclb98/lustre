@@ -189,30 +189,19 @@ test.describe('dark theme', () => {
     }
   });
 
-  test('the theme decides the grid geometry', async ({ page }) => {
+  test('the grid geometry is gapless and square in every theme', async ({ page }) => {
     const albumId = await albumWithPhotos(page);
     await page.goto(`${APP}/albums/${albumId}`);
     const geom = await waitForGrid(page);
-    const theme = await documentTheme(page);
 
-    if (theme === 'dark') {
-      // No gutter: the row's own gap AND the space between two
-      // neighbours are both zero, so the photos touch.
-      expect(geom.gap).toBe('0px');
-      expect(geom.gapBetweenTiles).toBe(0);
-      // Square corners, and no border to separate the photos.
-      expect(geom.radius).toBe('0px');
-      expect(geom.borderWidth).toBe('0px');
-    } else {
-      // The light theme keeps its gutter and rounded tiles. The
-      // gutter's exact size follows the layout's ladder (14px in
-      // the square grid, 20px in masonry) — what matters here is
-      // that there IS one, and that the dark theme has none.
-      expect(geom.gap).not.toBe('0px');
-      expect(geom.gapBetweenTiles).toBeGreaterThan(0);
-      expect(geom.radius).not.toBe('0px');
-      expect(geom.borderWidth).not.toBe('0px');
-    }
+    // The grid is gapless and square in EVERY theme now: the dark
+    // theme's treatment is the only one. The row's own gap AND the
+    // space between two neighbours are both zero, so the photos
+    // touch; and the tiles are square corners with no border.
+    expect(geom.gap).toBe('0px');
+    expect(geom.gapBetweenTiles).toBe(0);
+    expect(geom.radius).toBe('0px');
+    expect(geom.borderWidth).toBe('0px');
 
     // The uniform grid squares its tiles in both themes. Masonry
     // does not: each tile is as tall as the photo's own aspect
@@ -255,18 +244,11 @@ test.describe('dark theme', () => {
     // The geometry follows the store: the gap is part of the
     // theme, so the grid has to re-derive it.
     //
-    // The light theme's gutter depends on the LAYOUT's size ladder:
-    // 14px in the square grid, 20px in masonry (whose ladder is a
-    // rung higher, so its large tile carries a larger gutter). The
-    // dark theme has no gutter at all in either.
-    const lightGap = (await page.evaluate(() =>
-      document.documentElement.getAttribute('data-masonry') === '1'
-    ))
-      ? '20px'
-      : '14px';
+    // There is no gutter in either theme, so the geometry does not
+    // move when the theme flips.
     await expect
       .poll(async () => (await gridGeometry(page))?.gap)
-      .toBe(target === 'dark' ? '0px' : lightGap);
+      .toBe('0px');
 
     const after = await gridGeometry(page);
     if (target === 'dark') {

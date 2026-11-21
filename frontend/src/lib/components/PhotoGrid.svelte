@@ -30,7 +30,6 @@
   import Lightbox from './Lightbox.svelte';
   import { preferences, masonryEnabled } from '$lib/stores/preferences';
   import { thumbnailSize } from '$lib/layout';
-  import { theme } from '$lib/theme';
   import { gridConfigFor, type GridSizeConfig } from '$lib/grid/config';
   import { columnsForWidth, wallColumnsForWidth } from '$lib/grid/geometry';
   import { isClamped, layoutMasonry } from '$lib/grid/masonry';
@@ -152,8 +151,8 @@
   // `--grid-row-max-width` on `:root`. The CSS uses those vars;
   // the virtualizer uses the JS derived values directly.
   //
-  // The theme decides the gap and the radius. The dark theme's grid
-  // has no gutter — its photos touch, like the presentation wall's —
+  // The grid has no gutter — its photos touch, like the
+  // presentation wall's do —
   // so the gap the virtualizer assumes has to be the gap the CSS
   // renders, or every row would be the wrong height and the scroll
   // would drift.
@@ -172,10 +171,9 @@
   const masonry = $derived(masonryEnabled($preferences) && !wall);
 
   const config = $derived(
-    tileConfig ?? gridConfigFor($preferences.gridSize, $theme, masonry)
+    tileConfig ?? gridConfigFor($preferences.gridSize, masonry)
   );
   const TILE = $derived(config.tile);
-  const GAP = $derived(config.gap);
   const MAX_COLS = $derived(config.maxCols);
 
   // Number of skeleton placeholder rows rendered while a fetch
@@ -194,7 +192,7 @@
   // commented 280 as the previous "approximate tile height +
   // gap" — derived now so a different gridSize (which changes
   // the row height) gets a sensible default.
-  const ESTIMATED_ROW_HEIGHT = $derived(TILE + GAP);
+  const ESTIMATED_ROW_HEIGHT = $derived(TILE);
 
   // Sensible floor before we know the wrapper width — used on the
   // very first render when both containerWidth and tileSize are 0.
@@ -226,7 +224,7 @@
   // (the canonical CSS tile width) — the ResizeObserver fires within
   // one frame and the $effect below re-measures.
   let tileSize = $derived(renderedTileSize > 0 ? renderedTileSize : TILE);
-  let rowHeight = $derived(tileSize + GAP);
+  let rowHeight = $derived(tileSize);
 
   // Derive column count from the same math the CSS uses:
   //   containerWidth = COLUMNS * tileSize + (COLUMNS - 1) * GAP
@@ -290,7 +288,7 @@
   // by design, so the masonry layout must not touch it. The wall's
   // own tile config (square corners, no gutter) still applies.
   const masonryLayout = $derived(
-    masonry ? layoutMasonry(items, { tile: TILE, gap: GAP, columns }) : null
+    masonry ? layoutMasonry(items, { tile: TILE, columns }) : null
   );
 
   // The visible band, in the grid's own coordinates. The grid's top
@@ -390,9 +388,9 @@
   // count tracks itself) so the two can never disagree: if the CSS
   // rendered a different number of tracks than the JS assumed, the
   // last columns of every row would stay empty.
-  let rowMaxWidth = $derived(MAX_COLS * TILE + (MAX_COLS - 1) * GAP);
+  let rowMaxWidth = $derived(MAX_COLS * TILE);
   let gridVars = $derived(
-    `--grid-tile-size:${TILE}px;--grid-gutter-size:${GAP}px;--grid-row-max-width:${rowMaxWidth}px;--grid-cols:${columns};` +
+    `--grid-tile-size:${TILE}px;--grid-row-max-width:${rowMaxWidth}px;--grid-cols:${columns};` +
       // The wall's tiles are square. Published on the wrapper so the
       // tile and the loading skeleton — which read the var — both
       // pick it up, and only for this grid.
@@ -885,7 +883,7 @@
        library', tighter gaps read as utilitarian). The JS-side
        GAP constant in this file's <script> matches this value
        exactly so the virtualizer's rowHeight math is right. */
-    gap: var(--grid-gutter-size, 14px);
+    gap: 0;
     /* Cap the row at the max-cols width. Without this, on a 2400px
        viewport with the small setting (10 cols × 144 + 9 × 4 =
        1476px), the row would expand to fill the available width
@@ -1014,7 +1012,7 @@
        justify-content. No additional sizing needed. The
        margin-bottom matches the row gap so the shimmer
        band has the same vertical rhythm as the real grid. */
-    margin-bottom: var(--grid-gutter-size, 14px);
+    margin-bottom: 0;
     pointer-events: none;
   }
   .skeleton-tile {

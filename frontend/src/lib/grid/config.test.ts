@@ -1,18 +1,15 @@
 /**
- * Unit tests for the theme-aware grid configuration.
+ * Unit tests for the grid configuration.
  *
- * The grid's numbers live in grid/config.ts, and the theme decides
- * two of them: the gutter and the tile radius. The dark theme's
- * grid has NO gutter — its photos touch pixel-to-pixel, like the
- * presentation wall's — and no radius.
+ * The grid's numbers live in grid/config.ts. Two facts are pinned
+ * here:
  *
- * What we pin:
- *   - the light theme's numbers are unchanged by the theming (the
- *     light theme is the default and must not shift),
- *   - the dark theme's gutter is 0 and its radius is 0,
- *   - the tile size and the column cap are the user's grid-size
- *     preference in BOTH themes — the theme changes how the photos
- *     sit together, not how big they are or how many fit.
+ *   - there is no gutter and no rounded corner: the grid's photos
+ *     touch, edge to edge, in every theme and at every size. The
+ *     geometry is not a function of the theme any more, so the
+ *     config carries no theme parameter at all;
+ *   - the masonry ladder starts one rung above the square ladder,
+ *     and both keep their row width.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -20,44 +17,39 @@ import {
   GRID_TILE_RADIUS,
   MASONRY_GRID_SIZE_CONFIG,
   gridConfigFor,
-  tileRadiusFor,
   wallConfig
 } from './config';
 import type { GridSize } from './config';
 
 const SIZES: GridSize[] = ['large', 'medium', 'small'];
 
+function rowWidthOf(c: { tile: number; maxCols: number }): number {
+  return c.maxCols * c.tile;
+}
+
 describe('gridConfigFor', () => {
-  it('leaves the light theme exactly as the size preset defines it', () => {
+  it('returns the square ladder untouched', () => {
     for (const size of SIZES) {
-      const config = gridConfigFor(size, 'light');
-      expect(config).toEqual(GRID_SIZE_CONFIG[size]);
-      // The same numbers, and the same gap.
-      expect(config.gap).toBe(GRID_SIZE_CONFIG[size].gap);
-      expect(config.tile).toBe(GRID_SIZE_CONFIG[size].tile);
-      expect(config.maxCols).toBe(GRID_SIZE_CONFIG[size].maxCols);
+      expect(gridConfigFor(size)).toEqual(GRID_SIZE_CONFIG[size]);
     }
   });
 
-  it('drops the gutter entirely in the dark theme', () => {
+  it('has no gutter to drop — the photos touch', () => {
+    // There is no `gap` on the config any more: the gutter is not a
+    // value the grid carries, so it cannot be theme-dependent.
     for (const size of SIZES) {
-      expect(gridConfigFor(size, 'dark').gap).toBe(0);
+      expect('gap' in gridConfigFor(size)).toBe(false);
     }
   });
 
-  it('keeps the tile size and column cap from the size preset in the dark theme', () => {
-    for (const size of SIZES) {
-      const dark = gridConfigFor(size, 'dark');
-      expect(dark.tile).toBe(GRID_SIZE_CONFIG[size].tile);
-      expect(dark.maxCols).toBe(GRID_SIZE_CONFIG[size].maxCols);
-      expect(dark.rows).toBe(GRID_SIZE_CONFIG[size].rows);
-    }
+  it('has square corners — the radius is zero', () => {
+    expect(GRID_TILE_RADIUS).toBe(0);
   });
 
   it('does not mutate the shared preset', () => {
-    const before = GRID_SIZE_CONFIG.large.gap;
-    gridConfigFor('large', 'dark');
-    expect(GRID_SIZE_CONFIG.large.gap).toBe(before);
+    const before = GRID_SIZE_CONFIG.large.tile;
+    gridConfigFor('large');
+    expect(GRID_SIZE_CONFIG.large.tile).toBe(before);
   });
 });
 
@@ -90,66 +82,42 @@ describe('the masonry ladder', () => {
   });
 
   it('keeps the row width where the square grid keeps it', () => {
-    // The square ladder's row spans ~1500px at every size: a bigger
+    // The square ladder's row spans ~1440px at every size: a bigger
     // tile buys fewer columns. The masonry ladder must not sprawl
     // across a wide monitor.
-    const rowWidth = (c: { tile: number; gap: number; maxCols: number }) =>
-      c.maxCols * c.tile + (c.maxCols - 1) * c.gap;
     for (const size of SIZES) {
-      expect(rowWidth(MASONRY_GRID_SIZE_CONFIG[size])).toBeLessThan(1700);
-      expect(rowWidth(MASONRY_GRID_SIZE_CONFIG[size])).toBeGreaterThan(1400);
+      expect(rowWidthOf(MASONRY_GRID_SIZE_CONFIG[size])).toBeLessThan(1700);
+      expect(rowWidthOf(MASONRY_GRID_SIZE_CONFIG[size])).toBeGreaterThan(1400);
     }
   });
 
   it('is used by gridConfigFor when masonry is on', () => {
     for (const size of SIZES) {
-      expect(gridConfigFor(size, 'light', true)).toEqual(
+      expect(gridConfigFor(size, true)).toEqual(
         MASONRY_GRID_SIZE_CONFIG[size]
       );
     }
   });
 
-  it('drops the gutter in the dark theme, like the square ladder', () => {
-    for (const size of SIZES) {
-      expect(gridConfigFor(size, 'dark', true).gap).toBe(0);
-      // ...but keeps the tile size and the column cap.
-      expect(gridConfigFor(size, 'dark', true).tile).toBe(
-        MASONRY_GRID_SIZE_CONFIG[size].tile
-      );
-      expect(gridConfigFor(size, 'dark', true).maxCols).toBe(
-        MASONRY_GRID_SIZE_CONFIG[size].maxCols
-      );
-    }
-  });
-
   it('does not mutate the shared preset', () => {
-    const before = MASONRY_GRID_SIZE_CONFIG.large.gap;
-    gridConfigFor('large', 'dark', true);
-    expect(MASONRY_GRID_SIZE_CONFIG.large.gap).toBe(before);
-  });
-});
-
-describe('tileRadiusFor', () => {
-  it('keeps the rounded tile in the light theme', () => {
-    expect(tileRadiusFor('light')).toBe(GRID_TILE_RADIUS);
-  });
-
-  it('is square in the dark theme', () => {
-    expect(tileRadiusFor('dark')).toBe(0);
+    const before = MASONRY_GRID_SIZE_CONFIG.large.tile;
+    gridConfigFor('large', true);
+    expect(MASONRY_GRID_SIZE_CONFIG.large.tile).toBe(before);
   });
 });
 
 describe('wallConfig', () => {
-  it('drops the gutter whatever the theme', () => {
+  it('is the app grid’s own shape', () => {
+    // The wall used to differ by its gutter alone. With the app grid
+    // gapless too, the wall IS the app grid's shape.
     for (const size of SIZES) {
-      expect(wallConfig(gridConfigFor(size, 'light')).gap).toBe(0);
-      expect(wallConfig(gridConfigFor(size, 'dark')).gap).toBe(0);
+      expect(wallConfig(gridConfigFor(size))).toEqual(gridConfigFor(size));
     }
   });
 
   it('keeps the tile size — the wall renders the photos the size the user chose', () => {
     for (const size of SIZES) {
-      expect(wallConfig(gridConfigFor(size, 'dark')).tile).toBe(
+      expect(wallConfig(gridConfigFor(size)).tile).toBe(
         GRID_SIZE_CONFIG[size].tile
       );
     }

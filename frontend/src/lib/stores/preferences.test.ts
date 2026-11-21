@@ -176,10 +176,8 @@ describe('GRID_SIZE_CONFIG', () => {
     for (const s of sizes) {
       const c = GRID_SIZE_CONFIG[s];
       expect(c.tile).toBeGreaterThan(0);
-      expect(c.gap).toBeGreaterThan(0);
       expect(c.maxCols).toBeGreaterThan(0);
       expect(Number.isInteger(c.tile)).toBe(true);
-      expect(Number.isInteger(c.gap)).toBe(true);
       expect(Number.isInteger(c.maxCols)).toBe(true);
     }
     const large = GRID_SIZE_CONFIG.large;

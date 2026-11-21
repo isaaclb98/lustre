@@ -28,7 +28,7 @@
   import { resolve } from '$app/paths';
   import { getAlbum } from '$lib/api/endpoints';
   import { preferences } from '$lib/stores/preferences';
-  import { GRID_SIZE_CONFIG, wallConfig } from '$lib/grid/config';
+  import { GRID_SIZE_CONFIG } from '$lib/grid/config';
   import { shuffled } from '$lib/grid/shuffle';
   import PhotoGrid from '$lib/components/PhotoGrid.svelte';
   import DriftWall from '$lib/components/DriftWall.svelte';
@@ -89,7 +89,7 @@
   // The gap is the whole point of the wall — the photos touch
   // pixel-to-pixel — but the size stays the user's choice so the
   // photos are as large as they asked for.
-  let tileConfig = $derived(wallConfig(GRID_SIZE_CONFIG[$preferences.gridSize]));
+  let tileConfig = $derived(GRID_SIZE_CONFIG[$preferences.gridSize]);
 
   /**
    * Which surface this open is.

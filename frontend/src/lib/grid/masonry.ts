@@ -51,8 +51,6 @@ export interface MasonryPlacement {
 export interface MasonryOptions {
   /** The width every tile is rendered at, in px. */
   tile: number;
-  /** The gutter between tiles, in px. */
-  gap: number;
   /** How many columns the grid has. */
   columns: number;
   /** The narrowest a tile may get, as a height/width ratio. */
@@ -136,13 +134,11 @@ export function layoutMasonry(
   options: MasonryOptions
 ): { placements: MasonryPlacement[]; height: number } {
   const tile = Math.max(1, options.tile);
-  const gap = Math.max(0, options.gap);
   const columns = Math.max(1, Math.floor(options.columns));
   const minAspect = options.minAspect ?? DEFAULT_MIN_ASPECT;
   const maxAspect = options.maxAspect ?? DEFAULT_MAX_ASPECT;
 
-  // The running height of each column, including the gutter that
-  // will separate its last tile from the next one.
+  // The running height of each column.
   const columnHeights = new Array<number>(columns).fill(0);
   const placements: MasonryPlacement[] = [];
 
@@ -157,17 +153,15 @@ export function layoutMasonry(
       if (columnHeights[c] < columnHeights[column]) column = c;
     }
 
-    const x = column * (tile + gap);
+    const x = column * tile;
     const y = columnHeights[column];
     placements.push({ x, y, width: tile, height });
-    columnHeights[column] = y + height + gap;
+    columnHeights[column] = y + height;
   }
 
-  // The layout's height is the tallest column, minus the trailing
-  // gutter that no tile actually occupies.
+  // The layout's height is the tallest column.
   let height = 0;
   for (const h of columnHeights) height = Math.max(height, h);
-  if (placements.length > 0) height = Math.max(0, height - gap);
 
   return { placements, height };
 }

@@ -11,7 +11,7 @@ import {
   DEFAULT_MIN_ASPECT
 } from './masonry';
 
-const OPTS = { tile: 240, gap: 14, columns: 3 };
+const OPTS = { tile: 240, columns: 3 };
 
 describe('aspectFor', () => {
   it('uses the photo\'s own ratio', () => {
@@ -79,7 +79,7 @@ describe('layoutMasonry', () => {
       OPTS
     );
     expect(placements).toHaveLength(3);
-    expect(placements.map((p) => p.x)).toEqual([0, 254, 508]);
+    expect(placements.map((p) => p.x)).toEqual([0, 240, 480]);
     expect(placements.map((p) => p.y)).toEqual([0, 0, 0]);
   });
 
@@ -109,12 +109,12 @@ describe('layoutMasonry', () => {
     );
     // The tall photo is 480 tall; the square next to it is 240.
     expect(placements[0].x).toBe(0);
-    expect(placements[1].x).toBe(254);
+    expect(placements[1].x).toBe(240);
     expect(placements[1].y).toBe(0);
     // The third photo goes to column 1 again — it is still the
     // shortest column, not column 0 where the tall photo stands.
-    expect(placements[2].x).toBe(254);
-    expect(placements[2].y).toBe(254);
+    expect(placements[2].x).toBe(240);
+    expect(placements[2].y).toBe(240);
   });
 
   it('keeps the columns level', () => {
@@ -134,7 +134,7 @@ describe('layoutMasonry', () => {
     expect(height).toBeGreaterThan(0);
   });
 
-  it('reports the layout height without a trailing gutter', () => {
+  it('reports the layout height', () => {
     const { height } = layoutMasonry([{ width: 100, height: 100 }], {
       ...OPTS,
       columns: 1

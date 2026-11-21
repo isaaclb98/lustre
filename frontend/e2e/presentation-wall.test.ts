@@ -221,23 +221,11 @@ test.describe('presentation wall', () => {
     });
     expect(geom).not.toBeNull();
 
-    // The gutter is theme-dependent: the dark theme draws the app
-    // grid with NO gutter (its photos touch), which is deliberately
-    // the same look the wall has. In the dark theme there is nothing
-    // to tell the two apart by their tiles — what must not leak is
-    // the wall's frame, and the app chrome is checked separately.
-    const theme = await page.evaluate(() =>
-      document.documentElement.getAttribute('data-theme')
-    );
-    if (theme === 'dark') {
-      expect(geom!.gap).toBe('0px');
-      expect(geom!.gapBetweenTiles).toBe(0);
-    } else {
-      expect(geom!.gap).not.toBe('0px');
-      expect(geom!.gapBetweenTiles).toBeGreaterThan(0);
-      expect(geom!.radius).not.toBe('0px');
-      expect(geom!.borderStyle).not.toBe('none');
-    }
+    // The app grid is gapless in every theme now — the same look the
+    // wall has. What must not leak is the wall's FRAME, and the app
+    // chrome is checked separately.
+    expect(geom!.gap).toBe('0px');
+    expect(geom!.gapBetweenTiles).toBe(0);
   });
 
   test('the app chrome is still on the ordinary routes', async ({ page }) => {

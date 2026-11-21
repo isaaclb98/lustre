@@ -269,20 +269,14 @@ test.describe('Grid size preference', () => {
     // tick or two after the route mounts. Reading them once catches
     // the empty pre-publish value; POLL for them instead.
     //
-    // Medium config: 192/8 in the square grid, 240/14 in masonry
-    // (a masonry tile is not cropped to a square, so the ladder
-    // starts one rung higher).
-    //
-    // The GUTTER is theme-dependent: the dark theme draws its grid
-    // with no gutter at all (its photos touch), so the expected gap
-    // follows the theme the deployment is serving.
+    // Medium config: 192 in the square grid, 240 in masonry (a
+    // masonry tile is not cropped to a square, so the ladder starts
+    // one rung higher). There is no gutter in any theme.
     const expected = await page.evaluate(() => {
       const masonry =
         document.documentElement.getAttribute('data-masonry') === '1';
-      const dark = document.documentElement.getAttribute('data-theme') === 'dark';
       const tile = masonry ? '240px' : '192px';
-      const gap = dark ? '0px' : masonry ? '14px' : '8px';
-      return `${tile} / ${gap}`;
+      return `${tile} / 0px`;
     });
     await expect
       .poll(
@@ -290,7 +284,7 @@ test.describe('Grid size preference', () => {
           page.evaluate(() => {
             const style = getComputedStyle(document.documentElement);
             const tile = style.getPropertyValue('--grid-tile-size').trim();
-            const gap = style.getPropertyValue('--grid-gutter-size').trim();
+            const gap = style.getPropertyValue('--grid-gutter-size').trim() || '0px';
             return `${tile} / ${gap}`;
           }),
         { timeout: 10_000, message: 'the grid vars must be published' }

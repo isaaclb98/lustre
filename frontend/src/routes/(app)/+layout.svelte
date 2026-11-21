@@ -16,25 +16,17 @@
   import AppChrome from '$lib/components/AppChrome.svelte';
   import { onMount } from 'svelte';
   import { preferences, masonryEnabled } from '$lib/stores/preferences';
-  import { theme } from '$lib/theme';
   import { gridConfigFor } from '$lib/grid/config';
   import { columnsForWidth, widthForColumns } from '$lib/grid/geometry';
 
   let { children } = $props();
 
-  // Theme-aware: the dark theme's grid has no gutter, so the column
-  // count and the row width it publishes differ from the light
-  // theme's for the same viewport.
   // Masonry has its own size ladder (see MASONRY_GRID_SIZE_CONFIG).
   // The published --grid-width must come from the SAME ladder the
   // grid renders with, or the chrome would be sized for a different
   // column count than the grid draws.
   const config = $derived(
-    gridConfigFor(
-      $preferences.gridSize,
-      $theme,
-      masonryEnabled($preferences)
-    )
+    gridConfigFor($preferences.gridSize, masonryEnabled($preferences))
   );
 
   // Round-8: Cmd/Ctrl+K focuses the search composer input.
@@ -93,8 +85,8 @@
   // measured value once mounted — the layout value is the seed.
   //
   // Math mirrors PhotoGrid's column calculation:
-  //   N = min(MAX_COLS, floor((containerWidth + GAP) / (TILE + GAP)))
-  //   gridWidth = N * TILE + (N - 1) * GAP
+  //   N = min(MAX_COLS, floor(containerWidth / TILE))
+  //   gridWidth = N * TILE
   //
   // The width comes from the app shell, which only exists on app
   // routes — so this measurement belongs here, not in the root
