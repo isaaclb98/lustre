@@ -188,6 +188,78 @@ def test_shell_revalidates_so_a_theme_change_is_picked_up(shell_dir, monkeypatch
     assert resp.headers.get("etag")
 
 
+# ----- The masonry marker (the grid's layout mode) -----
+
+def test_masonry_is_off_by_default():
+    from search.config import load
+
+    assert load().masonry is False
+
+
+def test_masonry_follows_the_env_var(monkeypatch):
+    from search.config import load
+
+    monkeypatch.setenv("LUSTRE_MASONRY", "1")
+    assert load().masonry is True
+    monkeypatch.setenv("LUSTRE_MASONRY", "0")
+    assert load().masonry is False
+
+
+def test_the_served_shell_carries_the_masonry_marker(shell_dir, monkeypatch):
+    """LUSTRE_MASONRY=1 stamps the marker onto the shell.
+
+    Same contract as the theme: the frontend is one static build
+    shared by every deployment, so the layout mode rides on the
+    bytes the shell is served as.
+    """
+    monkeypatch.setenv("FRONTEND_DIR", str(shell_dir))
+    monkeypatch.setenv("LUSTRE_MASONRY", "1")
+
+    with _client(shell_dir) as http:
+        resp = http.get("/")
+
+    assert resp.status_code == 200
+    assert 'data-masonry="1"' in resp.text
+
+
+def test_the_served_shell_has_no_masonry_marker_by_default(shell_dir, monkeypatch):
+    """No marker means the uniform grid — the app's current look."""
+    monkeypatch.setenv("FRONTEND_DIR", str(shell_dir))
+    monkeypatch.delenv("LUSTRE_MASONRY", raising=False)
+
+    with _client(shell_dir) as http:
+        resp = http.get("/")
+
+    assert resp.status_code == 200
+    assert "data-masonry" not in resp.text
+
+
+def test_the_masonry_marker_is_replaced_not_duplicated(shell_dir, monkeypatch):
+    monkeypatch.setenv("FRONTEND_DIR", str(shell_dir))
+    monkeypatch.setenv("LUSTRE_MASONRY", "1")
+
+    with _client(shell_dir) as http:
+        resp = http.get("/")
+
+    assert resp.text.count("data-masonry") == 1
+
+
+def test_the_masonry_marker_is_covered_by_the_etag(shell_dir, monkeypatch):
+    """A shell cached under the square-grid ETag must not be served
+    to a deployment that has since switched to masonry."""
+    monkeypatch.setenv("FRONTEND_DIR", str(shell_dir))
+    monkeypatch.delenv("LUSTRE_MASONRY", raising=False)
+
+    with _client(shell_dir) as http:
+        square = http.get("/")
+
+    monkeypatch.setenv("LUSTRE_MASONRY", "1")
+    with _client(shell_dir) as http:
+        masonry = http.get("/")
+
+    assert square.headers["etag"] != masonry.headers["etag"]
+
+
 def test_api_paths_are_not_swallowed_by_the_shell(shell_dir, monkeypatch):
     """The theme change must not affect the API 404 behaviour."""
     monkeypatch.setenv("FRONTEND_DIR", str(shell_dir))

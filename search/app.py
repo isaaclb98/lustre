@@ -1979,7 +1979,7 @@ def create_app(
             `data-theme` attribute on <html>. The SPA reads it back
             and switches palette and grid geometry accordingly.
             """
-            return shell_response(path, _cfg.theme)
+            return shell_response(path, _cfg.theme, _cfg.masonry)
 
         # SPA fallback — every non-API, non-asset path returns
         # index.html. API routes get proper 404 JSON instead of

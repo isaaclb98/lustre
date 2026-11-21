@@ -616,6 +616,17 @@ class Config:
     # marker — switching themes is a redeploy, not a rebuild.
     theme: str = "light"
 
+    # The photo grid's layout mode. False = the uniform square grid
+    # (one tile size, one row height, rows sliced by the virtualizer).
+    # True = Pinterest-style masonry: every photo keeps its own
+    # aspect ratio and the tiles are packed into the shortest column.
+    #
+    # It rides on the SPA shell as a `data-masonry` attribute, exactly
+    # like the theme: the frontend is ONE static build shared by every
+    # deployment, so the mode cannot live in the bundle. The user's
+    # own preference (in the browser) overrides this default.
+    masonry: bool = False
+
 
 def _int(name: str, default: int) -> int:
     raw = os.environ.get(name)
@@ -824,6 +835,7 @@ def load() -> Config:
         web_ui_url=_str("WEB_UI_URL", "http://localhost:8000"),
         log_level=_str("LOG_LEVEL", "INFO"),
         theme=_theme("LUSTRE_THEME", "light"),
+        masonry=_bool("LUSTRE_MASONRY", False),
         test_mode=bool(
             os.environ.get("SEARCH_TEST_MODE")
             or os.environ.get("SEARCH_NO_MODEL")
