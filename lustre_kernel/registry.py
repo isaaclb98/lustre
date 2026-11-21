@@ -84,6 +84,17 @@ class ModelSpec:
     share `dim` (a single model uses one embedding space for both
     text and image). `resolution` is the input image size the vision
     tower expects.
+
+    `preprocess` says how the indexer must prepare an image before
+    it reaches the embedder:
+
+    - `"letterbox"` — the SigLIP2 behaviour. Resize to fit a
+      `resolution`×`resolution` box preserving aspect, then pad the
+      remainder with black. The model was trained on square inputs.
+    - `"native"` — the C-RADIOv4 behaviour. `resolution` is the
+      LONG edge; the short edge follows the source aspect ratio and
+      both edges are snapped to the model's patch grid. No padding,
+      no bars, no crop.
     """
 
     name: str
@@ -92,6 +103,7 @@ class ModelSpec:
     revision: str
     text: Embedder
     vision: Embedder
+    preprocess: str = "letterbox"
 
 
 class ModelNotFoundError(KeyError):
@@ -197,6 +209,14 @@ VARIANT_TO_MODEL: dict[str, str] = {
     # 384 input resolution matches the SigLIP2 family default. The
     # model-variant migration plan adds this as the new prod default.
     "so400m/16-384": "ViT-so400m-patch16-384",
+    # c-radio-v4/so400m — C-RADIOv4-SO400M with the siglip2-g
+    # teacher adaptor. 1536-dim (SigLIP2-giant's joint space), not
+    # 1152 like the so400m family — and a DIFFERENT embedding space
+    # besides: the vectors come from RADIO's summary token
+    # projected into SigLIP2-g, not from SigLIP2's own vision
+    # tower. Vectors from the two are not comparable, so the two
+    # variants must never share a collection.
+    "c-radio-v4/so400m": "C-RADIOv4-SO400M",
 }
 
 DEFAULT_VARIANT = "B/16-256"  # end-user ghcr default (smallest, CPU-runnable).
@@ -435,4 +455,15 @@ def _try_register_real_models(registry: Registry) -> None:
         # available; production deployments that need real models
         # install the corresponding extra (`pip install
         # lustre-kernel[open_clip]`).
+        pass
+
+    # C-RADIOv4-SO400M. Registered separately from the SigLIP2
+    # family because its runtime requirements differ (torch.hub
+    # needs `einops` and `git`), and a host missing those should
+    # still get the open_clip registrations above.
+    try:
+        from lustre_kernel import _radio_models
+
+        _radio_models.register_into(registry)
+    except ImportError:
         pass
