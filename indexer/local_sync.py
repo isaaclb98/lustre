@@ -116,6 +116,26 @@ def _vram_free_mib() -> int | None:
         return None
 
 
+# The embedder's batch size is capped at 8.
+#
+# The card is a 10 GiB RTX 3080, and the embedder's activation memory
+# scales with the batch: at 16 the 640 run left ~90 MiB free while
+# another process held the GPU, which is the condition that took the
+# card off the PCIe bus (Xid 79). Isaac's rule: batch size 8 max,
+# anything over is dangerous.
+#
+# This is a hard ceiling, not a default: the CLI flag and the env
+# var are both clamped, so no deployment or operator can exceed it
+# by accident. A smaller batch costs throughput, and throughput is
+# cheap to give up — a crashed card is not.
+MAX_EMBED_BATCH_SIZE = 8
+
+
+def _clamp_batch_size(value: int) -> int:
+    """Clamp a requested batch size to the card's safe ceiling."""
+    return max(1, min(int(value), MAX_EMBED_BATCH_SIZE))
+
+
 def _describe_oom(exc: BaseException) -> str:
     """Build the operator-facing description of an OOM."""
     free = _vram_free_mib()
@@ -178,7 +198,7 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(prog="local_sync", description="Single-command sync+embed for Windows")
     p.add_argument("--source", type=Path, action="append", required=True, help="Folder to scan. Repeatable.")
     p.add_argument("--source-name", type=str, action="append", default=None, dest="source_names", help="Logical name. Repeatable; if one given for many sources, applied to all.")
-    p.add_argument("--batch-size", type=int, default=16)
+    p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--prune", action="store_true")
@@ -223,7 +243,11 @@ def parse_args(argv=None):
         "admin Index runner to track job state. Has no effect on the "
         "human-readable logger output.",
     )
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    # Clamp BEFORE anything reads it, so every consumer of
+    # args.batch_size sees the safe value.
+    args.batch_size = _clamp_batch_size(args.batch_size)
+    return args
 
 
 def make_client(args):

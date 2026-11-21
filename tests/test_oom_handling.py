@@ -23,7 +23,12 @@ import pytest
 from qdrant_client import QdrantClient
 
 from indexer import local_sync as local_sync_mod
-from indexer.local_sync import _describe_oom, _is_cuda_oom
+from indexer.local_sync import (
+    MAX_EMBED_BATCH_SIZE,
+    _clamp_batch_size,
+    _describe_oom,
+    _is_cuda_oom,
+)
 
 COLLECTION = "images_test_oom"
 
@@ -117,6 +122,47 @@ def _run_with_raising_encoder(monkeypatch, raw, source_dir: Path, exc: Exception
         "--batch-size", "2",
     ])
     return rc, events
+
+
+class TestBatchSizeCeiling:
+    """The embedder's batch size is capped at 8.
+
+    The card is a 10 GiB RTX 3080 and the embedder's activation
+    memory scales with the batch: at 16 the 640 run left ~90 MiB
+    free while another process held the GPU, which is the condition
+    that took the card off the PCIe bus (Xid 79). Isaac's rule:
+    batch size 8 max, anything over is dangerous.
+
+    So it is a hard ceiling, not a default — a deployment or an
+    operator cannot exceed it by accident.
+    """
+
+    def test_the_ceiling_is_eight(self) -> None:
+        assert MAX_EMBED_BATCH_SIZE == 8
+
+    def test_a_request_over_the_ceiling_is_clamped(self) -> None:
+        assert _clamp_batch_size(16) == 8
+        assert _clamp_batch_size(64) == 8
+        assert _clamp_batch_size(1000) == 8
+
+    def test_a_request_within_the_ceiling_is_untouched(self) -> None:
+        assert _clamp_batch_size(8) == 8
+        assert _clamp_batch_size(4) == 4
+        assert _clamp_batch_size(1) == 1
+
+    def test_a_nonsense_request_is_at_least_one(self) -> None:
+        assert _clamp_batch_size(0) == 1
+        assert _clamp_batch_size(-5) == 1
+
+    def test_the_cli_flag_is_clamped(self) -> None:
+        args = local_sync_mod.parse_args(
+            ["--source", "/photos", "--batch-size", "16"]
+        )
+        assert args.batch_size == MAX_EMBED_BATCH_SIZE
+
+    def test_the_cli_default_is_within_the_ceiling(self) -> None:
+        args = local_sync_mod.parse_args(["--source", "/photos"])
+        assert args.batch_size <= MAX_EMBED_BATCH_SIZE
 
 
 def test_oom_aborts_the_run_with_a_failure_event(monkeypatch, qdrant_raw, tmp_path) -> None:

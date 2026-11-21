@@ -897,7 +897,11 @@ def load() -> Config:
         # single-source setup just sets the latter.
         indexer_sources=indexer_sources,
         indexer_device=_str("INDEXER_DEVICE", "cpu"),
-        indexer_batch_size=_int("INDEXER_BATCH_SIZE", 8),
+        # Clamped to the card's safe ceiling — see
+        # `indexer.local_sync.MAX_EMBED_BATCH_SIZE`. The 640 embed at
+        # batch 16 left ~90 MiB free on a 10 GiB card, which is the
+        # condition that took the GPU off the PCIe bus (Xid 79).
+        indexer_batch_size=min(_int("INDEXER_BATCH_SIZE", 8), 8),
         # Roots the orphan purge may resolve a stored path under: the
         # photos mount plus every indexer source that is NOT already
         # inside it. See the `photos_roots` field comment for why.
