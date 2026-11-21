@@ -125,25 +125,45 @@ def test_get_vector_dim_uses_active_variant(monkeypatch):
 
 
 def test_siglip_variants_dict_is_complete():
-    """SIGLIP_VARIANTS dict should have all four documented variants
-    with valid model names and positive dims."""
-    assert set(config.SIGLIP_VARIANTS.keys()) == {
-        "B/16-256", "L/16-256", "gopt/16-384", "so400m/16-384",
-    }
+    """SIGLIP_VARIANTS dict should have all four documented SigLIP2
+    variants, and every variant in it must be usable.
+
+    The four SigLIP2 variants are checked by name and by the rules
+    that make them loadable. A variant from another model family
+    (C-RADIOv4) is allowed in the same table but is held to the
+    rules that matter for it instead: a kernel-registry entry whose
+    dim agrees, and a centroid-compat mapping — config.load() raises
+    without both.
+    """
+    siglip2 = {"B/16-256", "L/16-256", "gopt/16-384", "so400m/16-384"}
+    assert siglip2 <= set(config.SIGLIP_VARIANTS.keys())
     for variant, (model_name, dim) in config.SIGLIP_VARIANTS.items():
         assert isinstance(model_name, str)
-        assert model_name.startswith("ViT-"), f"{variant}: bad model name {model_name!r}"
-        # The so400m HF repo is named `timm/ViT-so400m-patch16-384`
-        # without a "SigLIP2" suffix (quirk of HF repo naming); the
-        # other three have "SigLIP2" in their HF repo names. Accept
-        # either, since `_CENTROID_MODEL_COMPAT` is what actually
-        # drives the model-family grouping.
-        assert ("SigLIP2" in model_name or "so400m" in model_name), (
-            f"{variant}: model {model_name!r} is not in the SigLIP2 family"
-        )
         assert isinstance(dim, int)
         assert dim > 0
-        assert dim in (768, 1024, 1152, 1536), f"{variant}: unexpected dim {dim}"
+        if variant in siglip2:
+            assert model_name.startswith("ViT-"), f"{variant}: bad model name {model_name!r}"
+            # The so400m HF repo is named `timm/ViT-so400m-patch16-384`
+            # without a "SigLIP2" suffix (quirk of HF repo naming); the
+            # other three have "SigLIP2" in their HF repo names. Accept
+            # either, since `_CENTROID_MODEL_COMPAT` is what actually
+            # drives the model-family grouping.
+            assert ("SigLIP2" in model_name or "so400m" in model_name), (
+                f"{variant}: model {model_name!r} is not in the SigLIP2 family"
+            )
+            assert dim in (768, 1024, 1152, 1536), f"{variant}: unexpected dim {dim}"
+        else:
+            # A variant from another family must still resolve to a
+            # registered model of the same dim, and must have a
+            # centroid-compat mapping or config.load() refuses to boot.
+            from lustre_kernel.registry import get as _registry_get
+
+            spec = _registry_get(model_name)
+            assert spec.dim == dim, (
+                f"{variant}: registry dim {spec.dim} disagrees with the "
+                f"variant table's {dim}"
+            )
+            config.centroid_compat_for(model_name)
 
 
 # ----- Variant reconciliation against Qdrant (round 34) -----
@@ -346,6 +366,73 @@ class TestReconcileVariantFromQdrant:
             qdrant_collection="images",
         )
         # Collection still present.
+        info = client.get_collection(collection_name="images")
+        assert info.points_count == 1
+
+    def test_ambiguous_dim_without_payload_raises(self, monkeypatch):
+        """A dim two variants share, with no payload to tell them
+        apart, must NOT be served.
+
+        1536 is produced by both gopt/16-384 and c-radio-v4/so400m,
+        and the two live in different embedding spaces. A collection
+        at that dim whose points carry no `model_variant` payload
+        could be either, so the reconciler cannot prove the vectors
+        match the running model — it has to refuse.
+        """
+        client = _make_client_for_reconcile()
+        from qdrant_client.http import models as qm
+        client.create_collection(
+            collection_name="images",
+            vectors_config=qm.VectorParams(size=1536, distance=qm.Distance.COSINE),
+        )
+        client.upsert(
+            collection_name="images",
+            points=[qm.PointStruct(id=1, vector=[0.0] * 1536, payload={})],
+        )
+        monkeypatch.setattr(
+            config, "QdrantClient",
+            lambda **kw: client,
+        )
+        with pytest.raises(config.QdrantVariantMismatch) as excinfo:
+            config.reconcile_variant_from_qdrant(
+                "c-radio-v4/so400m",
+                qdrant_url="ignored", qdrant_api_key=None,
+                qdrant_collection="images",
+            )
+        message = str(excinfo.value)
+        assert "model_variant" in message
+        assert "c-radio-v4/so400m" in message
+        assert "gopt/16-384" in message
+        # The collection must survive the refusal.
+        info = client.get_collection(collection_name="images")
+        assert info.points_count == 1
+
+    def test_ambiguous_dim_with_matching_payload_proceeds(self, monkeypatch):
+        """The same collection, but the payload says which model wrote
+        it → the check is satisfied and the app boots."""
+        client = _make_client_for_reconcile()
+        from qdrant_client.http import models as qm
+        client.create_collection(
+            collection_name="images",
+            vectors_config=qm.VectorParams(size=1536, distance=qm.Distance.COSINE),
+        )
+        client.upsert(
+            collection_name="images",
+            points=[qm.PointStruct(
+                id=1,
+                vector=[0.0] * 1536,
+                payload={"model_variant": "c-radio-v4/so400m"},
+            )],
+        )
+        monkeypatch.setattr(
+            config, "QdrantClient",
+            lambda **kw: client,
+        )
+        config.reconcile_variant_from_qdrant(
+            "c-radio-v4/so400m",
+            qdrant_url="ignored", qdrant_api_key=None,
+            qdrant_collection="images",
+        )
         info = client.get_collection(collection_name="images")
         assert info.points_count == 1
 
