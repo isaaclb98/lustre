@@ -246,6 +246,22 @@ def letterbox_resize(img: Image.Image, size: int | None = None) -> Image.Image:
     return canvas
 
 
+def model_input_size(model_name: str) -> int | None:
+    """The long edge the model's vision tower consumes, for the
+    native models.
+
+    None for the letterbox models: they take the whole picture and
+    pad it into a square themselves, so they need the source as
+    decoded, not a pre-sized one.
+    """
+    from lustre_kernel.registry import get as _registry_get
+
+    spec = _registry_get(model_name)
+    if getattr(spec, "preprocess", "letterbox") == "native":
+        return spec.resolution
+    return None
+
+
 def prepare_for_embedding(
     img: Image.Image, model_name: str
 ) -> Image.Image:

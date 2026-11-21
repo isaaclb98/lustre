@@ -353,6 +353,65 @@ def _use_pyvips() -> bool:
     return _HAS_PYVIPS and not _PIL_FORCE
 
 
+def _write_ladder_pyvips(src: Any, point_id: str) -> tuple[Path, dict[int, Any]]:
+    """Write the canonical thumbnail + every sized variant.
+
+    `src` is an already-open libvips image, so the caller can reuse
+    the same decode for the model's input.
+
+    Returns the canonical path and the resized images keyed by the
+    size they were made at.
+    """
+    out_path = thumbnail_path(point_id)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load and resize to fit INSIDE a THUMBNAIL_SIZE box, keeping
+    # the source's aspect ratio. No crop: the thumbnail shows the
+    # whole picture, so a portrait stays portrait.
+    thumb = src.thumbnail_image(
+        THUMBNAIL_SIZE,
+        height=THUMBNAIL_SIZE,
+    )
+    # WebP encode. libvips auto-selects 4:4:4 chroma at Q>=80
+    # (matches Immich/PhotoPrism). effort=4 mirrors the
+    # PIL `method=4` setting (slowest encoder, best size).
+    # The `profile` argument embeds the sRGB ICC profile
+    # in the output.
+    thumb.write_to_file(
+        str(out_path),
+        Q=THUMBNAIL_QUALITY,
+        effort=4,
+        profile=_ensure_srgb_profile_path(),
+    )
+
+    # Sized variants. Same pipeline at smaller dimensions.
+    resized: dict[int, Any] = {}
+    for size in THUMBNAIL_VARIANT_SIZES:
+        if size >= THUMBNAIL_SIZE:
+            continue
+        # NO crop: the variant keeps the source's aspect ratio,
+        # exactly like the canonical. `crop="centre"` here would
+        # make the variant a SQUARE while the canonical is
+        # native-aspect — so the same photo would be cropped in the
+        # small asset and whole in the large one, and the
+        # masonry's no-crop promise would hold only for the
+        # tiles that happened to get the canonical.
+        variant = src.thumbnail_image(
+            size,
+            height=size,
+        )
+        resized[size] = variant
+        variant_path = sized_thumbnail_path(point_id, size)
+        variant.write_to_file(
+            str(variant_path),
+            Q=THUMBNAIL_QUALITY,
+            effort=4,
+            profile=_ensure_srgb_profile_path(),
+        )
+
+    return out_path, resized
+
+
 def _compute_thumbnail_pyvips(path: Path, point_id: str) -> Path | None:
     """libvips path: thumbnail_image + WebP encode with ICC + 4:4:4.
 
@@ -366,7 +425,7 @@ def _compute_thumbnail_pyvips(path: Path, point_id: str) -> Path | None:
     Args:
         path: source image file path. pyvips reads from disk
             directly (no PIL intermediate), which is part of why
-            this is faster than the PIL path.
+            it is faster than the PIL path.
         point_id: Qdrant point ID (sha1 hash) — used to compute
             the deterministic on-disk path.
     """
@@ -374,52 +433,9 @@ def _compute_thumbnail_pyvips(path: Path, point_id: str) -> Path | None:
     # `_use_pyvips()` already gated us.
     import pyvips as _pv
 
-    out_path = thumbnail_path(point_id)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        # Load and resize to fit INSIDE a THUMBNAIL_SIZE box, keeping
-        # the source's aspect ratio. No crop: the thumbnail shows the
-        # whole picture, so a portrait stays portrait.
         img: Any = _pv.Image.new_from_file(str(path))
-        thumb = img.thumbnail_image(
-            THUMBNAIL_SIZE,
-            height=THUMBNAIL_SIZE,
-        )
-        # WebP encode. libvips auto-selects 4:4:4 chroma at Q>=80
-        # (matches Immich/PhotoPrism). effort=4 mirrors the
-        # PIL `method=4` setting (slowest encoder, best size).
-        # The `profile` argument embeds the sRGB ICC profile
-        # in the output.
-        thumb.write_to_file(
-            str(out_path),
-            Q=THUMBNAIL_QUALITY,
-            effort=4,
-            profile=_ensure_srgb_profile_path(),
-        )
-
-        # Sized variants. Same pipeline at smaller dimensions.
-        for size in THUMBNAIL_VARIANT_SIZES:
-            if size >= THUMBNAIL_SIZE:
-                continue
-            # NO crop: the variant keeps the source's aspect ratio,
-            # exactly like the canonical. `crop="centre"` here would
-            # make the variant a SQUARE while the canonical is
-            # native-aspect — so the same photo would be cropped in
-            # the small asset and whole in the large one, and the
-            # masonry's no-crop promise would hold only for the
-            # tiles that happened to get the canonical.
-            variant = img.thumbnail_image(
-                size,
-                height=size,
-            )
-            variant_path = sized_thumbnail_path(point_id, size)
-            variant.write_to_file(
-                str(variant_path),
-                Q=THUMBNAIL_QUALITY,
-                effort=4,
-                profile=_ensure_srgb_profile_path(),
-            )
-
+        out_path, _resized = _write_ladder_pyvips(img, point_id)
         return out_path
     except _pv.Error as e:
         logger.warning("libvips failed for %s: %s", point_id, e)
@@ -427,6 +443,101 @@ def _compute_thumbnail_pyvips(path: Path, point_id: str) -> Path | None:
     except (OSError, ValueError, RuntimeError) as e:
         logger.warning("Failed to generate thumbnail for %s: %s", point_id, e)
         return None
+
+
+def _vips_to_pil(img: Any) -> Image.Image:
+    """A libvips image as a PIL RGB image, without a file round-trip."""
+    if img.hasalpha():
+        img = img.flatten(background=[255, 255, 255])
+    if img.bands != 3:
+        img = img.extract_band(0, n=3)
+    return Image.frombuffer(
+        "RGB", (img.width, img.height), img.write_to_memory()
+    )
+
+
+def generate_ladder_and_model_input(
+    path: Path,
+    point_id: str,
+    *,
+    model_input_size: int | None = None,
+) -> tuple[Path | None, Image.Image | None, int | None, int | None]:
+    """Write the display ladder for `path` and return the model's input.
+
+    ONE decode of the source produces both: every display size AND
+    the image the embedder consumes. The model input is the source at
+    its native aspect ratio with its long edge at `model_input_size` —
+    the same picture the display serves, at the model's resolution.
+
+    When the display ladder contains a variant of exactly that size,
+    the model input IS that variant's pixels (taken before the WebP
+    encode, so nothing is recompressed): the photo is decoded once
+    and resized once instead of twice, and the embedding cannot
+    drift from the asset the user sees.
+
+    Returns `(thumbnail_path, model_input, source_width,
+    source_height)`. `model_input` is None when `model_input_size` is
+    None or the source cannot be prepared.
+    """
+    if _use_pyvips():
+        # Late import so the module loads on hosts without pyvips.
+        import pyvips as _pv
+
+        try:
+            src: Any = _pv.Image.new_from_file(str(path))
+            out_path, resized = _write_ladder_pyvips(src, point_id)
+            source_w, source_h = src.width, src.height
+
+            model_input = None
+            if model_input_size is not None:
+                if model_input_size in resized:
+                    model_input = _vips_to_pil(resized[model_input_size])
+                else:
+                    model_input = _vips_to_pil(
+                        src.thumbnail_image(
+                            model_input_size, height=model_input_size
+                        )
+                    )
+            return out_path, model_input, source_w, source_h
+        except _pv.Error as e:
+            logger.warning("libvips failed for %s: %s", point_id, e)
+            return None, None, None, None
+        except (OSError, ValueError, RuntimeError) as e:
+            logger.warning(
+                "Failed to generate thumbnail for %s: %s", point_id, e
+            )
+            return None, None, None, None
+
+    # PIL fallback: decode once, use the decode for both the ladder
+    # and the model input.
+    from indexer.image_loader import load_image_pil_with_dims
+
+    try:
+        image, source_w, source_h = load_image_pil_with_dims(path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to load %s: %s", path, exc)
+        return None, None, None, None
+
+    out_path = _compute_thumbnail_pil(image, point_id)
+
+    model_input = None
+    if model_input_size is not None:
+        target = thumbnail_target_size(
+            image.width, image.height, model_input_size
+        )
+        try:
+            if _LINEAR_RESIZE:
+                model_input = _resize_in_linear_light(
+                    image.convert("RGB"), target
+                )
+            else:
+                model_input = image.resize(
+                    target, Image.Resampling.LANCZOS
+                )
+        except (OSError, ValueError, RuntimeError) as e:
+            logger.warning("model input resize failed for %s: %s", point_id, e)
+    return out_path, model_input, source_w, source_h
+
 
 
 def compute_thumbnail(
@@ -437,9 +548,9 @@ def compute_thumbnail(
     The pyvips (libvips) path is the primary encoder; PIL is the
     fallback. The pyvips path requires a file path, so if the
     caller has one, pass `source_path=` and we route to libvips.
-    Without a path, the PIL path runs (it's slower but always
-    available). Both paths produce visually equivalent output:
-    4:4:4 chroma, linear-light resize, sRGB ICC profile embed.
+    With `source_path=` the caller's `image` is used ONLY for the
+    model input (the caller already decoded it); the thumbnail itself
+    is produced by libvips reading the file directly.
 
     Args:
         image: PIL Image already opened by the pipeline. Used by
@@ -457,6 +568,46 @@ def compute_thumbnail(
     if _use_pyvips() and source_path is not None:
         return _compute_thumbnail_pyvips(source_path, point_id)
     return _compute_thumbnail_pil(image, point_id)
+
+
+def compute_model_input(
+    image: Image.Image,
+    source_path: Path | None = None,
+    *,
+    model_input_size: int,
+) -> Image.Image | None:
+    """The image the embedder should consume for `source_path`.
+
+    The model input is the SOURCE at its native aspect ratio with
+    its long edge at `model_input_size` — the same framing the
+    display thumbnail has, at the model's own resolution.
+
+    Returns None when the input cannot be produced (the caller then
+    falls back to feeding the decoded source).
+    """
+    if _use_pyvips() and source_path is not None:
+        try:
+            import pyvips as _pv
+
+            src: Any = _pv.Image.new_from_file(str(source_path))
+            resized = src.thumbnail_image(
+                model_input_size, height=model_input_size
+            )
+            return _vips_to_pil(resized)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "model input from %s failed: %s", source_path, exc
+            )
+            return None
+
+    target = thumbnail_target_size(image.width, image.height, model_input_size)
+    try:
+        if _LINEAR_RESIZE:
+            return _resize_in_linear_light(image.convert("RGB"), target)
+        return image.resize(target, Image.Resampling.LANCZOS)
+    except (OSError, ValueError, RuntimeError) as exc:
+        logger.warning("model input resize failed: %s", exc)
+        return None
 
 
 def _compute_thumbnail_pil(image: Image.Image, point_id: str) -> Path | None:
