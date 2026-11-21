@@ -22,7 +22,24 @@
  * `src="/thumb/{id}?w=384 384w"` (one entry, the 384 variant),
  * and the `src` defaults to `?w=384` for non-eager tiles.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+
+/**
+ * The deployment's thumbnail long edge, as the shell publishes it.
+ *
+ * It is a deployment-level number — the dev stack renders 512,
+ * production 384 — and the frontend reads it off the shell rather
+ * than hardcoding it. The test reads it the same way, so it holds
+ * on both.
+ */
+async function deploymentThumbnailSize(page: Page): Promise<number> {
+  const raw = await page.evaluate(() =>
+    document.documentElement.getAttribute('data-thumbnail-size')
+  );
+  const parsed = Number(raw);
+  expect(Number.isFinite(parsed) && parsed > 0).toBe(true);
+  return parsed;
+}
 
 test('PhotoTile sizes attribute reflects viewport-derived tile width', async ({ page }) => {
   // The PhotoGrid uses `auto-fill minmax(180px, 1fr)`, so the
@@ -62,19 +79,21 @@ test('PhotoTile sizes attribute reflects viewport-derived tile width', async ({ 
   } else {
     expect(sizes).toMatch(/(180|240|384)px/);
   }
-  // And the srcset advertises the single 384 variant — the
-  // post-migration shape. The actual URL is `/thumb/{id}?w=384`.
+  // And the srcset advertises the deployment's single variant. The
+  // actual URL is `/thumb/{id}?w=<size>`.
+  const thumbSize = await deploymentThumbnailSize(page);
   const srcset = await page.locator('.grid-tile img.full').first().getAttribute('srcset');
   if (srcset) {
-    expect(srcset).toContain('w=384');
+    expect(srcset).toContain(`w=${thumbSize}`);
   }
 });
 
-test('PhotoTile non-eager tile uses ?w=384', async ({ page }) => {
+test('PhotoTile non-eager tile uses the deployment thumbnail width', async ({ page }) => {
   // Non-eager tiles (any tile past the first 3 in the first row)
-  // use `src={thumbUrl(pointId, 384)}` per Round 4. Pre-migration
-  // these used `src={thumbUrl(pointId)}` (no width), which routed
-  // through the canonical 256px fallback in the router.
+  // use `src={thumbUrl(pointId, thumbnailSize)}` — the deployment's
+  // own thumbnail size. Pre-migration these used
+  // `src={thumbUrl(pointId)}` (no width), which routed through the
+  // canonical 256px fallback in the router.
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/random');
   await page.waitForSelector('.grid-tile img.full');
@@ -86,8 +105,9 @@ test('PhotoTile non-eager tile uses ?w=384', async ({ page }) => {
   const count = await tiles.count();
   if (count > 5) {
     const src = await tiles.nth(5).getAttribute('src');
-    // Non-eager tiles use `?w=384` per Round 4.
-    expect(src).toContain('w=384');
+    // Non-eager tiles use the deployment's thumbnail width.
+    const thumbSize = await deploymentThumbnailSize(page);
+    expect(src).toContain(`w=${thumbSize}`);
   } else {
     // Not enough tiles loaded — skip via assertion.
     expect(count).toBeGreaterThan(5);
