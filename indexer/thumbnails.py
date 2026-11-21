@@ -68,10 +68,17 @@ THUMBNAIL_DIR = os.environ.get("THUMBNAIL_DIR", "/app/data/thumbnails")
 # source's aspect ratio: the thumbnail is never cropped, squashed or
 # letterboxed. A portrait photo produces a portrait thumbnail.
 #
-# This is the same number the C-RADIOv4 embedder uses for its input's
-# long edge — the model's input IS the thumbnail's geometry, so the
-# embedding sees exactly the framing the thumbnail shows. See
-# `lustre_kernel/_radio_models.py`.
+# This is the DISPLAY size: how big the served thumbnail is. It is
+# NOT the model's input size — the C-RADIOv4 embedder reads its own
+# MODEL_INPUT_SIZE (see `lustre_kernel/_radio_models.py`). They were
+# the same number until the 640 embed took the GPU off the PCIe bus
+# (Xid 79): welding them meant paying GPU cost for a display size.
+# Both still show the SAME framing — the source at its native aspect
+# ratio, never cropped — so only the resolution differs.
+#
+# Generating a thumbnail is pure CPU work (libvips; this module
+# imports no torch), so raising this number costs disk and encode
+# time, never VRAM.
 #
 # The default is unchanged from the SigLIP2 era (384 = the old model
 # input) so a deployment that does not set it keeps its current

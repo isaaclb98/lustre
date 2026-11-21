@@ -36,12 +36,16 @@ def test_radio_model_is_registered():
     spec = registry.get(RADIO_MODEL)
     assert spec.name == RADIO_MODEL
     assert spec.dim == 1536
-    # The long edge of the native-aspect input, not a square — and it
-    # is the THUMBNAIL_SIZE, because the model's input IS the
-    # thumbnail's geometry.
-    from indexer.thumbnails import THUMBNAIL_SIZE
+    # The long edge of the native-aspect input, not a square.
+    #
+    # It is MODEL_INPUT_SIZE, NOT the display thumbnail's size. The
+    # two were one number until the 640 embed took the GPU off the
+    # PCIe bus (Xid 79): the ViT's cost scales with its INPUT
+    # resolution, so welding them meant paying GPU cost for a
+    # display size.
+    from lustre_kernel._radio_models import MODEL_INPUT_SIZE
 
-    assert spec.resolution == THUMBNAIL_SIZE
+    assert spec.resolution == MODEL_INPUT_SIZE
     assert spec.preprocess == "native"
 
 

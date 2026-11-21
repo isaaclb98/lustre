@@ -48,9 +48,16 @@ def build_thumbnails_router() -> APIRouter:
         # The cap is the deployment's THUMBNAIL_SIZE: the indexer
         # renders the canonical thumbnail at that long edge, so a
         # request beyond it asks for an asset that does not exist.
-        # The dev stack renders 512 (the C-RADIOv4 model's input
-        # resolution), production 384 — a hardcoded 384 rejected the
-        # dev stack's own request with a 422.
+        # The dev stack renders 512, production 384 — a hardcoded
+        # 384 rejected the dev stack's own request with a 422.
+        #
+        # This is the DISPLAY size, not the model's input size. The
+        # two were the same number until the 640 embed took the GPU
+        # off the bus; they are separate now, and the cap follows
+        # the asset this endpoint actually serves.
+        #
+        # The smaller variants (`?w=192` and friends) sit BELOW this
+        # cap, so they pass through it unchanged.
         w: int | None = Query(None, ge=64, le=THUMBNAIL_SIZE),
     ) -> Response:
         """

@@ -58,7 +58,7 @@ from PIL import Image
 
 from lustre_kernel.registry import ModelSpec, Registry
 
-__all__ = ["register_into"]
+__all__ = ["MODEL_INPUT_SIZE", "register_into"]
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,21 @@ RADIO_ADAPTOR = "siglip2-g"
 # Patch size of the SO400M checkpoint. The ViT requires both input
 # edges to be a multiple of this.
 RADIO_PATCH_SIZE = 16
+
+# The ViT's input long edge — a GPU budget decision, NOT the display
+# thumbnail's size.
+#
+# Read here, at module level, so every consumer (the registry, the
+# tests, the reconciler) sees the SAME number. The kernel cannot
+# import the indexer — the architecture test forbids it — so this is
+# the one place the setting is read.
+#
+# It was THUMBNAIL_SIZE until the 640 embed took the GPU off the
+# PCIe bus (Xid 79). The ViT's activation memory scales with its
+# input resolution, so a DISPLAY size was being paid for in VRAM.
+# THUMBNAIL_SIZE now governs the display asset alone, and costs
+# nothing but disk and encode time.
+MODEL_INPUT_SIZE = int(os.environ.get("MODEL_INPUT_SIZE", "512"))
 
 
 class RadioEmbedder:
@@ -274,20 +289,34 @@ def register_into(registry: Registry) -> None:
     clone). Keeping them apart means a host without those still
     gets the open_clip registrations.
 
-    The input's long edge is the THUMBNAIL_SIZE, not a number of
-    this module's own: the model's input IS the thumbnail's
-    geometry, so the embedding sees exactly the framing the
-    thumbnail shows. `indexer/thumbnails.py` owns the setting; it
-    is read from the environment here because the kernel cannot
-    import the indexer (the architecture test forbids it).
+    The input's long edge is MODEL_INPUT_SIZE, not a number of
+    this module's own and NOT the display thumbnail's size.
+
+    These were the same number until the 640 embed took the GPU
+    off the PCIe bus (Xid 79). The ViT's cost scales with its
+    INPUT resolution — the patch grid grows with the square of the
+    edge, and so does the activation memory — so raising the
+    model's input to 640 pushed the embedder's peak to 7014 MiB and
+    made it 1.19x slower, while the DISPLAY thumbnail it also
+    forced was pure CPU work (libvips; no torch in that module at
+    all). Welding them meant paying GPU cost for a display size.
+
+    So they are separate numbers now: MODEL_INPUT_SIZE is the
+    ViT's input and is a GPU budget decision; THUMBNAIL_SIZE is
+    the display asset and costs nothing but disk and encode time.
+    The embedding still sees the SAME framing as the thumbnail —
+    both are the source at its native aspect ratio — only the
+    resolution differs.
+
+    Read from the environment because the kernel cannot import the
+    indexer (the architecture test forbids it).
     """
-    long_edge = int(os.environ.get("THUMBNAIL_SIZE", "384"))
-    embedder = RadioEmbedder(dim=1536, long_edge=long_edge)
+    embedder = RadioEmbedder(dim=1536, long_edge=MODEL_INPUT_SIZE)
     registry.register(
         ModelSpec(
             name="C-RADIOv4-SO400M",
             dim=1536,
-            resolution=long_edge,
+            resolution=MODEL_INPUT_SIZE,
             revision="c-radio-v4-so400m",
             text=embedder,
             vision=embedder,
