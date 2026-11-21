@@ -37,10 +37,19 @@ os.environ.setdefault("SEARCH_TEST_MODE", "1")
 # prod port, and reconcile_variant_from_qdrant would have called
 # delete_collection() on the prod collection on a dim mismatch —
 # this is the failure that wiped 2,104,430 points on 2026-10-19.
+#
+# The port must also be one NOTHING in this repo runs a server on.
+# 16333 was the dev stack's Qdrant port, so it was only "dead" while
+# the dev stack was down — the moment `scripts/dev.sh up` ran, the
+# reconciler found a real collection there, saw a dim mismatch
+# against the test env's variant, and raised out of the conftest
+# import, taking the whole suite down. 16399 is not used by any
+# compose file, script, or fixture in this repo.
+#
 # Real tests that need a Qdrant use the in-memory fixture; the
 # qdrant_in_memory client takes a :memory: location and ignores
 # QDRANT_URL entirely.
-os.environ.setdefault("QDRANT_URL", "http://localhost:16333")
+os.environ.setdefault("QDRANT_URL", "http://localhost:16399")
 os.environ.setdefault("SIGLIP_VARIANT", "so400m/16-384")
 os.environ.setdefault("MODEL_NAME", "ViT-so400m-patch16-384")
 os.environ.setdefault("TOP_K_DEFAULT", "35")
