@@ -26,6 +26,7 @@
 import { writable } from 'svelte/store';
 import { SLIDESHOW_PRESETS_MS, DEFAULT_SLIDESHOW_MS } from '$lib/api/limits';
 import { DEFAULT_GRID_SIZE, type GridSize } from '$lib/grid/config';
+import { readMasonryDefault } from '$lib/layout';
 
 const STORAGE_KEY = 'lustre:preferences';
 
@@ -57,11 +58,23 @@ export { DEFAULT_SLIDESHOW_MS };
 type Preferences = {
   slideshowIntervalMs: number;
   gridSize: GridSize;
+  /**
+   * The user's masonry choice, or null for "no choice".
+   *
+   * Null is not the same as false: the deployment picks a default
+   * (LUSTRE_MASONRY, stamped onto the shell), and the user can
+   * override it. A stored boolean means the user chose; null means
+   * "follow the deployment". Storing the resolved default instead
+   * would freeze the deployment's choice into this browser the first
+   * time any other setting changed.
+   */
+  masonry: boolean | null;
 };
 
 const defaults: Preferences = {
   slideshowIntervalMs: DEFAULT_SLIDESHOW_MS,
-  gridSize: DEFAULT_GRID_SIZE
+  gridSize: DEFAULT_GRID_SIZE,
+  masonry: null
 };
 
 function load(): Preferences {
@@ -87,9 +100,17 @@ function load(): Preferences {
       gridCandidate === 'small'
         ? gridCandidate
         : DEFAULT_GRID_SIZE;
+    // Validate the masonry knob — a boolean or null ("follow the
+    // deployment"). Anything else falls back to following it.
+    const masonryCandidate = parsed.masonry;
+    const masonry: boolean | null =
+      masonryCandidate === true || masonryCandidate === false
+        ? masonryCandidate
+        : null;
     return {
       slideshowIntervalMs: slideshowValid ? candidate : defaults.slideshowIntervalMs,
-      gridSize
+      gridSize,
+      masonry
     };
   } catch {
     return { ...defaults };
@@ -126,4 +147,24 @@ export function setSlideshowInterval(ms: number) {
 export function setGridSize(size: GridSize) {
   if (size !== 'large' && size !== 'medium' && size !== 'small') return;
   preferences.update((p) => ({ ...p, gridSize: size }));
+}
+
+/**
+ * Choose the grid's layout.
+ *
+ * `null` hands the choice back to the deployment's default, which is
+ * what "follow the deployment" means in the Settings page.
+ */
+export function setMasonry(enabled: boolean | null) {
+  preferences.update((p) => ({ ...p, masonry: enabled }));
+}
+
+/**
+ * The layout the grid should render right now.
+ *
+ * The user's explicit choice wins; otherwise the deployment's
+ * default applies.
+ */
+export function masonryEnabled(prefs: Preferences): boolean {
+  return prefs.masonry ?? readMasonryDefault();
 }

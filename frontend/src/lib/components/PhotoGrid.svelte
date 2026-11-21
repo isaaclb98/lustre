@@ -28,10 +28,11 @@
   import PhotoTile from './PhotoTile.svelte';
   import ImageContextMenu from './ImageContextMenu.svelte';
   import Lightbox from './Lightbox.svelte';
-  import { preferences } from '$lib/stores/preferences';
+  import { preferences, masonryEnabled } from '$lib/stores/preferences';
   import { theme } from '$lib/theme';
   import { gridConfigFor, type GridSizeConfig } from '$lib/grid/config';
   import { columnsForWidth, wallColumnsForWidth } from '$lib/grid/geometry';
+  import { layoutMasonry } from '$lib/grid/masonry';
 
   // Use the generated SearchResult shape so `url`, `width`,
   // `height`, `is_disliked` etc. stay in lockstep with the
@@ -249,6 +250,95 @@
     )
   );
 
+  // ----- Masonry -----
+  //
+  // The uniform grid slices items into rows of a FIXED height and
+  // lets the virtualizer render the rows in view. Masonry cannot be
+  // expressed that way — every tile has its own height — so the
+  // layout is computed here (the shortest-column packing) and the
+  // visible slice is a filter over the computed placements.
+  //
+  // The tile heights are known before the images load: the API
+  // returns each photo's own width and height, so a tile can be
+  // sized in the same paint as the layout and nothing reflows when a
+  // thumbnail arrives.
+  const masonry = $derived(masonryEnabled($preferences));
+
+  const masonryLayout = $derived(
+    masonry ? layoutMasonry(items, { tile: TILE, gap: GAP, columns }) : null
+  );
+
+  // The visible band, in the grid's own coordinates. The grid's top
+  // edge sits at -rect.top in viewport coordinates, so what the user
+  // can see runs from -rect.top to -rect.top + the viewport height.
+  const MASONRY_OVERSCAN = 600;
+  let masonryBand = $state({ top: 0, bottom: 0 });
+
+  function updateMasonryBand() {
+    if (!gridWrapper) return;
+    const rect = gridWrapper.getBoundingClientRect();
+    const viewportHeight =
+      typeof window === 'undefined' ? 0 : window.innerHeight;
+    masonryBand = {
+      top: -rect.top - MASONRY_OVERSCAN,
+      bottom: -rect.top + viewportHeight + MASONRY_OVERSCAN
+    };
+  }
+
+  // The items in the visible band, with their placements.
+  //
+  // The placements are NOT sorted by y — the shortest-column packing
+  // puts a photo in whichever column is lowest, so a later photo can
+  // sit higher than an earlier one. The filter therefore scans every
+  // placement rather than stopping at the first one below the band.
+  const masonryItems = $derived.by(() => {
+    const layout = masonryLayout;
+    if (!layout) return [];
+    const out: {
+      item: Item;
+      index: number;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const placement = layout.placements[i];
+      if (!placement) break;
+      if (placement.y + placement.height < masonryBand.top) continue;
+      if (placement.y > masonryBand.bottom) continue;
+      out.push({ item: items[i], index: i, ...placement });
+    }
+    return out;
+  });
+
+  // Keep the visible band in step with the scroll.
+  //
+  // The uniform grid gets this from the virtualizer, which watches
+  // the window for itself. Masonry has no virtualizer, so the grid
+  // listens — the same window scroll the virtualizer would have
+  // used — and recomputes the band on the next frame.
+  $effect(() => {
+    if (!masonry) return;
+    void gridWrapper;
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        updateMasonryBand();
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    updateMasonryBand();
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  });
+
   // The three numbers the CSS grid renders from, re-published on
   // this grid's own wrapper so an override applies HERE and nowhere
   // else. The layout publishes the app-wide values on :root from
@@ -301,7 +391,9 @@
   // Note: do NOT read `theVirtualizer` here — only rows.length and
   // rowHeight are the reactive dependencies.
   $effect(() => {
-    const n = rows.length;
+    // Masonry positions the tiles itself, so the row virtualizer has
+    // nothing to slice — it renders nothing and costs nothing.
+    const n = masonry ? 0 : rows.length;
     const h = rowHeight;
     theVirtualizer?.setOptions({
       count: n,
@@ -431,6 +523,22 @@
   $effect(() => {
     if (!hasMore || loading || !onLoadMore) return;
     if (typeof window === 'undefined') return; // SSR
+    if (masonry) {
+      // Masonry has no rows to count: the question is how much of the
+      // laid-out grid is still below the fold.
+      const layout = masonryLayout;
+      if (!layout) return;
+      const rect = gridWrapper?.getBoundingClientRect();
+      if (!rect) return;
+      const bottomOfGrid = rect.top + layout.height;
+      const viewportBottom = window.scrollY + window.innerHeight;
+      if (bottomOfGrid - viewportBottom < PRE_FETCH_AHEAD * window.innerHeight) {
+        preFetchController?.abort();
+        preFetchController = new AbortController();
+        onLoadMore?.(preFetchController.signal);
+      }
+      return;
+    }
     const totalRows = rows.length;
     if (totalRows === 0) return;
     const vis = virtualItems;
@@ -534,8 +642,39 @@
   >
     <div
       class="grid-virtual"
-      style="height: {totalSize}px; position: relative;"
+      style="height: {masonry ? (masonryLayout?.height ?? 0) : totalSize}px; position: relative;"
     >
+      {#if masonry}
+        {#each masonryItems as entry, mIdx (entry.item.id)}
+          <div
+            class="grid-tile masonry-tile"
+            style="position: absolute; left: {entry.x}px; top: {entry.y}px; width: {entry.width}px; height: {entry.height}px;"
+          >
+            <!-- The masonry slice is already the visible one, so the
+                 first three of them are the eager ones — the same
+                 rule the row virtualizer applies to the first row. -->
+            <PhotoTile
+              pointId={entry.item.id}
+              blurhash={entry.item.blurhash}
+              scoreStr={entry.item.score_str}
+              isFavorite={entry.item.is_favorite}
+              isDisliked={entry.item.is_disliked}
+              eagerIndex={mIdx < 3 ? mIdx : null}
+              onOpen={tileOpen(entry.item, entry.index)}
+              onContextMenu={tileContextMenu(entry.item)}
+              onRemove={onRemove}
+              removeLabel={removeLabel}
+              onVote={onVote}
+              votedUp={upVoted?.has(entry.item.id) ?? false}
+              votedDown={downVoted?.has(entry.item.id) ?? false}
+              voteUpLabel={voteUpLabel}
+              label={tileLabel(entry.item)}
+              masonry
+              {readOnly}
+            />
+          </div>
+        {/each}
+      {:else}
       {#each virtualItems as virtualRow, vRowIdx (virtualRow.key)}
         <div
           class="grid-row"
@@ -573,6 +712,7 @@
           {/each}
         </div>
       {/each}
+      {/if}
     </div>
 
     {#if hasMore}
@@ -741,6 +881,15 @@
        change (e.g. blurhash decoded, hover chrome mounted).
        No visual cost; small paint-side memory bump. */
     contain: size layout paint style;
+  }
+
+  /* The masonry tile is sized by the layout, not by CSS: the grid
+     publishes the photo's own aspect ratio as the tile's height, so
+     the square the uniform grid imposes has to step aside. The photo
+     inside is `object-fit: cover`, and because the box's ratio IS the
+     photo's ratio, nothing is cropped. */
+  .grid-tile.masonry-tile {
+    aspect-ratio: auto;
   }
 
   .empty {

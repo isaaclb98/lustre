@@ -138,6 +138,14 @@
      */
     wall?: boolean;
     /**
+     * Render the tile at the photo's own aspect ratio.
+     *
+     * In the masonry layout the grid sizes the tile from the photo's
+     * dimensions, so the tile must not impose a square of its own —
+     * it fills the box the grid gave it.
+     */
+    masonry?: boolean;
+    /**
      * The width to fetch the photo at, in CSS pixels.
      *
      * The grid renders the app's 384px thumbnail, which is the
@@ -172,6 +180,7 @@
     votedDown = false,
     voteUpLabel = 'Add to album',
     wall = false,
+    masonry = false,
     readOnly = false,
     label = '',
     srcWidth
@@ -312,6 +321,7 @@
   class:disliked={isDisliked}
   class:menu-open={contextMenuOpen}
   class:wall
+  class:masonry
   role={readOnly ? 'img' : 'link'}
   href={readOnly ? undefined : `/photo/${encodeURIComponent(pointId)}`}
   data-photo-id={pointId}
@@ -453,6 +463,17 @@
   .tile:hover {
     border-color: var(--glass-edge-strong);
     box-shadow: var(--grid-tile-hover-shadow);
+  }
+
+  /* ---- the masonry variant ----
+     The grid has already sized this tile from the photo's own
+     dimensions, so the tile fills that box instead of imposing a
+     square of its own. The photo inside is `object-fit: cover`, and
+     because the box's ratio IS the photo's ratio, nothing is
+     cropped. */
+  .tile.masonry {
+    aspect-ratio: auto;
+    height: 100%;
   }
 
   /* ---- the wall variant ----

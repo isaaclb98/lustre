@@ -22,7 +22,9 @@
     preferences,
     SLIDESHOW_PRESETS,
     setSlideshowInterval,
-    setGridSize
+    setGridSize,
+    setMasonry,
+    masonryEnabled
   } from '$lib/stores/preferences';
   import { type GridSize } from '$lib/grid/config';
 
@@ -252,6 +254,54 @@
           {preset.label}
         </button>
       {/each}
+    </div>
+  </section>
+
+  <section class="card glass">
+    <h2 class="card-title">Grid layout</h2>
+    <p class="card-desc">
+      How the photo grid arranges the photos. <strong>Grid</strong> gives
+      every photo the same square tile and crops it to fit.
+      <strong>Masonry</strong> keeps each photo's own shape — portraits
+      stay tall, landscapes stay wide — and packs them into columns,
+      the way Pinterest does. Applies to every page that shows the
+      photo grid.
+    </p>
+    <div
+      class="preset-row"
+      role="radiogroup"
+      aria-label="Grid layout"
+    >
+      <button
+        type="button"
+        class="preset"
+        role="radio"
+        aria-checked={!masonryEnabled($preferences)}
+        data-active={!masonryEnabled($preferences)}
+        onclick={() => setMasonry(false)}
+      >
+        Grid
+      </button>
+      <button
+        type="button"
+        class="preset"
+        role="radio"
+        aria-checked={masonryEnabled($preferences)}
+        data-active={masonryEnabled($preferences)}
+        onclick={() => setMasonry(true)}
+      >
+        Masonry
+      </button>
+      <button
+        type="button"
+        class="preset"
+        role="radio"
+        aria-checked={$preferences.masonry === null}
+        data-active={$preferences.masonry === null}
+        onclick={() => setMasonry(null)}
+      >
+        Follow server
+      </button>
     </div>
   </section>
 </div>
