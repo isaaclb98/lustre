@@ -33,7 +33,8 @@ import { test, expect, type Page } from '@playwright/test';
  * which the shell stamps on <html data-masonry>.
  */
 const BASE_PAGE_SIZE_SQUARE = { large: 24, medium: 32, small: 40 } as const;
-const BASE_PAGE_SIZE_MASONRY = { large: 20, medium: 24, small: 32 } as const;
+// 4 rows x the masonry ladder's column caps (4 / 6 / 8).
+const BASE_PAGE_SIZE_MASONRY = { large: 16, medium: 24, small: 32 } as const;
 
 /** The base page size for the layout this deployment serves. */
 async function basePageSizes(page: Page) {

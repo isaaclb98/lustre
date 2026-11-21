@@ -250,27 +250,19 @@ test.describe('dark theme', () => {
       .poll(async () => (await gridGeometry(page))?.gap)
       .toBe('0px');
 
+    // The grid's geometry is the same in both themes now: gapless
+    // and square. Only the PALETTE follows the marker.
     const after = await gridGeometry(page);
-    if (target === 'dark') {
-      expect(after!.gapBetweenTiles).toBe(0);
-      expect(after!.radius).toBe('0px');
-      expect(after!.borderWidth).toBe('0px');
-    } else {
-      expect(after!.gapBetweenTiles).toBeGreaterThan(0);
-      expect(after!.radius).not.toBe('0px');
-      expect(after!.borderWidth).not.toBe('0px');
-    }
+    expect(after!.gapBetweenTiles).toBe(0);
+    expect(after!.radius).toBe('0px');
+    expect(after!.borderWidth).toBe('0px');
 
     // And the theme it came from was what it was — the change is
     // scoped to the marker, not to the page.
     expect(beforeBackground.toLowerCase()).not.toBe(
       expectedBackground.toLowerCase()
     );
-    if (current === 'dark') {
-      expect(before.gap).toBe('0px');
-    } else {
-      expect(before.gap).not.toBe('0px');
-    }
+    expect(before.gap).toBe('0px');
   });
 
   test('the dark theme leaves the presentation wall alone', async ({ page }) => {

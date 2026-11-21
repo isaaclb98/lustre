@@ -197,25 +197,11 @@ html[data-theme='dark'] {
   --r-4: 0px;
   --r-pill: 0px;
 
-  /* photo-tile chrome — borderless and flat.
-     The dark theme's grid is a continuous surface: the photos touch
-     pixel-to-pixel, so a border between them would read as a grid of
-     seams rather than as the edge of a photo. Same reasoning as the
-     presentation wall's borderless tile.
-
-     The state rings move INSIDE the tile (an inset outline paints
-     over the photo, and never changes the layout) so a disliked or
-     menu-open tile is marked without a ring appearing to sit on top
-     of its neighbour. */
-  --grid-tile-border-width: 0px;
-  --grid-tile-shadow: none;
-  --grid-tile-hover-shadow: none;
-  /* The context-menu-open marker moves inside the tile for the same
-     reason the state rings do: with no border, `border-color` has
-     nothing to paint, so the ring has to be the inset shadow. */
-  --grid-tile-menu-shadow: inset 0 0 0 1px var(--accent);
-  --grid-tile-dislike-ring: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
-  --grid-tile-mixed-ring: inset 0 0 0 1px var(--mixed-tile-ring);
+  /* The photo-tile chrome — borderless, flat, inset rings — lives
+     in the base tokens now. The grid has no gutter in any theme, so
+     a border or a shadow between two tiles would read as a seam
+     rather than as the edge of a photo. That is the grid's
+     geometry, not a theme choice. */
 
   /* shadows — on a near-black base a shadow is invisible, so depth
      comes from the surfaces themselves. What is left is just enough
