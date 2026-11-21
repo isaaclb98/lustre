@@ -18,6 +18,7 @@ import { describe, it, expect } from 'vitest';
 import {
   GRID_SIZE_CONFIG,
   GRID_TILE_RADIUS,
+  MASONRY_GRID_SIZE_CONFIG,
   gridConfigFor,
   tileRadiusFor,
   wallConfig
@@ -57,6 +58,74 @@ describe('gridConfigFor', () => {
     const before = GRID_SIZE_CONFIG.large.gap;
     gridConfigFor('large', 'dark');
     expect(GRID_SIZE_CONFIG.large.gap).toBe(before);
+  });
+});
+
+describe('the masonry ladder', () => {
+  it('starts one rung above the square ladder', () => {
+    // A masonry tile is not cropped to a square: the square grid
+    // shows a centre CROP blown up to the tile width, masonry shows
+    // the whole photo at 1:1. So at the same width a masonry photo
+    // reads SMALLER, and the ladder starts one rung higher.
+    expect(MASONRY_GRID_SIZE_CONFIG.large.tile).toBeGreaterThan(
+      GRID_SIZE_CONFIG.large.tile
+    );
+    expect(MASONRY_GRID_SIZE_CONFIG.medium.tile).toBe(
+      GRID_SIZE_CONFIG.large.tile
+    );
+    expect(MASONRY_GRID_SIZE_CONFIG.small.tile).toBe(
+      GRID_SIZE_CONFIG.medium.tile
+    );
+  });
+
+  it('keeps the density ordering: a bigger tile means fewer columns', () => {
+    for (const size of SIZES) {
+      expect(MASONRY_GRID_SIZE_CONFIG[size].maxCols).toBeLessThanOrEqual(
+        GRID_SIZE_CONFIG[size].maxCols
+      );
+    }
+    expect(MASONRY_GRID_SIZE_CONFIG.large.maxCols).toBeLessThan(
+      MASONRY_GRID_SIZE_CONFIG.medium.maxCols
+    );
+  });
+
+  it('keeps the row width where the square grid keeps it', () => {
+    // The square ladder's row spans ~1500px at every size: a bigger
+    // tile buys fewer columns. The masonry ladder must not sprawl
+    // across a wide monitor.
+    const rowWidth = (c: { tile: number; gap: number; maxCols: number }) =>
+      c.maxCols * c.tile + (c.maxCols - 1) * c.gap;
+    for (const size of SIZES) {
+      expect(rowWidth(MASONRY_GRID_SIZE_CONFIG[size])).toBeLessThan(1700);
+      expect(rowWidth(MASONRY_GRID_SIZE_CONFIG[size])).toBeGreaterThan(1400);
+    }
+  });
+
+  it('is used by gridConfigFor when masonry is on', () => {
+    for (const size of SIZES) {
+      expect(gridConfigFor(size, 'light', true)).toEqual(
+        MASONRY_GRID_SIZE_CONFIG[size]
+      );
+    }
+  });
+
+  it('drops the gutter in the dark theme, like the square ladder', () => {
+    for (const size of SIZES) {
+      expect(gridConfigFor(size, 'dark', true).gap).toBe(0);
+      // ...but keeps the tile size and the column cap.
+      expect(gridConfigFor(size, 'dark', true).tile).toBe(
+        MASONRY_GRID_SIZE_CONFIG[size].tile
+      );
+      expect(gridConfigFor(size, 'dark', true).maxCols).toBe(
+        MASONRY_GRID_SIZE_CONFIG[size].maxCols
+      );
+    }
+  });
+
+  it('does not mutate the shared preset', () => {
+    const before = MASONRY_GRID_SIZE_CONFIG.large.gap;
+    gridConfigFor('large', 'dark', true);
+    expect(MASONRY_GRID_SIZE_CONFIG.large.gap).toBe(before);
   });
 });
 

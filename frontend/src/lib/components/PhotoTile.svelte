@@ -362,8 +362,22 @@
   // renders — so the guess below, which mirrors the uniform grid's
   // heuristic, would understate it.
   let eagerSizes = $derived.by(() => {
-    // The masonry's tile width is exact, so use it.
-    const w = masonry ? tileWidth : (tileSizeGuess() ?? 384);
+    // The masonry's tile width is EXACT and does not depend on the
+    // viewport: the grid drops COLUMNS on a narrow screen, it never
+    // shrinks the tiles. So the masonry advertises one width, not
+    // the uniform grid's breakpoint ladder.
+    //
+    // That distinction matters: the ladder's 120px breakpoint would
+    // advertise a 288px masonry tile as 120px on a phone, and the
+    // browser would then pick its lowest-density source for a tile
+    // that is nearly three times wider — under-fetching exactly
+    // where the pixels are scarcest.
+    if (masonry) return `${tileWidth}px`;
+
+    // The uniform grid's tile width follows the viewport (the CSS
+    // grid's auto-fit tracks grow and shrink), so the guess
+    // mirrors that heuristic.
+    const w = tileSizeGuess() ?? 384;
     // Pick the smallest variant >= w so the browser has enough
     // pixels to render crisply at this DPR.
     const variant = w <= 120 ? 120 : w <= 180 ? 180 : w <= 240 ? 240 : 384;

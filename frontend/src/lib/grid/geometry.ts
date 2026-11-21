@@ -49,6 +49,7 @@ import {
   type GridSizeConfig
 } from '$lib/grid/config';
 import { currentTheme } from '$lib/theme';
+import { currentMasonry } from '$lib/stores/preferences';
 
 /**
  * The element the photo grid is laid out inside. The layout's
@@ -174,7 +175,7 @@ function px(value: string): number {
  * already a whole number of rows.
  */
 export function currentColumns(size: GridSize): number {
-  const config = gridConfigFor(size, currentTheme());
+  const config = gridConfigFor(size, currentTheme(), currentMasonry());
   const width = gridContainerWidth();
   if (width <= 0) return config.maxCols;
   return columnsForWidth(width, config);
@@ -187,7 +188,7 @@ export function currentColumns(size: GridSize): number {
  * grid-size preference.
  */
 export function currentPageSize(size: GridSize): number {
-  const config = gridConfigFor(size, currentTheme());
+  const config = gridConfigFor(size, currentTheme(), currentMasonry());
   const base = basePageSize(config);
   const width = gridContainerWidth();
   if (width <= 0) return base;
@@ -200,7 +201,7 @@ export function currentPageSize(size: GridSize): number {
  * of rows that still fits under the ceiling.
  */
 export function currentPageSizeWithin(size: GridSize, ceiling: number): number {
-  const config = gridConfigFor(size, currentTheme());
+  const config = gridConfigFor(size, currentTheme(), currentMasonry());
   const width = gridContainerWidth();
   const cols = width <= 0 ? config.maxCols : columnsForWidth(width, config);
   return pageSizeWithinColumns(ceiling, cols);

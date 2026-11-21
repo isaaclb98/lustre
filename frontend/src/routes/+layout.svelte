@@ -17,7 +17,7 @@
   import '../lib/styles/global.css';
   import { onNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { preferences } from '$lib/stores/preferences';
+  import { preferences, masonryEnabled } from '$lib/stores/preferences';
   import { theme } from '$lib/theme';
   import {
     GRID_HOVER_ZOOM,
@@ -66,7 +66,19 @@
   // grid has no gutter at all — its photos touch, like the
   // presentation wall's — so the gap and the tile radius are read
   // through the theme rather than off the size preset alone.
-  const config = $derived(gridConfigFor($preferences.gridSize, $theme));
+  // Masonry has its own size ladder (see MASONRY_GRID_SIZE_CONFIG):
+  // a masonry tile is not cropped to a square, so the same width
+  // shows a smaller photo and the ladder starts one rung higher.
+  // The published vars must follow the ladder the grid actually
+  // renders, or the CSS would lay out a different tile size than
+  // the virtualizer assumes.
+  const config = $derived(
+    gridConfigFor(
+      $preferences.gridSize,
+      $theme,
+      masonryEnabled($preferences)
+    )
+  );
   // Max row width = MAX_COLS * TILE + (MAX_COLS - 1) * GAP. Used
   // as `--grid-row-max-width` so the CSS grid's max-width clamp
   // matches the JS math — without it, auto-fit would let tracks

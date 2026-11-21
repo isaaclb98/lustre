@@ -53,6 +53,34 @@ export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
 };
 
 /**
+ * The masonry ladder — the same three choices, one rung higher.
+ *
+ * A masonry tile is NOT cropped to a square: the photo is shown at
+ * its own aspect ratio, and the tile's height follows from it. So
+ * the tile width no longer implies the photo's bulk.
+ *
+ * The square grid shows a portrait as a centre square CROP blown
+ * up to the tile's width — the crop is magnified past 1:1 (a 3:4
+ * portrait loses a third of its width). Masonry shows the whole
+ * photo at 1:1, so at the same tile width the photo reads
+ * SMALLER, even though more of it is visible.
+ *
+ * The masonry ladder therefore starts one rung higher: the 240px
+ * the square grid calls "large" is masonry's "medium", and
+ * masonry's "large" is a new 288px rung above it.
+ *
+ * The gutter follows the tile (4/8/14/20 for 144/192/240/288), and
+ * the column cap keeps the row's width where the square grid keeps
+ * it: a bigger tile means fewer columns, so the row still spans
+ * ~1500px rather than sprawling across a wide monitor.
+ */
+export const MASONRY_GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
+  large: { tile: 288, gap: 20, maxCols: 5, rows: 4 },
+  medium: { tile: 240, gap: 14, maxCols: 6, rows: 4 },
+  small: { tile: 192, gap: 8, maxCols: 8, rows: 4 }
+};
+
+/**
  * The hover zoom: how far the photo inside a tile scales up when
  * the pointer is over it.
  *
@@ -88,12 +116,18 @@ export const GRID_TILE_RADIUS = 10;
  *
  * The theme is a parameter rather than a lookup so this module
  * stays free of the DOM: it owns numbers, and the caller owns the
- * theme. The four consumers that must agree on these numbers (the
- * layout's published CSS vars, the grid's virtualizer, the column
- * math, the request sizing) all call this one function.
+ * theme. The layout is a parameter for the same reason: masonry
+ * has its own ladder (see MASONRY_GRID_SIZE_CONFIG), and every
+ * consumer that must agree on these numbers (the layout's
+ * published CSS vars, the grid's virtualizer, the column math, the
+ * request sizing) calls this one function.
  */
-export function gridConfigFor(size: GridSize, theme: Theme): GridSizeConfig {
-  const base = GRID_SIZE_CONFIG[size];
+export function gridConfigFor(
+  size: GridSize,
+  theme: Theme,
+  masonry = false
+): GridSizeConfig {
+  const base = masonry ? MASONRY_GRID_SIZE_CONFIG[size] : GRID_SIZE_CONFIG[size];
   return theme === 'dark' ? { ...base, gap: 0 } : base;
 }
 

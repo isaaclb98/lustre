@@ -157,8 +157,22 @@
   // so the gap the virtualizer assumes has to be the gap the CSS
   // renders, or every row would be the wrong height and the scroll
   // would drift.
+  // Masonry has its own size ladder (MASONRY_GRID_SIZE_CONFIG): a
+  // masonry tile is not cropped to a square, so the same width
+  // shows a smaller photo and the ladder starts one rung higher.
+  //
+  // A caller that passes its own tileConfig — the presentation wall
+  // — keeps that config entirely: the wall is a square, gapless
+  // field by design, so it renders from the square ladder whether
+  // or not the deployment's masonry mode is on.
+  //
+  // The wall is exempt from masonry for the same reason it is
+  // exempt from the masonry LAYOUT: it is a square field by
+  // design.
+  const masonry = $derived(masonryEnabled($preferences) && !wall);
+
   const config = $derived(
-    tileConfig ?? gridConfigFor($preferences.gridSize, $theme)
+    tileConfig ?? gridConfigFor($preferences.gridSize, $theme, masonry)
   );
   const TILE = $derived(config.tile);
   const GAP = $derived(config.gap);
@@ -271,12 +285,10 @@
   // returns each photo's own width and height, so a tile can be
   // sized in the same paint as the layout and nothing reflows when a
   // thumbnail arrives.
-  // The presentation wall is EXEMPT. It is a gapless square field
-  // by design — the photos touch pixel-to-pixel and fill the
-  // viewport — so the masonry layout must not touch it. The wall's
+  //
+  // The presentation wall is EXEMPT — it is a gapless square field
+  // by design, so the masonry layout must not touch it. The wall's
   // own tile config (square corners, no gutter) still applies.
-  const masonry = $derived(masonryEnabled($preferences) && !wall);
-
   const masonryLayout = $derived(
     masonry ? layoutMasonry(items, { tile: TILE, gap: GAP, columns }) : null
   );

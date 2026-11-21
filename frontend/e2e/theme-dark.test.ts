@@ -204,7 +204,10 @@ test.describe('dark theme', () => {
       expect(geom.radius).toBe('0px');
       expect(geom.borderWidth).toBe('0px');
     } else {
-      // The light theme keeps its 14px gutter and rounded tiles.
+      // The light theme keeps its gutter and rounded tiles. The
+      // gutter's exact size follows the layout's ladder (14px in
+      // the square grid, 20px in masonry) — what matters here is
+      // that there IS one, and that the dark theme has none.
       expect(geom.gap).not.toBe('0px');
       expect(geom.gapBetweenTiles).toBeGreaterThan(0);
       expect(geom.radius).not.toBe('0px');
@@ -251,9 +254,19 @@ test.describe('dark theme', () => {
 
     // The geometry follows the store: the gap is part of the
     // theme, so the grid has to re-derive it.
+    //
+    // The light theme's gutter depends on the LAYOUT's size ladder:
+    // 14px in the square grid, 20px in masonry (whose ladder is a
+    // rung higher, so its large tile carries a larger gutter). The
+    // dark theme has no gutter at all in either.
+    const lightGap = (await page.evaluate(() =>
+      document.documentElement.getAttribute('data-masonry') === '1'
+    ))
+      ? '20px'
+      : '14px';
     await expect
       .poll(async () => (await gridGeometry(page))?.gap)
-      .toBe(target === 'dark' ? '0px' : '14px');
+      .toBe(target === 'dark' ? '0px' : lightGap);
 
     const after = await gridGeometry(page);
     if (target === 'dark') {

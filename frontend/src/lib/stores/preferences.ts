@@ -23,7 +23,7 @@
  * in-memory defaults so the UI keeps working. The persistence
  * is a nice-to-have, never a hard requirement.
  */
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { SLIDESHOW_PRESETS_MS, DEFAULT_SLIDESHOW_MS } from '$lib/api/limits';
 import { DEFAULT_GRID_SIZE, type GridSize } from '$lib/grid/config';
 import { readMasonryDefault } from '$lib/layout';
@@ -167,4 +167,18 @@ export function setMasonry(enabled: boolean | null) {
  */
 export function masonryEnabled(prefs: Preferences): boolean {
   return prefs.masonry ?? readMasonryDefault();
+}
+
+/**
+ * The masonry mode right now, for code that runs outside a
+ * component.
+ *
+ * The fetch layer's column math (grid/geometry.ts) has no reactive
+ * context, exactly like the theme read there — it measures the DOM
+ * and reads the store at call time. The store's current value
+ * carries the user's Grid/Masonry/Follow choice, so this is the
+ * same answer the components get, just read imperatively.
+ */
+export function currentMasonry(): boolean {
+  return masonryEnabled(get(preferences));
 }

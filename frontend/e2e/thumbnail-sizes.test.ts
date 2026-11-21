@@ -48,7 +48,20 @@ test('PhotoTile sizes attribute reflects viewport-derived tile width', async ({ 
   // The attribute reflects an actual rendered CSS width — not
   // a hardcoded literal. We just verify it ends in `px` and
   // contains one of the variant widths (180, 240, or 384).
-  expect(sizes).toMatch(/(180|240|384)px/);
+  //
+  // The masonry advertises ONE width — its tile width is exact and
+  // viewport-independent — and that width comes from the masonry's
+  // own size ladder (288/240/192), which is a rung above the
+  // square grid's. So the accepted set depends on the layout the
+  // deployment serves.
+  const masonry = await page.evaluate(() =>
+    document.documentElement.getAttribute('data-masonry') === '1'
+  );
+  if (masonry) {
+    expect(sizes).toMatch(/^(192|240|288)px$/);
+  } else {
+    expect(sizes).toMatch(/(180|240|384)px/);
+  }
   // And the srcset advertises the single 384 variant — the
   // post-migration shape. The actual URL is `/thumb/{id}?w=384`.
   const srcset = await page.locator('.grid-tile img.full').first().getAttribute('srcset');

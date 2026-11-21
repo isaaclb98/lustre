@@ -25,8 +25,23 @@ import { test, expect, type Page } from '@playwright/test';
  * actual request rounds UP to a whole number of rows at the
  * column count the viewport renders, so this is a minimum, never
  * an exact value. Mirrors $lib/grid/config.
+ *
+ * Masonry has its OWN ladder, one rung higher (a masonry tile is
+ * not cropped to a square, so the same width shows a smaller
+ * photo), and its column caps differ — so the floor differs too.
+ * Which ladder applies depends on the DEPLOYMENT's layout mode,
+ * which the shell stamps on <html data-masonry>.
  */
-const BASE_PAGE_SIZE = { large: 24, medium: 32, small: 40 } as const;
+const BASE_PAGE_SIZE_SQUARE = { large: 24, medium: 32, small: 40 } as const;
+const BASE_PAGE_SIZE_MASONRY = { large: 20, medium: 24, small: 32 } as const;
+
+/** The base page size for the layout this deployment serves. */
+async function basePageSizes(page: Page) {
+  const masonry = await page.evaluate(() =>
+    document.documentElement.getAttribute('data-masonry') === '1'
+  );
+  return masonry ? BASE_PAGE_SIZE_MASONRY : BASE_PAGE_SIZE_SQUARE;
+}
 
 async function gotoSettings(page: Page) {
   await page.goto('/settings');
@@ -133,6 +148,7 @@ test.describe('Grid size preference', () => {
     //
     // Strategy: intercept the first /api/random?limit= call, then
     // read the rendered track count from the DOM and compare.
+    const baseSizes = await basePageSizes(page);
     for (const size of ['large', 'medium', 'small'] as const) {
       // Set the preference in localStorage before the page
       // mounts. Going through localStorage is faster than
@@ -184,7 +200,7 @@ test.describe('Grid size preference', () => {
       expect(limit % renderedCols).toBe(0);
       // And the page never carries fewer photos than the preset
       // asks for (4 rows at maximum density).
-      expect(limit).toBeGreaterThanOrEqual(BASE_PAGE_SIZE[size]);
+      expect(limit).toBeGreaterThanOrEqual(baseSizes[size]);
     }
   });
 
@@ -193,6 +209,7 @@ test.describe('Grid size preference', () => {
     // renders fewer columns, so the limit must grow (rounded up
     // to whole rows) to stay a multiple of the rendered columns.
     await page.goto('/');
+    const baseSizes = await basePageSizes(page);
     await page.evaluate(() => {
       localStorage.setItem(
         'lustre:preferences',
@@ -236,8 +253,8 @@ test.describe('Grid size preference', () => {
     // ...and both requests fill whole rows.
     expect(wide.limit % wide.cols).toBe(0);
     expect(narrow.limit % narrow.cols).toBe(0);
-    expect(narrow.limit).toBeGreaterThanOrEqual(BASE_PAGE_SIZE.large);
-    expect(wide.limit).toBeGreaterThanOrEqual(BASE_PAGE_SIZE.large);
+    expect(narrow.limit).toBeGreaterThanOrEqual(baseSizes.large);
+    expect(wide.limit).toBeGreaterThanOrEqual(baseSizes.large);
   });
 
   test('The CSS vars on :root reflect the chosen size', async ({ page }) => {
@@ -252,17 +269,21 @@ test.describe('Grid size preference', () => {
     // tick or two after the route mounts. Reading them once catches
     // the empty pre-publish value; POLL for them instead.
     //
-    // Medium config: 192/8. The leading-zero trimmed values should
-    // be '192px' and '8px'.
+    // Medium config: 192/8 in the square grid, 240/14 in masonry
+    // (a masonry tile is not cropped to a square, so the ladder
+    // starts one rung higher).
     //
     // The GUTTER is theme-dependent: the dark theme draws its grid
     // with no gutter at all (its photos touch), so the expected gap
     // follows the theme the deployment is serving.
-    const expectedGap = await page.evaluate(() =>
-      document.documentElement.getAttribute('data-theme') === 'dark'
-        ? '0px'
-        : '8px'
-    );
+    const expected = await page.evaluate(() => {
+      const masonry =
+        document.documentElement.getAttribute('data-masonry') === '1';
+      const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+      const tile = masonry ? '240px' : '192px';
+      const gap = dark ? '0px' : masonry ? '14px' : '8px';
+      return `${tile} / ${gap}`;
+    });
     await expect
       .poll(
         async () =>
@@ -274,6 +295,6 @@ test.describe('Grid size preference', () => {
           }),
         { timeout: 10_000, message: 'the grid vars must be published' }
       )
-      .toBe(`192px / ${expectedGap}`);
+      .toBe(expected);
   });
 });
