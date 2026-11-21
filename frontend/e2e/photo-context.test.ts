@@ -16,6 +16,19 @@ async function appReady(page: Page) {
   await page.waitForSelector('header.topbar', { timeout: 10000 });
 }
 
+/**
+ * Wait for an element matching the locator. Polls up to `timeout` ms.
+ * The SPA's data arrives from an async fetch, so counting elements
+ * straight after a navigation races that fetch.
+ */
+async function waitFor(page: Page, sel: string, timeout = 8000) {
+  await page.waitForFunction(
+    (s) => document.querySelector(s) !== null,
+    sel,
+    { timeout }
+  );
+}
+
 test.describe('Photo context menu (right-click)', () => {
   test('right-click on tile opens context menu', async ({ page }) => {
     await page.goto('/random');
@@ -218,7 +231,12 @@ test.describe('Similar photos page (/similar/<id>)', () => {
     await page.goto(`${APP}/similar/${pointId}`);
     await appReady(page);
 
-    // Should show at least one similar photo tile (or an empty state)
+    // Should show at least one similar photo tile (or an empty state).
+    //
+    // The wait matters: the similar photos come from an async fetch,
+    // so counting straight after the navigation races that fetch and
+    // can see neither a tile nor the empty state yet.
+    await waitFor(page, '.grid-tile, .empty, [class*="empty"]', 10000);
     const tiles = await page.locator('.grid-tile').count();
     const emptyState = await page.locator('.empty, [class*="empty"]').count();
     expect(tiles + emptyState).toBeGreaterThan(0);
