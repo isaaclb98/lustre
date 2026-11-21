@@ -31,6 +31,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -42,9 +43,16 @@ from indexer.image_loader import (
     load_image_pil_with_dims,
     prepare_for_embedding,
 )
+from indexer.image_loader import (
+    model_input_size as model_input_size_for,
+)
 from indexer.retry import RetryExhausted, retry_with_backoff
 from indexer.scan import ScanCancelled
-from indexer.thumbnails import generate_thumbnail_for_path, thumbnail_path
+from indexer.thumbnails import (
+    generate_ladder_and_model_input,
+    generate_thumbnail_for_path,
+    thumbnail_path,
+)
 from indexer.vision_encoder import VisionEncoder
 from lustre_kernel import orphan_marking
 from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
@@ -320,6 +328,14 @@ except ValueError:
 _LOAD_POOL_SIZE = max(1, min(_LOAD_POOL_SIZE, 32))
 
 
+# The thumbnail writer's pool. Thumbnail generation is CPU-bound
+# (libvips resize + WebP encode) and each photo produces several
+# independent files (the canonical plus every variant), so they can
+# be written concurrently. pyvips releases the GIL, so threads give
+# real parallelism here. Measured 206 -> 45 ms/photo at 8 workers.
+_THUMB_POOL_SIZE = _LOAD_POOL_SIZE
+
+
 # Cap the per-run "id_mismatch" sample so a 1M-file run doesn't
 # emit a multi-MB progress payload. 20 is enough to see the
 # pattern (path → id, id_alt, recorded mtime/size, current mtime/size)
@@ -345,8 +361,6 @@ def _load_batch_concurrent(paths):
     failures are recorded as `(p, None, None, None)` so the caller
     can skip + count them without an extra exception pass.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     from indexer.image_loader import LoaderError
 
     results: list = [None] * len(paths)
@@ -360,6 +374,60 @@ def _load_batch_concurrent(paths):
             # measured for the pair).
             img, sw, sh = load_image_pil_with_dims(p)
             return idx, (p, img, sw, sh)
+        except (LoaderError, Exception) as exc:  # noqa: BLE001
+            logger.warning("load error %s: %s", p, exc)
+            return idx, (p, None, None, None)
+
+    with ThreadPoolExecutor(max_workers=_LOAD_POOL_SIZE) as executor:
+        futures = [executor.submit(_do, i, p) for i, p in enumerate(paths)]
+        for fut in as_completed(futures):
+            _idx, payload = fut.result()
+            results[_idx] = payload
+
+    return results
+
+
+def _prepare_batch_concurrent(paths, model_input_size):
+    """Decode `paths` into `(path, model_input, source_w, source_h)`.
+
+    A native model (C-RADIOv4) consumes the DISPLAY THUMBNAIL's own
+    pixels: one libvips decode of the source produces every display
+    size AND the image the embedder sees, so the photo is decoded
+    once and resized once instead of twice. The model input is taken
+    before the WebP encode, so nothing is recompressed on the way to
+    the GPU, and it is the same picture the small view serves.
+
+    A letterbox model (SigLIP2) needs the picture as decoded — it
+    pads the picture into a square itself — so it keeps the PIL
+    decode and the model sizes it.
+
+    Failures are logged + counted (not raised) to preserve the
+    contract that the indexer continues with whatever loaded
+    successfully.
+
+    Returns a list of tuples, ordered to match `paths`. Per-path
+    failures are recorded as `(p, None, None, None)` so the caller
+    can skip + count them without an extra exception pass.
+    """
+    from indexer.image_loader import LoaderError
+
+    results: list = [None] * len(paths)
+
+    def _do(idx, p):
+        try:
+            if model_input_size is None:
+                # Letterbox model: the picture as decoded.
+                img, sw, sh = load_image_pil_with_dims(p)
+                return idx, (p, img, sw, sh)
+            # Native model: one decode produces the display ladder
+            # and the embedder's input.
+            point_id = upsert.id_for(p, "")
+            _out, model_input, sw, sh = generate_ladder_and_model_input(
+                p, point_id, model_input_size=model_input_size
+            )
+            if model_input is None:
+                return idx, (p, None, None, None)
+            return idx, (p, model_input, sw, sh)
         except (LoaderError, Exception) as exc:  # noqa: BLE001
             logger.warning("load error %s: %s", p, exc)
             return idx, (p, None, None, None)
@@ -475,6 +543,18 @@ def main(argv=None):
             return 2
 
     client = make_client(args)
+
+    # The model's input long edge, for the native models. When set, the
+    # embedder consumes the display ladder's own pixels: one decode of
+    # the source produces every display size AND the image the GPU
+    # sees, so the photo is decoded once and resized once instead of
+    # twice. None for the letterbox models, which need the picture as
+    # decoded.
+    _model_input_size = model_input_size_for(args.model)
+    logger.info(
+        "model input size: %s",
+        _model_input_size if _model_input_size else "as-decoded",
+    )
     # Round-35: search-side images.db mirror. None when dry-run or
     # when INDEX_DB_PATH isn't set (tests, standalone indexer runs).
     if not args.dry_run:
@@ -959,13 +1039,18 @@ def main(argv=None):
                 total_reembedded += n_changed
                 continue
 
-            # Round-perf (issue #1): concurrent PIL decode via a
-            # thread pool (size = min(cpu_count, 8), env-tunable
-            # via IMAGE_LOAD_POOL_SIZE). PIL releases the GIL on
-            # libjpeg/libpng/WebP/HEIF, so this gives real
+            # Round-perf (issue #1): concurrent decode via a thread
+            # pool (size = min(cpu_count, 8), env-tunable via
+            # IMAGE_LOAD_POOL_SIZE). PIL and libvips both release the
+            # GIL on their heavy C code, so this gives real
             # parallelism without the cost of spawning processes.
             # On an 8-core host this typically cuts the load phase
             # from batch_size × 25ms to ~batch_size × 4ms.
+            #
+            # For a native model the decode is the libvips one, which
+            # also writes the display ladder — the embedder then
+            # consumes that ladder's own pixels, so the photo is
+            # decoded once and resized once instead of twice.
             #
             # Skipped when the batch is thumb-only (to_thumb
             # non-empty, to_embed empty) — those files are
@@ -974,13 +1059,15 @@ def main(argv=None):
             loaded: list = []
             if to_embed:
                 to_embed_paths = [p for p, _reason in to_embed]
-                raw_loaded = _load_batch_concurrent(to_embed_paths)
+                raw_loaded = _prepare_batch_concurrent(
+                    to_embed_paths, _model_input_size
+                )
                 for entry in raw_loaded:
                     if entry is None:
                         continue
                     _p, _img, _sw, _sh = entry
                     if _img is None:
-                        # _load_batch_concurrent logged + counted this one
+                        # _prepare_batch_concurrent logged + counted this one
                         total_errors += 1
                         continue
                     loaded.append(entry)
@@ -1036,23 +1123,51 @@ def main(argv=None):
                     continue
 
                 items = []
-                for (path, img, source_w, source_h), vec in zip(
+                # Thumbnail generation is CPU-bound (libvips resize +
+                # WebP encode, ~170 ms per photo for the 640 canonical
+                # plus the 240/480 variants). Done inline in this loop
+                # it serialises the whole batch: the GPU sits idle for
+                # ~80% of the wall clock waiting on the encoder. The
+                # variants are independent files, so a bounded pool
+                # writes them concurrently — pyvips releases the GIL,
+                # and this measured 4.6x faster (206 -> 45 ms/photo).
+                #
+                # For a native model the ladder was ALREADY written by
+                # `_prepare_batch_concurrent` — the same decode that
+                # produced the embedder's input — so writing it again
+                # here would double every photo's encode work.
+                if _model_input_size is None:
+                    _thumb_args = [
+                        (img, path) for (path, img, _sw, _sh), _v in zip(
+                            loaded, vecs, strict=False
+                        )
+                    ]
+
+                    def _make_thumb(_pair):
+                        _img, _path = _pair
+                        try:
+                            generate_thumbnail_for_path(_img, _path, "")
+                        except (OSError, ValueError, RuntimeError) as exc:
+                            logger.warning(
+                                "Failed to generate thumbnail for %s: %s",
+                                _path,
+                                exc,
+                            )
+
+                    if _thumb_args:
+                        if len(_thumb_args) > 1:
+                            with ThreadPoolExecutor(
+                                max_workers=min(
+                                    len(_thumb_args), _THUMB_POOL_SIZE
+                                )
+                            ) as _pool:
+                                list(_pool.map(_make_thumb, _thumb_args))
+                        else:
+                            _make_thumb(_thumb_args[0])
+
+                for (path, _img, source_w, source_h), vec in zip(
                     loaded, vecs, strict=False,
                 ):
-                    # Generate thumbnail (best-effort, non-fatal)
-                    try:
-                        upsert.id_for(path, "")
-                        thumb_path = generate_thumbnail_for_path(img, path, "")
-                        if thumb_path:
-                            logger.debug(f"Generated thumbnail: {thumb_path}")
-                    except (OSError, ValueError, RuntimeError) as e:
-                        # Thumbnail generation can fail on corrupt JPEGs,
-                        # PIL decode errors, or filesystem issues. The
-                        # caller wants the index to continue regardless;
-                        # narrow to the realistic failure modes rather than
-                        # a blind `Exception` catch.
-                        logger.warning(f"Failed to generate thumbnail for {path}: {e}")
-
                     payload = upsert.build_payload(
                         path, "", args.model, "", src_name,
                         width=source_w, height=source_h,
@@ -1131,32 +1246,41 @@ def main(argv=None):
             # was skipped but whose on-disk thumb is missing. Runs
             # after the embed block (which may have created thumbs
             # for the to_embed paths) so we don't double-work any
-            # path. Uses the same _load_batch_concurrent helper as
-            # the embed path so the threading is consistent; the
-            # throughput on libvips is high enough that the cost
-            # here is dominated by the JPEG decode, not the encode.
+            # path.
             if to_thumb:
-                raw_thumb_loaded = _load_batch_concurrent(to_thumb)
-                for entry, path in zip(
-                    raw_thumb_loaded, to_thumb, strict=False
-                ):
-                    if entry is None:
-                        total_errors += 1
-                        continue
-                    _p, _img, _sw, _sh = entry
-                    if _img is None:
-                        # _load_batch_concurrent logged + counted this one
-                        total_errors += 1
-                        continue
+                _regen_args = list(to_thumb)
+
+                def _regen_one(_path):
                     try:
-                        out = generate_thumbnail_for_path(_img, path, "")
-                        if out:
-                            total_thumb_regens += 1
-                    except (OSError, ValueError, RuntimeError) as e:
-                        logger.warning(
-                            "Failed to regen thumb for %s: %s", path, e
+                        out, _model_input, _sw, _sh = (
+                            generate_ladder_and_model_input(
+                                _path,
+                                upsert.id_for(_path, ""),
+                                model_input_size=None,
+                            )
                         )
-                        total_errors += 1
+                        return 1 if out else 0
+                    except (OSError, ValueError, RuntimeError) as exc:
+                        logger.warning(
+                            "Failed to regen thumb for %s: %s", _path, exc
+                        )
+                        return -1
+
+                if _regen_args:
+                    if len(_regen_args) > 1:
+                        with ThreadPoolExecutor(
+                            max_workers=min(
+                                len(_regen_args), _THUMB_POOL_SIZE
+                            )
+                        ) as _pool:
+                            _outcomes = list(_pool.map(_regen_one, _regen_args))
+                    else:
+                        _outcomes = [_regen_one(_regen_args[0])]
+                    for _o in _outcomes:
+                        if _o > 0:
+                            total_thumb_regens += 1
+                        elif _o < 0:
+                            total_errors += 1
                 if total_thumb_regens:
                     logger.info(
                         "thumb-regen: %d up-to-date files were missing "
