@@ -43,6 +43,12 @@ function themeFromRootEnv() {
       if (!process.env.LUSTRE_THEME && rootEnv.LUSTRE_THEME) {
         process.env.LUSTRE_THEME = rootEnv.LUSTRE_THEME;
       }
+      // The grid's layout mode rides along with the theme: the dev
+      // server's shell has to carry the same marker the backend
+      // stamps, or the dev server would always show the square grid.
+      if (!process.env.LUSTRE_MASONRY && rootEnv.LUSTRE_MASONRY) {
+        process.env.LUSTRE_MASONRY = rootEnv.LUSTRE_MASONRY;
+      }
     }
   };
 }

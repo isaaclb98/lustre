@@ -21,6 +21,7 @@
 import { dev } from '$app/environment';
 import type { Handle } from '@sveltejs/kit';
 import { DEFAULT_THEME, THEME_ATTRIBUTE } from '$lib/theme';
+import { MASONRY_ATTRIBUTE } from '$lib/layout';
 
 /** The themes the frontend ships. Mirrors THEMES in search/theme.py. */
 const THEMES = ['light', 'dark'] as const;
@@ -43,6 +44,17 @@ function configuredTheme(): string {
   return raw;
 }
 
+/**
+ * The configured grid layout.
+ *
+ * The same value the backend stamps onto the shell it serves, read
+ * from the same environment. Off unless LUSTRE_MASONRY says on.
+ */
+function configuredMasonry(): boolean {
+  const raw = (process.env.LUSTRE_MASONRY ?? '0').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
   const response = await resolve(event);
 
@@ -53,15 +65,22 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (!contentType.includes('text/html')) return response;
 
   const theme = configuredTheme();
+  const masonry = configuredMasonry();
   const html = await response.text();
   const stamped = html.replace(
     /<html(\s[^>]*)?>/i,
     (match, attrs: string | undefined) => {
-      const without = (attrs ?? '').replace(
-        new RegExp(`\\s${THEME_ATTRIBUTE}=("[^"]*"|'[^']*'|[^\\s>]+)`, 'i'),
-        ''
-      );
-      return `<html${without} ${THEME_ATTRIBUTE}="${theme}">`;
+      const without = (attrs ?? '')
+        .replace(
+          new RegExp(`\\s${THEME_ATTRIBUTE}=("[^"]*"|'[^']*'|[^\\s>]+)`, 'i'),
+          ''
+        )
+        .replace(
+          new RegExp(`\\s${MASONRY_ATTRIBUTE}=("[^"]*"|'[^']*'|[^\\s>]+)`, 'i'),
+          ''
+        );
+      const marker = masonry ? ` ${MASONRY_ATTRIBUTE}="1"` : '';
+      return `<html${without} ${THEME_ATTRIBUTE}="${theme}"${marker}>`;
     }
   );
 
