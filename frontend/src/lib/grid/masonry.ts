@@ -65,13 +65,22 @@ export interface MasonryOptions {
  * The default clamps.
  *
  * A panorama (a 5:1 banner) or an extreme portrait would make a
- * single tile taller than the screen, and the column it lands in
- * would tower over the rest. The clamp keeps the grid readable
- * without discarding the photo's shape entirely — 0.5 is a 2:1
- * landscape and 2 is a 1:2 portrait.
+ * single tile absurdly long, and the column it lands in would tower
+ * over the rest. The clamp bounds that.
+ *
+ * The bound is deliberately WIDE, because a clamp that bites CROPS.
+ * The tile's box is drawn at the clamped ratio while the photo inside
+ * is `object-fit: cover` — so a box whose ratio is not the photo's
+ * ratio cuts the photo off. The masonry's whole promise is that no
+ * photo is cropped.
+ *
+ * These numbers are measured, not guessed: across 11,485 photos of
+ * the real library the height/width ratio runs from 0.325 (a wide
+ * landscape) to 2.996 (a tall portrait), and this bound crops none
+ * of them. The previous [0.5, 2] bound cropped 35.
  */
-export const DEFAULT_MIN_ASPECT = 0.5;
-export const DEFAULT_MAX_ASPECT = 2;
+export const DEFAULT_MIN_ASPECT = 0.25;
+export const DEFAULT_MAX_ASPECT = 4;
 
 /**
  * The height/width ratio a photo is laid out at.
@@ -89,6 +98,30 @@ export function aspectFor(
   const h = source?.height;
   if (!w || !h || w <= 0 || h <= 0) return 1;
   return Math.min(maxAspect, Math.max(minAspect, h / w));
+}
+
+/**
+ * Whether a photo's ratio falls outside the layout's bounds.
+ *
+ * A clamped photo is laid out in a box that is NOT its own shape, so
+ * `object-fit: cover` would cut part of it off. The caller uses this
+ * to switch such a tile to `contain` — the photo then shows whole,
+ * with the tile's own background at the edges, instead of losing
+ * part of itself.
+ *
+ * With the default bounds this is rare: it needs a photo beyond 4:1
+ * or 1:4, and the library has none.
+ */
+export function isClamped(
+  source: MasonrySource | null | undefined,
+  minAspect: number = DEFAULT_MIN_ASPECT,
+  maxAspect: number = DEFAULT_MAX_ASPECT
+): boolean {
+  const w = source?.width;
+  const h = source?.height;
+  if (!w || !h || w <= 0 || h <= 0) return false;
+  const ratio = h / w;
+  return ratio < minAspect || ratio > maxAspect;
 }
 
 /**

@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   aspectFor,
+  isClamped,
   layoutMasonry,
   DEFAULT_MAX_ASPECT,
   DEFAULT_MIN_ASPECT
@@ -32,6 +33,38 @@ describe('aspectFor', () => {
     // its ratio is 5, so it clamps to the TALLEST tile.
     expect(aspectFor({ width: 5000, height: 1000 })).toBe(DEFAULT_MIN_ASPECT);
     expect(aspectFor({ width: 1000, height: 5000 })).toBe(DEFAULT_MAX_ASPECT);
+  });
+
+  it('does not clamp the ratios the real library actually contains', () => {
+    // Measured across 11,485 photos of the library: the ratio runs
+    // from 0.325 to 2.996. A clamp that bit inside that range would
+    // CROP those photos — the tile's box would not be the photo's
+    // shape, and `object-fit: cover` would cut it off.
+    expect(aspectFor({ width: 3000, height: 975 })).toBeCloseTo(0.325);
+    expect(aspectFor({ width: 1000, height: 2996 })).toBeCloseTo(2.996);
+    // The bounds themselves.
+    expect(DEFAULT_MIN_ASPECT).toBeLessThanOrEqual(0.325);
+    expect(DEFAULT_MAX_ASPECT).toBeGreaterThanOrEqual(2.996);
+  });
+});
+
+describe('isClamped', () => {
+  it('is false for a photo inside the bounds', () => {
+    expect(isClamped({ width: 1000, height: 1500 })).toBe(false);
+    expect(isClamped({ width: 1000, height: 500 })).toBe(false);
+  });
+
+  it('is false when the dimensions are unknown', () => {
+    // An unknown-dimension photo falls back to a square, and a
+    // square is its own shape — nothing to clamp.
+    expect(isClamped({})).toBe(false);
+    expect(isClamped(null)).toBe(false);
+    expect(isClamped({ width: 0, height: 0 })).toBe(false);
+  });
+
+  it('is true for a photo outside the bounds', () => {
+    expect(isClamped({ width: 10000, height: 1000 })).toBe(true);
+    expect(isClamped({ width: 1000, height: 10000 })).toBe(true);
   });
 });
 

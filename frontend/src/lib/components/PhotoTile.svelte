@@ -146,6 +146,16 @@
      */
     masonry?: boolean;
     /**
+     * The photo's ratio falls outside the layout's bounds, so its
+     * tile is NOT the photo's own shape.
+     *
+     * The photo then shows WHOLE (`object-fit: contain`) rather than
+     * being cut off to fill the box. This needs a photo beyond 4:1 or
+     * 1:4 — the library has none, so it is a safety net for the
+     * pathological case, not a routine one.
+     */
+    clamped?: boolean;
+    /**
      * The width to fetch the photo at, in CSS pixels.
      *
      * The grid renders the app's 384px thumbnail, which is the
@@ -181,6 +191,7 @@
     voteUpLabel = 'Add to album',
     wall = false,
     masonry = false,
+    clamped = false,
     readOnly = false,
     label = '',
     srcWidth
@@ -322,6 +333,7 @@
   class:menu-open={contextMenuOpen}
   class:wall
   class:masonry
+  class:clamped
   role={readOnly ? 'img' : 'link'}
   href={readOnly ? undefined : `/photo/${encodeURIComponent(pointId)}`}
   data-photo-id={pointId}
@@ -474,6 +486,16 @@
   .tile.masonry {
     aspect-ratio: auto;
     height: 100%;
+  }
+
+  /* A photo whose ratio is outside the layout's bounds is laid out
+     in a box that is not its shape. `cover` would cut it off, so it
+     shows WHOLE instead, with the tile's own background at the
+     edges. Losing a sliver of the photo is worse than a band of
+     background on a photo this rare. */
+  .tile.masonry.clamped .ph,
+  .tile.masonry.clamped .full {
+    object-fit: contain;
   }
 
   /* ---- the wall variant ----

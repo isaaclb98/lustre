@@ -32,7 +32,7 @@
   import { theme } from '$lib/theme';
   import { gridConfigFor, type GridSizeConfig } from '$lib/grid/config';
   import { columnsForWidth, wallColumnsForWidth } from '$lib/grid/geometry';
-  import { layoutMasonry } from '$lib/grid/masonry';
+  import { isClamped, layoutMasonry } from '$lib/grid/masonry';
 
   // Use the generated SearchResult shape so `url`, `width`,
   // `height`, `is_disliked` etc. stay in lockstep with the
@@ -313,13 +313,22 @@
       y: number;
       width: number;
       height: number;
+      clamped: boolean;
     }[] = [];
     for (let i = 0; i < items.length; i++) {
       const placement = layout.placements[i];
       if (!placement) break;
       if (placement.y + placement.height < masonryBand.top) continue;
       if (placement.y > masonryBand.bottom) continue;
-      out.push({ item: items[i], index: i, ...placement });
+      out.push({
+        item: items[i],
+        index: i,
+        ...placement,
+        // A photo whose ratio is outside the layout's bounds is laid
+        // out in a box that is not its shape, so the tile shows it
+        // whole rather than cropping it.
+        clamped: isClamped(items[i])
+      });
     }
     return out;
   });
@@ -682,6 +691,7 @@
               voteUpLabel={voteUpLabel}
               label={tileLabel(entry.item)}
               masonry
+              clamped={entry.clamped}
               {readOnly}
             />
           </div>
