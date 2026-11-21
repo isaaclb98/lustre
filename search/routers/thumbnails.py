@@ -19,8 +19,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 
 from search.config import THUMBNAIL_DIR, THUMBNAIL_SIZE
 
@@ -33,6 +33,7 @@ def build_thumbnails_router() -> APIRouter:
 
     @router.get("/thumb/{point_id}")
     async def get_thumbnail(
+        request: Request,
         point_id: str,
         # Round-perf (issue #2): the frontend's srcset asks for a target width
         # so the browser can pick the smallest variant that fits its
@@ -51,7 +52,7 @@ def build_thumbnails_router() -> APIRouter:
         # resolution), production 384 — a hardcoded 384 rejected the
         # dev stack's own request with a 422.
         w: int | None = Query(None, ge=64, le=THUMBNAIL_SIZE),
-    ) -> FileResponse:
+    ) -> Response:
         """
         Serve a pre-generated WebP thumbnail, optionally sized.
 
@@ -88,13 +89,47 @@ def build_thumbnails_router() -> APIRouter:
         if not thumb_path.exists():
             raise HTTPException(status_code=404, detail="Thumbnail not found")
 
-        # Immutable cache: thumbnails are deterministic by point_id
-        # and never change unless the image is reindexed (which changes the point_id)
-        return FileResponse(
-            path=thumb_path,
+        # Cache: revalidate, do not claim immutability.
+        #
+        # The thumbnail is addressed by point id, and the point id is
+        # a hash of the photo's PATH — so a re-embed, or a change to
+        # the thumbnail's rendering (its size, or its aspect policy),
+        # rewrites the file at the SAME URL. A browser holding the
+        # old bytes under `immutable` would keep them for a year.
+        #
+        # So the response revalidates: the ETag is over the file's
+        # bytes, and a client that already has the current bytes
+        # answers 304 with no body. The cost is one conditional
+        # request per thumbnail per expiry; the benefit is that a
+        # regenerated thumbnail is never served stale.
+        #
+        # The ETag is the file's mtime and size rather than a hash
+        # of its contents: it changes exactly when the file is
+        # rewritten, and computing a content hash of every thumbnail
+        # on every request would mean reading the whole file.
+        stat = thumb_path.stat()
+        etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+
+        # The conditional request. A plain Response does not do this
+        # itself — only StaticFiles does — so it is handled here:
+        # a client that already holds these exact bytes is told 304
+        # and nothing is sent.
+        if request.headers.get("if-none-match") == etag:
+            return Response(
+                status_code=304,
+                headers={
+                    "Cache-Control": "public, max-age=3600, must-revalidate",
+                    "ETag": etag,
+                    "Access-Control-Allow-Origin": "*",
+                },
+            )
+
+        return Response(
+            content=thumb_path.read_bytes(),
             media_type="image/webp",
             headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
+                "Cache-Control": "public, max-age=3600, must-revalidate",
+                "ETag": etag,
                 "Access-Control-Allow-Origin": "*",
             },
         )

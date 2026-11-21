@@ -15,6 +15,7 @@ Pins:
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -75,8 +76,55 @@ class TestCanonicalThumbnail:
             resp = client.get("/thumb/aabbccddeeff00112233445566778899")
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "image/webp"
-        assert resp.headers["cache-control"] == "public, max-age=31536000, immutable"
+        # The response REVALIDATES rather than claiming immutability:
+        # the thumbnail is addressed by a point id (a hash of the
+        # photo's path), so a re-embed rewrites the file at the same
+        # URL, and an immutable response would keep the old bytes.
+        assert "immutable" not in resp.headers["cache-control"]
+        assert "must-revalidate" in resp.headers["cache-control"]
         assert resp.headers["access-control-allow-origin"] == "*"
+
+    def test_a_conditional_request_answers_304(self, thumb_dir):
+        """A client holding the current bytes is told 304.
+
+        The revalidating cache header only pays off if the server
+        actually answers the conditional request — a plain Response
+        does not do that by itself, so the route handles it.
+        """
+        point_id = "aabbccddeeff00112233445566778899"
+        _write_thumbnail(thumb_dir, point_id)
+        app = _build(thumb_dir)
+        with TestClient(app) as client:
+            first = client.get(f"/thumb/{point_id}")
+            etag = first.headers["etag"]
+            second = client.get(
+                f"/thumb/{point_id}", headers={"If-None-Match": etag}
+            )
+        assert first.status_code == 200
+        assert second.status_code == 304
+        assert second.content == b""
+
+    def test_the_etag_changes_when_the_thumbnail_is_rewritten(self, thumb_dir):
+        """A regenerated thumbnail must not be served from a stale cache.
+
+        The point id is a hash of the photo's PATH, so re-embedding
+        the same photo rewrites the thumbnail at the same URL. The
+        ETag has to change, or a client that revalidates would be
+        told 304 and keep the old bytes.
+        """
+        point_id = "aabbccddeeff00112233445566778899"
+        _write_thumbnail(thumb_dir, point_id)
+        app = _build(thumb_dir)
+        with TestClient(app) as client:
+            first = client.get(f"/thumb/{point_id}")
+            first_etag = first.headers["etag"]
+
+            # Rewrite the thumbnail, as a re-embed would.
+            time.sleep(0.01)
+            _write_thumbnail(thumb_dir, point_id)
+
+            second = client.get(f"/thumb/{point_id}")
+            assert second.headers["etag"] != first_etag
 
     def test_returns_404_when_no_thumbnail(self, thumb_dir):
         app = _build(thumb_dir)

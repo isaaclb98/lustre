@@ -45,6 +45,7 @@
   import PageHeader from '$lib/components/PageHeader.svelte';
   import Button from '$lib/components/Button.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import { thumbnailSize } from '$lib/layout';
   import type { AlbumSummary } from '$lib/api/endpoints';
 
   // The centroid key for the built-in album. `favourites` is the
@@ -177,7 +178,7 @@
 <div class="grid" aria-label="Albums">
   <article class="card glass">
     {#if likesFirstId}
-      <img class="cover" src={thumbUrl(likesFirstId)} alt="" loading="lazy" />
+      <img class="cover" src={thumbUrl(likesFirstId, $thumbnailSize)} alt="" loading="lazy" />
     {:else}
       <div class="cover cover-empty" aria-hidden="true"></div>
     {/if}
@@ -229,7 +230,7 @@
     {#each albums as a (a.id)}
       <article class="card glass">
         {#if a.first_member_id}
-          <img class="cover" src={thumbUrl(a.first_member_id)} alt="" loading="lazy" />
+          <img class="cover" src={thumbUrl(a.first_member_id, $thumbnailSize)} alt="" loading="lazy" />
         {:else}
           <div class="cover cover-empty" aria-hidden="true"></div>
         {/if}
