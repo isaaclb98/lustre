@@ -188,21 +188,51 @@ def test_shell_revalidates_so_a_theme_change_is_picked_up(shell_dir, monkeypatch
     assert resp.headers.get("etag")
 
 
-# ----- The masonry marker (the grid's layout mode) -----
+# ----- The layout marker (the grid's layout mode) -----
 
-def test_masonry_is_off_by_default():
+def test_the_layout_is_the_square_grid_by_default():
     from search.config import load
 
-    assert load().masonry is False
+    assert load().layout == "grid"
 
 
-def test_masonry_follows_the_env_var(monkeypatch):
+def test_the_layout_follows_the_env_var(monkeypatch):
     from search.config import load
 
+    monkeypatch.setenv("LUSTRE_LAYOUT", "masonry")
+    assert load().layout == "masonry"
+    monkeypatch.setenv("LUSTRE_LAYOUT", "justified")
+    assert load().layout == "justified"
+    monkeypatch.setenv("LUSTRE_LAYOUT", "grid")
+    assert load().layout == "grid"
+
+
+def test_the_legacy_masonry_boolean_still_selects_masonry(monkeypatch):
+    """A .env that predates LUSTRE_LAYOUT keeps working.
+
+    The legacy boolean is honoured ONLY when LUSTRE_LAYOUT is
+    absent — an explicit LUSTRE_LAYOUT always wins, so a deployment
+    can move off the masonry layout without editing two variables.
+    """
+    from search.config import load
+
+    monkeypatch.delenv("LUSTRE_LAYOUT", raising=False)
     monkeypatch.setenv("LUSTRE_MASONRY", "1")
-    assert load().masonry is True
+    assert load().layout == "masonry"
     monkeypatch.setenv("LUSTRE_MASONRY", "0")
-    assert load().masonry is False
+    assert load().layout == "grid"
+
+    monkeypatch.setenv("LUSTRE_LAYOUT", "justified")
+    assert load().layout == "justified"
+
+
+def test_an_unknown_layout_is_a_startup_error(monkeypatch):
+    """A typo in .env must not silently render the wrong layout."""
+    from search.config import load
+
+    monkeypatch.setenv("LUSTRE_LAYOUT", "mosaic")
+    with pytest.raises(ValueError):
+        load()
 
 
 def test_the_thumbnail_size_is_published_on_the_shell():
@@ -240,59 +270,67 @@ def test_the_thumbnail_size_follows_the_env_var(monkeypatch):
     assert load().thumbnail_size == 384
 
 
-def test_the_served_shell_carries_the_masonry_marker(shell_dir, monkeypatch):
-    """LUSTRE_MASONRY=1 stamps the marker onto the shell.
+def test_the_served_shell_carries_the_layout_marker(shell_dir, monkeypatch):
+    """LUSTRE_LAYOUT stamps the marker onto the shell.
 
     Same contract as the theme: the frontend is one static build
     shared by every deployment, so the layout mode rides on the
     bytes the shell is served as.
     """
     monkeypatch.setenv("FRONTEND_DIR", str(shell_dir))
-    monkeypatch.setenv("LUSTRE_MASONRY", "1")
+    monkeypatch.setenv("LUSTRE_LAYOUT", "justified")
 
     with _client(shell_dir) as http:
         resp = http.get("/")
 
     assert resp.status_code == 200
-    assert 'data-masonry="1"' in resp.text
+    assert 'data-layout="justified"' in resp.text
 
 
-def test_the_served_shell_has_no_masonry_marker_by_default(shell_dir, monkeypatch):
-    """No marker means the uniform grid — the app's current look."""
+def test_the_served_shell_has_no_layout_marker_by_default(shell_dir, monkeypatch):
+    """No marker means the uniform grid — the app's current look.
+
+    The square grid is the default, and the default carries no
+    marker: a shell stamped for the grid and one never stamped are
+    the same bytes.
+    """
     monkeypatch.setenv("FRONTEND_DIR", str(shell_dir))
+    monkeypatch.delenv("LUSTRE_LAYOUT", raising=False)
     monkeypatch.delenv("LUSTRE_MASONRY", raising=False)
 
     with _client(shell_dir) as http:
         resp = http.get("/")
 
     assert resp.status_code == 200
-    assert "data-masonry" not in resp.text
+    assert "data-layout" not in resp.text
 
 
-def test_the_masonry_marker_is_replaced_not_duplicated(shell_dir, monkeypatch):
+def test_the_layout_marker_is_replaced_not_duplicated(shell_dir, monkeypatch):
     monkeypatch.setenv("FRONTEND_DIR", str(shell_dir))
-    monkeypatch.setenv("LUSTRE_MASONRY", "1")
+    monkeypatch.setenv("LUSTRE_LAYOUT", "masonry")
 
     with _client(shell_dir) as http:
         resp = http.get("/")
 
-    assert resp.text.count("data-masonry") == 1
+    assert resp.text.count("data-layout") == 1
+    assert 'data-layout="masonry"' in resp.text
 
 
-def test_the_masonry_marker_is_covered_by_the_etag(shell_dir, monkeypatch):
+def test_the_layout_marker_is_covered_by_the_etag(shell_dir, monkeypatch):
     """A shell cached under the square-grid ETag must not be served
-    to a deployment that has since switched to masonry."""
+    to a deployment that has since switched layout."""
     monkeypatch.setenv("FRONTEND_DIR", str(shell_dir))
+    monkeypatch.delenv("LUSTRE_LAYOUT", raising=False)
     monkeypatch.delenv("LUSTRE_MASONRY", raising=False)
 
     with _client(shell_dir) as http:
         square = http.get("/")
 
-    monkeypatch.setenv("LUSTRE_MASONRY", "1")
+    monkeypatch.setenv("LUSTRE_LAYOUT", "justified")
     with _client(shell_dir) as http:
-        masonry = http.get("/")
+        justified = http.get("/")
 
-    assert square.headers["etag"] != masonry.headers["etag"]
+    assert square.headers["etag"] != justified.headers["etag"]
 
 
 def test_api_paths_are_not_swallowed_by_the_shell(shell_dir, monkeypatch):

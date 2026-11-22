@@ -17,7 +17,7 @@ The attribute is the whole contract. Everything downstream — the
 dark stylesheet, the grid config, the tile treatment — keys off it.
 
 The shell carries a second marker of the same kind: the grid's layout
-mode (`data-masonry`, see search/layout.py). Both are deployment-level
+mode (`data-layout`, see search/layout.py). Both are deployment-level
 choices that ride on the bytes the shell is served as, so one static
 build serves every deployment.
 """
@@ -32,7 +32,7 @@ from pathlib import Path
 from fastapi.responses import Response
 
 from search.layout import (
-    inject_masonry,
+    inject_layout,
     inject_thumbnail_size,
     inject_thumbnail_variants,
 )
@@ -78,16 +78,16 @@ def inject_theme(html: bytes, theme: str) -> bytes:
     return _HTML_TAG.sub(replace, html, count=1)
 
 
-# Stamped shells, keyed by (path, mtime, size, theme, masonry,
+# Stamped shells, keyed by (path, mtime, size, theme, layout,
 # thumbnail size). The shell is static for the life of a deployment,
 # so this is read and patched once, not once per request.
-_SHELL_CACHE: dict[tuple[str, int, int, str, bool, int, tuple[int, ...]], bytes] = {}
+_SHELL_CACHE: dict[tuple[str, int, int, str, str, int, tuple[int, ...]], bytes] = {}
 
 
 def _shell_bytes(
     path: Path,
     theme: str,
-    masonry: bool,
+    layout: str,
     thumbnail_size: int,
     thumbnail_variants: tuple[int, ...] = (),
 ) -> bytes:
@@ -97,7 +97,7 @@ def _shell_bytes(
         stat.st_mtime_ns,
         stat.st_size,
         theme,
-        masonry,
+        layout,
         thumbnail_size,
         thumbnail_variants,
     )
@@ -105,7 +105,7 @@ def _shell_bytes(
     if cached is None:
         cached = inject_thumbnail_variants(
             inject_thumbnail_size(
-                inject_masonry(inject_theme(path.read_bytes(), theme), masonry),
+                inject_layout(inject_theme(path.read_bytes(), theme), layout),
                 thumbnail_size,
             ),
             thumbnail_variants,
@@ -120,7 +120,7 @@ def _shell_bytes(
 def shell_response(
     path: Path,
     theme: str,
-    masonry: bool = False,
+    layout: str = "grid",
     thumbnail_size: int = 384,
     thumbnail_variants: tuple[int, ...] = (),
 ) -> Response:
@@ -131,16 +131,17 @@ def shell_response(
     `must-revalidate` so a theme change (a restart with a different
     LUSTRE_THEME) can never be masked by a stale cached shell.
 
-    The masonry marker rides on the same bytes: it is the same kind
+    The layout marker rides on the same bytes: it is the same kind
     of deployment-level choice, and the ETag has to cover it too —
     a shell cached under the square-grid ETag must never be served
-    to a deployment that has since switched to masonry. The
+    to a deployment that has since switched to masonry or justified
+    rows. The
     thumbnail's size rides along for the same reason: a shell
     carrying the wrong thumbnail size makes the frontend build a
     srcset that claims the wrong image width.
     """
     stat = path.stat()
-    body = _shell_bytes(path, theme, masonry, thumbnail_size, thumbnail_variants)
+    body = _shell_bytes(path, theme, layout, thumbnail_size, thumbnail_variants)
     etag = hashlib.md5(body).hexdigest()  # noqa: S324
     return Response(
         content=body,

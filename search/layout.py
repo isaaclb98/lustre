@@ -3,13 +3,14 @@ search/layout.py — the deployment's photo-grid layout mode.
 
 The frontend is a single static SvelteKit build shared by every
 deployment, so the grid's layout mode cannot live in the bundle:
-switching a deployment between the uniform square grid and
-Pinterest-style masonry must not require a rebuild.
+switching a deployment between the uniform square grid,
+Pinterest-style masonry, and the justified rows Immich uses must not
+require a rebuild.
 
 The backend stamps the mode onto the <html> element of the shell it
 serves
 
-    <html lang="en" data-theme="dark" data-masonry="1">
+    <html lang="en" data-theme="dark" data-layout="justified">
 
 and the SPA reads it back from there — the same contract the theme
 uses. The user can override the deployment's default in the browser
@@ -21,24 +22,29 @@ from __future__ import annotations
 import re
 
 __all__ = [
-    "MASONRY_ATTRIBUTE",
+    "LAYOUT_ATTRIBUTE",
+    "LAYOUTS",
     "THUMBNAIL_SIZE_ATTRIBUTE",
     "THUMBNAIL_VARIANTS_ATTRIBUTE",
-    "inject_masonry",
+    "inject_layout",
     "inject_thumbnail_size",
     "inject_thumbnail_variants",
 ]
 
 # The attribute the layout mode travels on. Must match the frontend's
-# MASONRY_ATTRIBUTE in frontend/src/lib/layout.ts.
-MASONRY_ATTRIBUTE = "data-masonry"
+# LAYOUT_ATTRIBUTE in frontend/src/lib/layout.ts.
+LAYOUT_ATTRIBUTE = "data-layout"
 
-# <html lang="en"> → <html lang="en" data-masonry="1">
+# The layouts a deployment may choose. The order is the order they
+# appear in the Settings page.
+LAYOUTS = ("grid", "masonry", "justified")
+
+# <html lang="en"> → <html lang="en" data-layout="masonry">
 _HTML_TAG = re.compile(rb"<html(\s[^>]*)?>", re.IGNORECASE)
 
-# An existing data-masonry attribute, so re-stamping replaces rather
+# An existing data-layout attribute, so re-stamping replaces rather
 # than duplicates it.
-_DATA_MASONRY_ATTR = re.compile(rb"\s+data-masonry=[\"'][^\"']*[\"']")
+_DATA_LAYOUT_ATTR = re.compile(rb"\s+data-layout=[\"'][^\"']*[\"']")
 
 
 # The attribute the thumbnail's long edge travels on.
@@ -115,23 +121,33 @@ def inject_thumbnail_size(html: bytes, size: int) -> bytes:
     return _HTML_TAG.sub(replace, html, count=1)
 
 
-def inject_masonry(html: bytes, enabled: bool) -> bytes:
-    """Return `html` with the masonry marker stamped onto <html>.
+def inject_layout(html: bytes, layout: str) -> bytes:
+    """Return `html` with the layout marker stamped onto <html>.
 
-    Idempotent: an existing data-masonry attribute is replaced rather
+    Idempotent: an existing data-layout attribute is replaced rather
     than duplicated, so a shell that already carries one still ends
     up with exactly one.
 
-    The attribute is only stamped when masonry is ON. A shell with no
-    attribute means "the square grid" — the same default the frontend
-    assumes when the marker is missing.
+    The attribute is only stamped for a layout that is not the
+    default. A shell with no attribute means "the square grid" — the
+    same default the frontend assumes when the marker is missing.
     """
-    if not enabled:
-        return html
+    if layout not in LAYOUTS:
+        raise ValueError(f"unknown layout {layout!r}")
+    if layout == "grid":
+        # The default carries no marker, so a shell stamped for the
+        # grid and one never stamped are the same bytes.
+        return _HTML_TAG.sub(
+            lambda m: b"<html"
+            + _DATA_LAYOUT_ATTR.sub(b"", m.group(1) or b"")
+            + b">",
+            html,
+            count=1,
+        )
 
     def replace(match: re.Match[bytes]) -> bytes:
-        attrs = _DATA_MASONRY_ATTR.sub(b"", match.group(1) or b"")
-        attr = f' {MASONRY_ATTRIBUTE}="1"'.encode()
+        attrs = _DATA_LAYOUT_ATTR.sub(b"", match.group(1) or b"")
+        attr = f' {LAYOUT_ATTRIBUTE}="{layout}"'.encode()
         return b"<html" + attrs + attr + b">"
 
     return _HTML_TAG.sub(replace, html, count=1)

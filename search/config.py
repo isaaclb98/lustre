@@ -626,16 +626,18 @@ class Config:
     # marker — switching themes is a redeploy, not a rebuild.
     theme: str = "light"
 
-    # The photo grid's layout mode. False = the uniform square grid
+    # The photo grid's layout mode. 'grid' = the uniform square grid
     # (one tile size, one row height, rows sliced by the virtualizer).
-    # True = Pinterest-style masonry: every photo keeps its own
+    # 'masonry' = Pinterest-style masonry: every photo keeps its own
     # aspect ratio and the tiles are packed into the shortest column.
+    # 'justified' = the Flickr / Google Photos / Immich layout: every
+    # row has one height and the photos in it fill the row's width.
     #
-    # It rides on the SPA shell as a `data-masonry` attribute, exactly
+    # It rides on the SPA shell as a `data-layout` attribute, exactly
     # like the theme: the frontend is ONE static build shared by every
     # deployment, so the mode cannot live in the bundle. The user's
     # own preference (in the browser) overrides this default.
-    masonry: bool = False
+    layout: str = "grid"
 
     # The thumbnail's long edge, in pixels. The indexer renders
     # thumbnails at this size, and the frontend builds its `srcset`
@@ -690,6 +692,30 @@ def _theme(name: str, default: str = "light") -> str:
     raw = _str(name, default).strip().lower()
     if raw not in ("light", "dark"):
         raise ValueError(f"env {name}={raw!r} must be 'light' or 'dark'")
+    return raw
+
+
+def _layout(name: str, default: str = "grid") -> str:
+    """Read the grid layout env var.
+
+    Only 'grid', 'masonry' and 'justified' are accepted. An
+    unrecognised value is a startup error rather than a silent
+    fallback, for the same reason the theme is: a typo in the
+    operator's .env would otherwise ship the wrong layout with no
+    sign that anything went wrong.
+
+    The legacy LUSTRE_MASONRY boolean is still honoured — a
+    deployment that set it to 1 gets the masonry layout — so an
+    existing .env keeps working.
+    """
+    raw = _str(name, "").strip().lower()
+    if not raw:
+        # No LUSTRE_LAYOUT: fall back to the legacy boolean.
+        return "masonry" if _bool("LUSTRE_MASONRY", False) else default
+    if raw not in ("grid", "masonry", "justified"):
+        raise ValueError(
+            f"env {name}={raw!r} must be 'grid', 'masonry' or 'justified'"
+        )
     return raw
 
 
@@ -853,7 +879,7 @@ def load() -> Config:
         web_ui_url=_str("WEB_UI_URL", "http://localhost:8000"),
         log_level=_str("LOG_LEVEL", "INFO"),
         theme=_theme("LUSTRE_THEME", "light"),
-        masonry=_bool("LUSTRE_MASONRY", False),
+        layout=_layout("LUSTRE_LAYOUT", "grid"),
         thumbnail_size=_int("THUMBNAIL_SIZE", 384),
         thumbnail_variants=tuple(
             int(part)

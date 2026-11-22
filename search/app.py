@@ -1982,7 +1982,7 @@ def create_app(
             return shell_response(
                 path,
                 _cfg.theme,
-                _cfg.masonry,
+                _cfg.layout,
                 _cfg.thumbnail_size,
                 _cfg.thumbnail_variants,
             )
