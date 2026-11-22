@@ -101,6 +101,6 @@ describe('the default thumbnail size', () => {
     // The backend's default (search/config.py) and this one must
     // agree, or a deployment with no THUMBNAIL_SIZE set would build a
     // srcset for a width the backend never renders.
-    expect(DEFAULT_THUMBNAIL_SIZE).toBe(384);
+    expect(DEFAULT_THUMBNAIL_SIZE).toBe(640);
   });
 });

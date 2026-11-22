@@ -267,7 +267,8 @@ def test_the_thumbnail_size_follows_the_env_var(monkeypatch):
     monkeypatch.setenv("THUMBNAIL_SIZE", "512")
     assert load().thumbnail_size == 512
     monkeypatch.delenv("THUMBNAIL_SIZE")
-    assert load().thumbnail_size == 384
+    # The default is the canonical: 640.
+    assert load().thumbnail_size == 640
 
 
 def test_the_served_shell_carries_the_layout_marker(shell_dir, monkeypatch):

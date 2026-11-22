@@ -194,7 +194,9 @@ class TestValidation:
     def test_rejects_out_of_range_width_above_maximum(self, thumb_dir):
         app = _build(thumb_dir)
         with TestClient(app) as client:
-            resp = client.get("/thumb/55555555555555555555555555555555?w=512")
+            # Above the canonical (640) and above every published
+            # variant — a width no deployment publishes.
+            resp = client.get("/thumb/55555555555555555555555555555555?w=1024")
         assert resp.status_code == 422
 
     def test_accepts_a_published_variant_wider_than_the_canonical(self, thumb_dir, monkeypatch):

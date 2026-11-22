@@ -84,7 +84,7 @@ THUMBNAIL_DIR = os.environ.get("THUMBNAIL_DIR", "/app/data/thumbnails")
 # input) so a deployment that does not set it keeps its current
 # storage footprint; the geometry change alone makes the files
 # slightly SMALLER for non-square sources.
-THUMBNAIL_SIZE: int = int(os.environ.get("THUMBNAIL_SIZE", "384"))
+THUMBNAIL_SIZE: int = int(os.environ.get("THUMBNAIL_SIZE", "640"))
 
 # The DISPLAY thumbnail's smaller variants, as long edges.
 #
@@ -123,7 +123,7 @@ def parse_variant_sizes(raw: str) -> tuple[int, ...]:
 
 
 THUMBNAIL_VARIANT_SIZES: tuple[int, ...] = parse_variant_sizes(
-    os.environ.get("THUMBNAIL_VARIANT_SIZES", "")
+    os.environ.get("THUMBNAIL_VARIANT_SIZES", "240,360")
 )
 
 

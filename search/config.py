@@ -121,7 +121,7 @@ THUMBNAIL_DIR = os.environ.get("THUMBNAIL_DIR", "/app/data/thumbnails")
 # renders the canonical thumbnail at that long edge, and the router
 # serves it. A request beyond it asks for an asset that does not
 # exist.
-THUMBNAIL_SIZE = int(os.environ.get("THUMBNAIL_SIZE", "384"))
+THUMBNAIL_SIZE = int(os.environ.get("THUMBNAIL_SIZE", "640"))
 
 
 # Variant reconciliation against Qdrant. Replaces the older file-based
@@ -880,10 +880,10 @@ def load() -> Config:
         log_level=_str("LOG_LEVEL", "INFO"),
         theme=_theme("LUSTRE_THEME", "light"),
         layout=_layout("LUSTRE_LAYOUT", "grid"),
-        thumbnail_size=_int("THUMBNAIL_SIZE", 384),
+        thumbnail_size=_int("THUMBNAIL_SIZE", 640),
         thumbnail_variants=tuple(
             int(part)
-            for part in _str("THUMBNAIL_VARIANT_SIZES", "").split(",")
+            for part in _str("THUMBNAIL_VARIANT_SIZES", "240,360").split(",")
             if part.strip().isdigit()
         ),
         test_mode=bool(

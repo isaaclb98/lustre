@@ -94,7 +94,9 @@ class TestComputeThumbnail:
         img = Image.new("RGB", (1024, 768), color="green")
         result = compute_thumbnail(img, "abc123")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 288)
+            # The long edge is the canonical; the short edge follows
+            # the source's ratio (4:3 -> 640x480).
+            assert thumb.size == (640, 480)
 
     def test_smaller_image_is_not_upscaled(self, tmp_path, monkeypatch):
         """A source already within the cap keeps its dimensions."""
@@ -106,10 +108,13 @@ class TestComputeThumbnail:
 
     def test_square_image(self, tmp_path, monkeypatch):
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
-        img = Image.new("RGB", (512, 512), color="red")
+        # A source LARGER than the canonical, so the cap decides the
+        # size (a source under the cap is not upscaled — see
+        # test_smaller_image_is_not_upscaled).
+        img = Image.new("RGB", (1024, 1024), color="red")
         result = compute_thumbnail(img, "square12")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            assert thumb.size == (640, 640)
 
     def test_portrait_image_stays_portrait(self, tmp_path, monkeypatch):
         """Tall portrait: the long edge is capped, the width follows."""
@@ -117,7 +122,9 @@ class TestComputeThumbnail:
         img = Image.new("RGB", (400, 800), color="red")
         result = compute_thumbnail(img, "tall1234")
         with Image.open(result) as thumb:
-            assert thumb.size == (192, 384)
+            # 1:2 source -> the long edge is the height (640), the
+            # width follows the ratio (320).
+            assert thumb.size == (320, 640)
 
     def test_landscape_image_stays_landscape(self, tmp_path, monkeypatch):
         """Wide landscape: the long edge is capped, the height follows."""
@@ -125,7 +132,8 @@ class TestComputeThumbnail:
         img = Image.new("RGB", (800, 400), color="red")
         result = compute_thumbnail(img, "wide1234")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 192)
+            # 2:1 source -> the long edge is the width (640).
+            assert thumb.size == (640, 320)
 
     def test_no_crop_the_whole_picture_survives(self, tmp_path, monkeypatch):
         """The thumbnail is the whole picture, not a centre crop.
@@ -139,11 +147,12 @@ class TestComputeThumbnail:
         img.paste(Image.new("RGB", (400, 100), color="red"), (0, 0))
         result = compute_thumbnail(img, "crop123")
         with Image.open(result) as thumb:
-            assert thumb.size == (192, 384)
-            top = thumb.convert("RGB").crop((0, 0, 192, 20))
-            bottom = thumb.convert("RGB").crop((0, 364, 192, 384))
-            assert top.getpixel((96, 10))[0] > 150, "the red top band was cropped away"
-            assert bottom.getpixel((96, 10))[2] > 150, "the blue bottom was cropped away"
+            # 1:2 source -> the long edge is the height (640).
+            assert thumb.size == (320, 640)
+            top = thumb.convert("RGB").crop((0, 0, 320, 20))
+            bottom = thumb.convert("RGB").crop((0, 620, 320, 640))
+            assert top.getpixel((160, 10))[0] > 150, "the red top band was cropped away"
+            assert bottom.getpixel((160, 10))[2] > 150, "the blue bottom was cropped away"
 
     def test_nothing_is_cropped_away(self, tmp_path, monkeypatch):
         """The whole picture survives — nothing is cropped.
@@ -160,8 +169,10 @@ class TestComputeThumbnail:
                 img.putpixel((x, y), (255, 0, 0))
         result = compute_thumbnail(img, "center12")
         with Image.open(result) as thumb:
-            # Portrait source -> portrait thumbnail, long edge capped.
-            assert thumb.size == (96, 384)
+            # Portrait source -> portrait thumbnail. The source's long
+            # edge is 400, UNDER the 640 canonical, so it is NOT
+            # upscaled: the thumbnail is the source's own size.
+            assert thumb.size == (100, 400)
             # The red band is still at the vertical middle.
             r, g, b = thumb.getpixel((48, 192))
             assert r > g  # red dominates over blue
@@ -282,28 +293,51 @@ class TestGenerateThumbnailForPath:
 class TestThumbnailConstants:
     """Constants are stable (referenced from indexer/local_sync.py)."""
 
-    def test_thumbnail_size_is_384(self):
-        # Post the model-variant migration plan, the thumbnail is
-        # 384×384 (matching the so400m model input resolution). Pre-
-        # migration this was 256×256.
-        assert THUMBNAIL_SIZE == 384
+    def test_the_canonical_is_640(self):
+        # The canonical is the display asset's long edge: 640. It was
+        # 384 (the SigLIP2 era, matching the model input), then 256
+        # before that.
+        #
+        # It is the largest rung of the ladder {240, 360, 640}, and
+        # the model input is a SEPARATE number (MODEL_INPUT_SIZE) —
+        # they were welded together once, and the weld is what made
+        # a display change a re-embed.
+        assert THUMBNAIL_SIZE == 640
+
+    def test_the_variant_ladder_is_240_360(self):
+        """Three sizes, and the middle one is the layout's own row height.
+
+        The justified layout's rows are 360/240/180, so a 360 variant
+        is where the demand actually is: the large row's median need
+        is exactly 360, and without a rung there the browser jumped
+        to 480 and fetched a third more than it needed.
+        """
+        from indexer.thumbnails import THUMBNAIL_VARIANT_SIZES
+
+        assert THUMBNAIL_VARIANT_SIZES == (240, 360)
+
+    def test_every_variant_is_below_the_canonical(self):
+        """A variant at or above the canonical would be an upscale."""
+        from indexer.thumbnails import THUMBNAIL_VARIANT_SIZES
+
+        assert all(v < THUMBNAIL_SIZE for v in THUMBNAIL_VARIANT_SIZES)
 
     def test_thumbnail_target_size_caps_the_long_edge(self):
         """The sizing policy: long edge capped, aspect preserved."""
         from indexer.thumbnails import thumbnail_target_size
 
         # Portrait: the long edge is the height.
-        assert thumbnail_target_size(1080, 1350) == (307, 384)
+        assert thumbnail_target_size(1080, 1350) == (512, 640)
         # Landscape: the long edge is the width.
-        assert thumbnail_target_size(1920, 1080) == (384, 216)
+        assert thumbnail_target_size(1920, 1080) == (640, 360)
         # Square.
-        assert thumbnail_target_size(800, 800) == (384, 384)
+        assert thumbnail_target_size(800, 800) == (640, 640)
         # Already within the cap -> untouched.
         assert thumbnail_target_size(200, 100) == (200, 100)
         # An explicit size overrides the default.
         assert thumbnail_target_size(1080, 1350, 500) == (400, 500)
         # Degenerate input.
-        assert thumbnail_target_size(0, 0) == (384, 384)
+        assert thumbnail_target_size(0, 0) == (640, 640)
 
     def test_thumbnail_quality_is_80(self):
         # Post the 256→384 / q50→q80 thumbnail pipeline rework
@@ -543,7 +577,7 @@ class TestPyvipsPath:
         # Write a real source JPEG to disk so the pyvips path
         # has something to load.
         src = tmp_path / "src.jpg"
-        Image.new("RGB", (640, 480), color=(180, 60, 220)).save(
+        Image.new("RGB", (1280, 960), color=(180, 60, 220)).save(
             src, "JPEG", quality=85
         )
         # Caller has both a PIL Image (for the PIL path) and
@@ -553,9 +587,9 @@ class TestPyvipsPath:
         assert result is not None
         assert result.exists()
         with Image.open(result) as thumb:
-            # The source is 640x480; the long edge is capped at 384
-            # and the aspect ratio is preserved.
-            assert thumb.size == (384, 288)
+            # The source is 1280x960; the long edge is capped at the
+            # canonical (640) and the aspect ratio is preserved.
+            assert thumb.size == (640, 480)
             assert thumb.format == "WEBP"
             # libvips auto-4:4:4 + ICC embed: the file MUST
             # carry the sRGB profile (matches what the PIL
@@ -571,12 +605,14 @@ class TestPyvipsPath:
         available. The indexer always has a source path so this
         path is for unit tests and other in-memory callers."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
-        img = Image.new("RGB", (512, 512), color="orange")
+        # A source LARGER than the canonical, so the cap decides the
+        # size (a source under the cap is not upscaled).
+        img = Image.new("RGB", (1024, 1024), color="orange")
         # No source_path argument → PIL path.
         result = compute_thumbnail(img, "pilpath1")
         assert result is not None
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            assert thumb.size == (640, 640)
             assert thumb.info.get("icc_profile") == _SRGB_PROFILE_BYTES
 
     def test_pil_path_runs_when_pyvips_forced_off(

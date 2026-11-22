@@ -74,9 +74,9 @@ export const THUMBNAIL_SIZE_ATTRIBUTE = 'data-thumbnail-size';
  * The thumbnail's long edge, in pixels, for the current deployment.
  *
  * The grid's `srcset` has to state the width the image actually IS,
- * and that is a deployment-level number: the dev stack renders 512,
- * production renders 384. The backend publishes it on the shell (see
- * search/layout.py) and this reads it back.
+ * and that is a deployment-level number: the canonical is 640. The
+ * backend publishes it on the shell (see search/layout.py) and this
+ * reads it back.
  *
  * A portrait photo's thumbnail is NARROWER than the long edge — a
  * 512-long-edge portrait is 410 wide — so the long edge is the
@@ -85,7 +85,7 @@ export const THUMBNAIL_SIZE_ATTRIBUTE = 'data-thumbnail-size';
  * image than advertised still renders it correctly, and one that
  * gets a wider one is never asked to upscale.
  */
-export const DEFAULT_THUMBNAIL_SIZE = 384;
+export const DEFAULT_THUMBNAIL_SIZE = 640;
 
 /**
  * The attribute the backend stamps the DISPLAY thumbnail's smaller
