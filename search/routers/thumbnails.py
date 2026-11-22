@@ -17,6 +17,7 @@ the canonical 256px file (which is always present).
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -25,6 +26,26 @@ from fastapi.responses import Response
 from search.config import THUMBNAIL_DIR, THUMBNAIL_SIZE
 
 logger = logging.getLogger(__name__)
+
+
+def _max_published_width() -> int:
+    """The widest thumbnail width this deployment publishes.
+
+    The canonical thumbnail's long edge, and every variant the
+    deployment advertises on its shell. A request for any of those
+    widths is legitimate — the assets exist — so the endpoint's cap
+    has to cover all of them.
+
+    Read from the environment directly rather than through
+    config.load(): the router is built at import time, and load()
+    validates the WHOLE configuration (Qdrant, the model, the
+    photos directory), which a thumbnail request has no business
+    requiring.
+    """
+    raw = os.environ.get("THUMBNAIL_VARIANT_SIZES", "")
+    variants = [int(part) for part in raw.split(",") if part.strip().isdigit()]
+    published = [THUMBNAIL_SIZE, *variants]
+    return max(published)
 
 
 def build_thumbnails_router() -> APIRouter:
@@ -58,7 +79,16 @@ def build_thumbnails_router() -> APIRouter:
         #
         # The smaller variants (`?w=192` and friends) sit BELOW this
         # cap, so they pass through it unchanged.
-        w: int | None = Query(None, ge=64, le=THUMBNAIL_SIZE),
+        #
+        # The cap is the LARGEST width the deployment publishes: its
+        # canonical thumbnail OR any of its variants. Capping at the
+        # canonical alone rejected a VARIANT with a 422 — and the
+        # browser treats a 422 as a failed image, so the tile went
+        # blank. A deployment may publish a variant wider than its
+        # canonical (the dense view's assets are named by the size
+        # they are, not by their order in the ladder), and the cap
+        # has to cover every width the shell advertises.
+        w: int | None = Query(None, ge=64, le=_max_published_width()),
     ) -> Response:
         """
         Serve a pre-generated WebP thumbnail, optionally sized.

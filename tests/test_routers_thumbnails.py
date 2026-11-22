@@ -197,6 +197,42 @@ class TestValidation:
             resp = client.get("/thumb/55555555555555555555555555555555?w=512")
         assert resp.status_code == 422
 
+    def test_accepts_a_published_variant_wider_than_the_canonical(self, thumb_dir, monkeypatch):
+        """A published variant is a legitimate width.
+
+        The deployment advertises its variant ladder on the shell,
+        and the browser asks for those widths. Capping the endpoint
+        at the CANONICAL size rejected a variant with a 422 — and
+        the browser treats a 422 as a broken image, so the tile went
+        blank instead of falling back to the canonical.
+
+        So the cap covers every width the deployment publishes.
+        """
+        monkeypatch.setenv("THUMBNAIL_SIZE", "384")
+        monkeypatch.setenv("THUMBNAIL_VARIANT_SIZES", "240,480")
+        app = _build(thumb_dir)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/thumb/66666666666666666666666666666666?w=480"
+            )
+        # NOT 422. The variant may not be on disk, in which case the
+        # endpoint falls back to the canonical — but it must not
+        # refuse the width outright.
+        assert resp.status_code != 422
+        assert resp.status_code in (200, 404)
+
+    def test_still_rejects_a_width_beyond_every_published_size(self, thumb_dir, monkeypatch):
+        """The cap still exists: a width no deployment publishes is
+        still refused."""
+        monkeypatch.setenv("THUMBNAIL_SIZE", "384")
+        monkeypatch.setenv("THUMBNAIL_VARIANT_SIZES", "240,480")
+        app = _build(thumb_dir)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/thumb/77777777777777777777777777777777?w=4096"
+            )
+        assert resp.status_code == 422
+
     def test_rejects_invalid_point_id(self, thumb_dir):
         """Existing behaviour: point_id must be 32-char hex (with or
         without hyphens). Shorter ids 400 — sanity check that we
