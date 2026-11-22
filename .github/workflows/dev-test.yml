@@ -51,6 +51,13 @@ on:
         required: false
         type: string
         default: ""
+      layout:
+        description: >-
+          The grid layout the dev server renders: grid, masonry or
+          justified. Defaults to grid.
+        required: false
+        type: string
+        default: grid
 
 # Per-ref concurrency: re-running the same branch cancels the
 # previous in-flight run instead of stacking minutes.
@@ -145,6 +152,13 @@ jobs:
           # shell and the srcset lists them, so the browser picks
           # the smallest that covers the tile.
           THUMBNAIL_VARIANT_SIZES: "240,480"
+          # The grid layout the server stamps onto the shell. The
+          # suite's geometry assertions follow the marker, so this
+          # decides WHICH layout is exercised — a run with no
+          # layout set only ever tests the square grid, and the
+          # justified rows go untested no matter how many times
+          # the suite passes.
+          LUSTRE_LAYOUT: ${{ inputs.layout || 'grid' }}
         run: |
           set -euo pipefail
           mkdir -p .dev-test-logs
