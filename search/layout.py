@@ -22,8 +22,8 @@ from __future__ import annotations
 import re
 
 __all__ = [
-    "LAYOUT_ATTRIBUTE",
     "LAYOUTS",
+    "LAYOUT_ATTRIBUTE",
     "THUMBNAIL_SIZE_ATTRIBUTE",
     "THUMBNAIL_VARIANTS_ATTRIBUTE",
     "inject_layout",

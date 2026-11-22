@@ -411,12 +411,12 @@
       photoHeight
     );
     if (renderWidth <= canonicalWidth) return [];
-    const seen = new Set<number>();
+    const seen: number[] = [];
     const out: { url: string; width: number }[] = [];
     for (const rung of RAW_RUNGS) {
       const width = Math.min(rung, photoWidth);
-      if (width <= canonicalWidth || seen.has(width)) continue;
-      seen.add(width);
+      if (width <= canonicalWidth || seen.includes(width)) continue;
+      seen.push(width);
       out.push({ url: photoUrl(pointId, rung), width });
     }
     return out;
