@@ -25,6 +25,11 @@ dependencies = [
     # `ModuleNotFoundError: No module named 'transformers'`.
     "transformers>=4.40",
     "timm>=1.0.15",
+    # einops is a declared dependency of NVIDIA's RADIO hub entry
+    # ("dependencies = [torch, timm, einops]"). torch.hub checks the
+    # declared deps before running the entry point and raises if one
+    # is missing, so C-RADIOv4 cannot load without it.
+    "einops>=0.7",
     "torch>=2.1",
     "torchvision>=0.16",
     "pillow>=11.3",

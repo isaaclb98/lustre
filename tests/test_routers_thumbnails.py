@@ -15,6 +15,7 @@ Pins:
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -75,8 +76,55 @@ class TestCanonicalThumbnail:
             resp = client.get("/thumb/aabbccddeeff00112233445566778899")
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "image/webp"
-        assert resp.headers["cache-control"] == "public, max-age=31536000, immutable"
+        # The response REVALIDATES rather than claiming immutability:
+        # the thumbnail is addressed by a point id (a hash of the
+        # photo's path), so a re-embed rewrites the file at the same
+        # URL, and an immutable response would keep the old bytes.
+        assert "immutable" not in resp.headers["cache-control"]
+        assert "must-revalidate" in resp.headers["cache-control"]
         assert resp.headers["access-control-allow-origin"] == "*"
+
+    def test_a_conditional_request_answers_304(self, thumb_dir):
+        """A client holding the current bytes is told 304.
+
+        The revalidating cache header only pays off if the server
+        actually answers the conditional request — a plain Response
+        does not do that by itself, so the route handles it.
+        """
+        point_id = "aabbccddeeff00112233445566778899"
+        _write_thumbnail(thumb_dir, point_id)
+        app = _build(thumb_dir)
+        with TestClient(app) as client:
+            first = client.get(f"/thumb/{point_id}")
+            etag = first.headers["etag"]
+            second = client.get(
+                f"/thumb/{point_id}", headers={"If-None-Match": etag}
+            )
+        assert first.status_code == 200
+        assert second.status_code == 304
+        assert second.content == b""
+
+    def test_the_etag_changes_when_the_thumbnail_is_rewritten(self, thumb_dir):
+        """A regenerated thumbnail must not be served from a stale cache.
+
+        The point id is a hash of the photo's PATH, so re-embedding
+        the same photo rewrites the thumbnail at the same URL. The
+        ETag has to change, or a client that revalidates would be
+        told 304 and keep the old bytes.
+        """
+        point_id = "aabbccddeeff00112233445566778899"
+        _write_thumbnail(thumb_dir, point_id)
+        app = _build(thumb_dir)
+        with TestClient(app) as client:
+            first = client.get(f"/thumb/{point_id}")
+            first_etag = first.headers["etag"]
+
+            # Rewrite the thumbnail, as a re-embed would.
+            time.sleep(0.01)
+            _write_thumbnail(thumb_dir, point_id)
+
+            second = client.get(f"/thumb/{point_id}")
+            assert second.headers["etag"] != first_etag
 
     def test_returns_404_when_no_thumbnail(self, thumb_dir):
         app = _build(thumb_dir)
@@ -146,7 +194,45 @@ class TestValidation:
     def test_rejects_out_of_range_width_above_maximum(self, thumb_dir):
         app = _build(thumb_dir)
         with TestClient(app) as client:
-            resp = client.get("/thumb/55555555555555555555555555555555?w=512")
+            # Above the canonical (640) and above every published
+            # variant — a width no deployment publishes.
+            resp = client.get("/thumb/55555555555555555555555555555555?w=1024")
+        assert resp.status_code == 422
+
+    def test_accepts_a_published_variant_wider_than_the_canonical(self, thumb_dir, monkeypatch):
+        """A published variant is a legitimate width.
+
+        The deployment advertises its variant ladder on the shell,
+        and the browser asks for those widths. Capping the endpoint
+        at the CANONICAL size rejected a variant with a 422 — and
+        the browser treats a 422 as a broken image, so the tile went
+        blank instead of falling back to the canonical.
+
+        So the cap covers every width the deployment publishes.
+        """
+        monkeypatch.setenv("THUMBNAIL_SIZE", "384")
+        monkeypatch.setenv("THUMBNAIL_VARIANT_SIZES", "240,480")
+        app = _build(thumb_dir)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/thumb/66666666666666666666666666666666?w=480"
+            )
+        # NOT 422. The variant may not be on disk, in which case the
+        # endpoint falls back to the canonical — but it must not
+        # refuse the width outright.
+        assert resp.status_code != 422
+        assert resp.status_code in (200, 404)
+
+    def test_still_rejects_a_width_beyond_every_published_size(self, thumb_dir, monkeypatch):
+        """The cap still exists: a width no deployment publishes is
+        still refused."""
+        monkeypatch.setenv("THUMBNAIL_SIZE", "384")
+        monkeypatch.setenv("THUMBNAIL_VARIANT_SIZES", "240,480")
+        app = _build(thumb_dir)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/thumb/77777777777777777777777777777777?w=4096"
+            )
         assert resp.status_code == 422
 
     def test_rejects_invalid_point_id(self, thumb_dir):

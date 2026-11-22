@@ -840,10 +840,14 @@ export interface components {
             added_at: string;
             /** Blurhash */
             blurhash?: string | null;
+            /** Height */
+            height?: number | null;
             /** Id */
             id: string;
             /** Path */
             path: string;
+            /** Width */
+            width?: number | null;
         };
         /** AlbumMemberResponse */
         AlbumMemberResponse: {

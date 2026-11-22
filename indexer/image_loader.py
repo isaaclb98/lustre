@@ -246,15 +246,69 @@ def letterbox_resize(img: Image.Image, size: int | None = None) -> Image.Image:
     return canvas
 
 
+def model_input_size(model_name: str) -> int | None:
+    """The long edge the model's vision tower consumes, for the
+    native models.
+
+    None for the letterbox models: they take the whole picture and
+    pad it into a square themselves, so they need the source as
+    decoded, not a pre-sized one.
+    """
+    from lustre_kernel.registry import get as _registry_get
+
+    spec = _registry_get(model_name)
+    if getattr(spec, "preprocess", "letterbox") == "native":
+        return spec.resolution
+    return None
+
+
+def prepare_for_embedding(
+    img: Image.Image, model_name: str
+) -> Image.Image:
+    """Apply the model's preprocess policy to a decoded image.
+
+    - `"letterbox"` (the SigLIP2 models) gets the square canvas they
+      were trained on: resized to fit a `resolution`x`resolution`
+      box and padded with black.
+    - `"native"` (C-RADIOv4) gets the image AS DECODED. The
+      model's ViT interpolates its position embeddings, so it takes
+      the picture at its own aspect ratio; the embedder resizes it.
+      Letterboxing here would put the black bars back into the
+      picture the native path exists to avoid.
+
+    Every embed path goes through this. The indexer used to call
+    `letterbox_resize` directly, which silently forced the square
+    canvas onto every model — including the native ones.
+    """
+    from lustre_kernel.registry import get as _registry_get
+
+    spec = _registry_get(model_name)
+    if getattr(spec, "preprocess", "letterbox") == "native":
+        return img
+    return letterbox_resize(img, size=spec.resolution)
+
+
 def load(
     path: Path, *, model_name: str = "ViT-so400m-patch16-384",
 ) -> tuple[Image.Image, int | None, int | None]:
     """
-    Load + EXIF-correct + RGB-convert + letterbox. Returns
-    `(letterboxed_image, source_width, source_height)` where
-    `source_width` / `source_height` are the original pixel
-    dimensions of the file on disk (after EXIF transpose, before
-    the letterbox squashes the image to the model's resolution).
+    Load + EXIF-correct + RGB-convert + preprocess. Returns
+    `(image, source_width, source_height)` where `source_width` /
+    `source_height` are the original pixel dimensions of the file on
+    disk (after EXIF transpose, before any resize).
+
+    How the image is prepared depends on the model's registered
+    `preprocess` policy:
+
+    - `"letterbox"` (the SigLIP2 models) — resized to fit the
+      model's square resolution and padded with black. The model
+      was trained on square inputs.
+
+    - `"native"` (C-RADIOv4) — returned as decoded. The model's
+      ViT interpolates its position embeddings, so it takes the
+      image at its own aspect ratio; the embedder does the resize.
+      Letterboxing here would put black bars back into the picture
+      that the native path exists to avoid.
 
     Round‑30: returns source dims so the ingest pipeline can
     persist them in the qdrant payload. The photo page
@@ -284,7 +338,8 @@ def load(
     # load_image_pil below).
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         from lustre_kernel.registry import get as _registry_get
-        size = _registry_get(model_name).resolution
+        spec = _registry_get(model_name)
+        size = spec.resolution
         # 2× the model's resolution is enough room for the letterbox
         # to keep the full image visible while capping the decoder at
         # a small fraction of the source file's pixels. Override via
@@ -308,7 +363,7 @@ def load(
     # re‑capture img.width / img.height here — those reflect the
     # post‑draft size (see load_image_pil's warning), not the
     # source. Source dims come from the same open as the decode.
-    return letterbox_resize(img, size=size), source_w, source_h
+    return prepare_for_embedding(img, model_name), source_w, source_h
 
 
 # Heuristic mapping from PIL size to torchvision's expected CHW float tensor.

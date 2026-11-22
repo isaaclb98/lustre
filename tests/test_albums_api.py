@@ -47,9 +47,9 @@ def app_with_qdrant(qdrant_in_memory, nas_base):
         qdrant_in_memory.client,
         qdrant_in_memory.collection,
         [
-            (CAT_ID, _mock_embed("cat"), {"id": CAT_ID, "path": str(nas_base / "cat.jpg"), "mtime": 1, "size": 10, "indexed_at": "2026-01-01T00:00:00Z"}),
-            (DOG_ID, _mock_embed("dog"), {"id": DOG_ID, "path": str(nas_base / "dog.jpg"), "mtime": 2, "size": 20, "indexed_at": "2026-01-01T00:00:00Z"}),
-            (BIRD_ID, _mock_embed("bird"), {"id": BIRD_ID, "path": str(nas_base / "bird.jpg"), "mtime": 3, "size": 30, "indexed_at": "2026-01-01T00:00:00Z"}),
+            (CAT_ID, _mock_embed("cat"), {"id": CAT_ID, "path": str(nas_base / "cat.jpg"), "mtime": 1, "size": 10, "indexed_at": "2026-01-01T00:00:00Z", "width": 800, "height": 1200}),
+            (DOG_ID, _mock_embed("dog"), {"id": DOG_ID, "path": str(nas_base / "dog.jpg"), "mtime": 2, "size": 20, "indexed_at": "2026-01-01T00:00:00Z", "width": 1200, "height": 800}),
+            (BIRD_ID, _mock_embed("bird"), {"id": BIRD_ID, "path": str(nas_base / "bird.jpg"), "mtime": 3, "size": 30, "indexed_at": "2026-01-01T00:00:00Z", "width": 640, "height": 640}),
         ],
         wait=True,
     )
@@ -211,6 +211,50 @@ def test_get_album_returns_members(app_with_qdrant):
     assert data["member_total"] == 2
     member_ids = {m["id"] for m in data["members"]}
     assert member_ids == {CAT_ID, DOG_ID}
+
+
+def test_get_album_members_carry_their_dimensions(app_with_qdrant):
+    """An album member must carry the photo's own dimensions.
+
+    The masonry lays a tile out at the photo's aspect ratio, and it
+    needs the dimensions to do that BEFORE the image arrives. The
+    dimensions are in the Qdrant payload and were in the row the
+    index DB returned — but the response model had no fields for
+    them, so Pydantic dropped them on the way out and every album
+    grid rendered as a grid of squares whatever the deployment's
+    layout mode was.
+    """
+    album_id = app_with_qdrant.post(
+        "/api/albums", json={"name": "dims"},
+    ).json()["id"]
+    app_with_qdrant.post(f"/api/albums/{album_id}/members/{CAT_ID}")
+    app_with_qdrant.post(f"/api/albums/{album_id}/members/{DOG_ID}")
+
+    members = app_with_qdrant.get(f"/api/albums/{album_id}").json()["members"]
+    dims = {m["id"]: (m.get("width"), m.get("height")) for m in members}
+    assert dims[CAT_ID] == (800, 1200)
+    assert dims[DOG_ID] == (1200, 800)
+
+
+def test_get_album_member_without_dimensions_still_answers(app_with_qdrant):
+    """A photo with no recorded dimensions must not break the album.
+
+    The dimensions are optional: a legacy payload may not carry them,
+    and the grid falls back to a square for those. The API must
+    still answer with nulls rather than failing.
+    """
+    album_id = app_with_qdrant.post(
+        "/api/albums", json={"name": "no dims"},
+    ).json()["id"]
+    app_with_qdrant.post(f"/api/albums/{album_id}/members/{BIRD_ID}")
+
+    members = app_with_qdrant.get(f"/api/albums/{album_id}").json()["members"]
+    assert len(members) == 1
+    assert members[0]["id"] == BIRD_ID
+    # The key is present, so the frontend's type does not have to
+    # treat it as missing.
+    assert "width" in members[0]
+    assert "height" in members[0]
 
 
 def test_get_album_api_default_limit_is_35(app_with_qdrant, monkeypatch):

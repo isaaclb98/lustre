@@ -17,6 +17,7 @@
   import { onMount } from 'svelte';
   import { thumbUrl, photoUrl } from '../api/endpoints';
   import { blurhashToDataUrl } from './blurhash-bg';
+  import { thumbnailWidthFor, thumbnailVariants } from '$lib/layout';
   import Icon from './Icon.svelte';
 
   type Props = {
@@ -138,6 +139,70 @@
      */
     wall?: boolean;
     /**
+     * Render the tile at the photo's own aspect ratio.
+     *
+     * The self-laid-out layouts — the masonry and the justified rows
+     * — size the tile from the photo's dimensions, so the tile must
+     * not impose a square of its own: it fills the box the grid gave
+     * it.
+     */
+    natural?: boolean;
+    /**
+     * The deployment's thumbnail long edge, in pixels.
+     *
+     * The grid's srcset has to state the width the image IS. The
+     * thumbnail's size is a deployment-level number — the dev stack
+     * renders 512, production 384 — so it comes from the shell
+     * rather than being hardcoded here.
+     */
+    thumbnailSize?: number;
+    /**
+     * The grid's fixed tile width, in pixels.
+     *
+     * The masonry's tile is exactly this wide; the uniform grid's
+     * tracks stretch to fill the row. The `sizes` attribute has to
+     * advertise the tile's real width, or the browser picks the
+     * wrong density for the image.
+     */
+    tileWidth?: number;
+    /**
+     * This tile's own rendered width, in pixels, when the layout
+     * gives every tile a different one.
+     *
+     * The justified layout sizes each photo from its own aspect
+     * ratio, so a row holds a landscape photo in a wide slot and a
+     * portrait in a narrow one. The `sizes` attribute has to state
+     * the width THIS tile is, or the browser picks the wrong density
+     * for it — and one shared width would be wrong for nearly every
+     * tile in the row.
+     */
+    renderWidth?: number | null;
+    /**
+     * Give EVERY tile the srcset ladder, not just the eager ones.
+     *
+     * The ladder exists so the browser can pick the smallest asset
+     * that covers the tile it is about to paint. That only works
+     * when the tile states its own width — and the justified rows
+     * give every tile a different one, so a shared `sizes` would be
+     * wrong for nearly every tile in a row.
+     *
+     * It matters there in both directions: a 130px-wide tile served
+     * the 640px canonical downloads five times the pixels it can
+     * show, and a wide tile served the canonical is upscaled by the
+     * browser.
+     */
+    alwaysSrcset?: boolean;
+    /**
+     * The photo's ratio falls outside the layout's bounds, so its
+     * tile is NOT the photo's own shape.
+     *
+     * The photo then shows WHOLE (`object-fit: contain`) rather than
+     * being cut off to fill the box. This needs a photo beyond 4:1 or
+     * 1:4 — the library has none, so it is a safety net for the
+     * pathological case, not a routine one.
+     */
+    clamped?: boolean;
+    /**
      * The width to fetch the photo at, in CSS pixels.
      *
      * The grid renders the app's 384px thumbnail, which is the
@@ -151,7 +216,21 @@
      * At or below 384 the thumbnail is used — it is already the
      * right size and it is what every other grid renders.
      */
-    srcWidth?: number;
+    srcWidth?: number | null;
+    /**
+     * The photo's own dimensions, in pixels.
+     *
+     * The srcset states the width the thumbnail IS, and that is
+     * derived from the photo's own aspect ratio — so the height
+     * matters as much as the width.
+     *
+     * These are NOT the fetch width: `srcWidth` says how big to
+     * fetch, and only a surface that lets the user zoom asks for
+     * more than the thumbnail. The grid passes the dimensions and
+     * leaves `srcWidth` unset, so it keeps rendering the thumbnail.
+     */
+    photoWidth?: number | null;
+    photoHeight?: number | null;
   };
   let {
     pointId,
@@ -172,9 +251,17 @@
     votedDown = false,
     voteUpLabel = 'Add to album',
     wall = false,
+    natural = false,
+    clamped = false,
+    thumbnailSize = 384,
+    tileWidth = 240,
+    renderWidth = null,
+    alwaysSrcset = false,
     readOnly = false,
     label = '',
-    srcWidth
+    srcWidth,
+    photoWidth,
+    photoHeight
   }: Props = $props();
 
   // Pre-computed data URL takes priority (caller already decoded
@@ -207,23 +294,25 @@
     e.preventDefault();
     onContextMenu?.(pointId, e);
   }
-  // Best-effort tile-width hint for the first-screen srcset. We can't
-  // measure the tile itself from here (no DOM ref on the wrapping
-  // grid cell), so we approximate from window.innerWidth divided by
-  // the auto-fill column target. Falls back to 384 on SSR / dev
-  // edge cases. Cached per-tile via $derived so we only recompute
-  // when the breakpoint flips.
-  //
-  // Post the model-variant migration plan: the only thumbnail variant
-  // served is 384×384 (matches so400m model input resolution). So
-  // `eagerSrcWidth` and `eagerSrcset` reflect that single asset —
-  // no srcset ladder needed, just a single src.
-  function tileSizeGuess(): number | undefined {
+  /**
+   * The tile's rendered width, for the `sizes` attribute.
+   *
+   * The grid publishes its track width as `--grid-tile-size` on
+   * :root (see PhotoGrid), and that is the number the browser will
+   * actually paint. Reading it makes `sizes` EXACT — the browser
+   * then picks the right asset for the tile it is about to draw,
+   * rather than one chosen by a heuristic that drifts from the
+   * grid's real geometry.
+   *
+   * The masonry does not even need this: its tile width is a fixed
+   * ladder value, and the caller passes it in.
+   */
+  function wallTileGuess(): number | undefined {
     if (typeof window === 'undefined') return undefined;
     const w = window.innerWidth;
-    // Mirror PhotoGrid's `auto-fill minmax(180px, 1fr)` heuristic.
-    const cols = Math.max(1, Math.floor((Math.min(w, 1600) + 20) / (180 + 20)));
-    return Math.floor((Math.min(w, 1600) - (cols - 1) * 20) / cols);
+    const t = tileWidth ?? 240;
+    const cols = Math.max(1, Math.round(w / t));
+    return Math.floor(w / cols);
   }
   // True for the first three tiles of the first visible row. These
   // are the tiles a user is staring at on first paint — we want them
@@ -237,12 +326,128 @@
   let isEager = $derived(
     eager || eagerIndex === 0 || eagerIndex === 1 || eagerIndex === 2
   );
-  // Rendered srcset width for the eager tiles. The single-variant
-  // pipeline serves 384×384; the rounded-up × 2 calculation would
-  // be 480, but the backend only generates 384 (no 480), so just
-  // pin to 384.
-  let eagerSrcWidth = $derived(384);
-  let eagerSrcset = $derived(`${thumbUrl(pointId, 384)} 384w`);
+  // Rendered srcset width for the eager tiles.
+  //
+  // A `srcset` entry states the width the image IS, and the
+  // thumbnail's width is NOT the thumbnail's long edge: a portrait
+  // photo's thumbnail is 384 wide and 512 tall, so advertising the
+  // long edge (512) tells the browser the image is wider than it
+  // is. The browser then believes it has more pixels than it does
+  // and picks a lower density — which is how a 135px-wide image
+  // ends up filling a 240px tile.
+  //
+  // So the width is computed from the photo's own aspect ratio and
+  // the deployment's thumbnail size. When the photo's dimensions
+  // are unknown, the long edge is the best guess available — and an
+  // over-stated width is the safe direction, because the browser
+  // then treats the image as the smaller asset it is.
+  let eagerSrcWidth = $derived(
+    thumbnailWidthFor(thumbnailSize, photoWidth, photoHeight)
+  );
+
+  /**
+   * The srcset is a LADDER, not a single entry.
+   *
+   * The deployment's canonical thumbnail is sized for the LARGEST
+   * tile (360px in the masonry). A dense view renders 180px tiles,
+   * and handing each of them the canonical is pure waste: the
+   * browser downloads three times the pixels it needs and then
+   * scales the image back down.
+   *
+   * So the deployment publishes a ladder of smaller variants (see
+   * `thumbnailVariants`), and each one is advertised with the
+   * width it REALLY is for this photo — the same aspect-ratio
+   * correction the canonical gets, because a portrait's variant is
+   * narrower than its long edge too. Advertising the long edge
+   * would tell the browser the image is wider than it is, and it
+   * would then pick a lower density than the one it needs.
+   *
+   * The list is SORTED BY WIDTH, ascending.
+   *
+   * The canonical is not necessarily the widest entry: a deployment
+   * whose canonical is 384 and whose variants are 240 and 480 puts
+   * the 480 variant AFTER... no, BEFORE the canonical, or the list
+   * reads 240, 480, 384 and the browser walks it out of order.
+   * The browser is meant to walk the list upward and take the
+   * smallest asset that covers the tile, and that only works if the
+   * widths ascend.
+   *
+   * So the entries are built and then sorted. Sorting by WIDTH
+   * rather than by the rung's nominal size is what matters: a
+   * portrait photo's 480 variant is narrower than a landscape
+   * photo's 240 variant, so the same list has a different order
+   * for every photo.
+   */
+  let eagerSrcset = $derived.by(() => {
+    const entries: { width: number; url: string }[] = [];
+    for (const variant of $thumbnailVariants) {
+      const width = thumbnailWidthFor(variant, photoWidth, photoHeight);
+      entries.push({ width, url: thumbUrl(pointId, variant) });
+    }
+    entries.push({ width: eagerSrcWidth, url: thumbUrl(pointId, thumbnailSize) });
+    // The extra rungs, when the tile needs one (see rawRungs).
+    for (const rung of rawRungs) {
+      entries.push({ width: rung.width, url: rung.url });
+    }
+    entries.sort((a, b) => a.width - b.width);
+    // Two entries with the SAME width descriptor make the whole
+    // srcset invalid, and the browser then rejects the entire list
+    // — not just the duplicate. A portrait photo's 480 variant can
+    // round to the same width as the 384 canonical, so the
+    // duplicates are dropped here rather than at the end.
+    const seen: number[] = [];
+    return entries
+      .filter((e) => {
+        if (seen.includes(e.width)) return false;
+        seen.push(e.width);
+        return true;
+      })
+      .map((e) => `${e.url} ${e.width}w`)
+      .join(', ');
+  });
+
+  /**
+   * Extra srcset rungs for a tile the canonical asset cannot cover.
+   *
+   * The deployment's canonical is the photo's LONG edge, so its
+   * WIDTH is the long edge for a landscape photo and narrower for a
+   * portrait. A justified row's tile is as wide as the photo's own
+   * ratio makes it — and a wide landscape photo in a tall row gets a
+   * tile far wider than the canonical is. That tile would be an
+   * enlargement of the canonical: soft.
+   *
+   * The ORIGINAL is bigger, and the raw endpoint resizes it to an
+   * exact width, so the tile can be served at its real size instead.
+   * The endpoint only ever downscales — a source narrower than the
+   * request comes back at the source's own width — so the rung's
+   * width descriptor is the width the file REALLY has, and a rung
+   * that would describe the same width as an earlier one is dropped
+   * (a srcset with two entries of the same width is invalid, and
+   * the browser rejects the WHOLE list when it sees one).
+   *
+   * The rungs are only offered to a tile the canonical genuinely
+   * cannot cover. Every other tile keeps the cheap pre-generated
+   * WebP — offering a 2560px original to a 270px portrait tile
+   * would fetch four times the pixels it needs.
+   */
+  let rawRungs = $derived.by(() => {
+    if (!renderWidth || !photoWidth || !photoHeight) return [];
+    const canonicalWidth = thumbnailWidthFor(
+      thumbnailSize,
+      photoWidth,
+      photoHeight
+    );
+    if (renderWidth <= canonicalWidth) return [];
+    const seen: number[] = [];
+    const out: { url: string; width: number }[] = [];
+    for (const rung of RAW_RUNGS) {
+      const width = Math.min(rung, photoWidth);
+      if (width <= canonicalWidth || seen.includes(width)) continue;
+      seen.push(width);
+      out.push({ url: photoUrl(pointId, rung), width });
+    }
+    return out;
+  });
 
   /**
    * Where the photo comes from at the size the caller asked for.
@@ -258,16 +463,28 @@
    * for more than the photo has simply gives the photo's own size
    * back — the worst case is a soft image, never a broken one.
    */
-  const THUMBNAIL_MAX_WIDTH = 384;
+  // The deployment's thumbnail size cannot change under a live page
+  // (a change means a new shell), so capturing it once is correct.
+  // svelte-ignore state_referenced_locally
+  const THUMBNAIL_MAX_WIDTH = thumbnailSize;
+
+  // The widths the raw endpoint is asked for when a tile is wider
+  // than the canonical covers. They are the same shape as the
+  // display ladder — a small set, so the server's resize cache holds
+  // a bounded number of entries per photo rather than one per
+  // distinct tile width.
+  //
+  // 1920 is the width the lightbox already asks for, so the server
+  // has this rung cached for the photos it has shown; 2560 is the
+  // headroom a 1440px-wide tile needs at 2x.
+  const RAW_RUNGS = [960, 1280, 1920, 2560];
   let wantsFullWidth = $derived(
     typeof srcWidth === 'number' && srcWidth > THUMBNAIL_MAX_WIDTH
   );
   let fullSrc = $derived(
-    wantsFullWidth
+    wantsFullWidth && typeof srcWidth === 'number'
       ? photoUrl(pointId, srcWidth)
-      : isEager
-        ? thumbUrl(pointId, eagerSrcWidth)
-        : thumbUrl(pointId, 384)
+      : thumbUrl(pointId, thumbnailSize)
   );
   // Sizes attribute must reflect the actual rendered tile width
   // so the browser picks the right srcset entry. Without this,
@@ -278,19 +495,48 @@
   // 240w of pixels, blurry at 2x DPR).
   //
   // Post the model-variant migration plan, the only thumbnail
-  // variant served is 384×384 — the srcset is a single 384w entry,
-  // so the `sizes` attribute just needs to advertise the tile's
-  // rendered CSS pixels at each breakpoint.
+  // variant served is the deployment's thumbnail size — the srcset
+  // is a single entry, so the `sizes` attribute just needs to
+  // advertise the tile's rendered CSS pixels at each breakpoint.
+  //
+  // In the masonry the tile's width is the grid's fixed tile size
+  // (240 / 192 / 144), NOT the auto-fit track the uniform grid
+  // renders — so the guess below, which mirrors the uniform grid's
+  // heuristic, would understate it.
   let eagerSizes = $derived.by(() => {
-    const w = tileSizeGuess() ?? 384;
-    // Pick the smallest variant >= w so the browser has enough
-    // pixels to render crisply at this DPR. With a single 384w
-    // variant, this is just `w` for any w <= 384.
-    const variant = w <= 120 ? 120 : w <= 180 ? 180 : w <= 240 ? 240 : 384;
-    // Re-derive the breakpoint from `w`: below 600px viewport the
-    // tiles are ~120-180px, above that they're ~240px, above
-    // 1200px they grow further (capped at our 384 variant).
-    return `(max-width: 600px) ${Math.min(variant, 120)}px, (max-width: 1200px) ${Math.min(variant, 180)}px, ${variant}px`;
+    // A tile the layout sized for ITSELF states its own width. The
+    // justified rows give every photo a different width, so one
+    // shared number would be wrong for nearly every tile in a row.
+    //
+    // ROUNDED UP, never down: the tile is as wide as the layout
+    // says, so a `sizes` below it asks the browser for fewer pixels
+    // than the tile needs, and it hands over an asset it then has to
+    // enlarge.
+    if (renderWidth) return `${Math.ceil(renderWidth)}px`;
+
+    // The tile width is EXACT in both grids, and it does not depend
+    // on the viewport.
+    //
+    // The masonry places each tile at the ladder's fixed width. The
+    // uniform grid's tracks are fixed too — `repeat(auto-fit,
+    // <tile>px)` collapses EMPTY tracks and never resizes a filled
+    // one, so a tile is the same width at every viewport. What
+    // changes with the viewport is the COLUMN COUNT: a narrow
+    // screen shows fewer columns, it does not shrink the photos.
+    //
+    // So both grids advertise one width, and the browser picks the
+    // variant that covers it at the device's DPR. That matters in
+    // the DENSE view: a 144px tile advertised as 240px makes the
+    // browser fetch a 240w source for a 144px slot — two thirds
+    // more pixels than the tile can show.
+    //
+    // The presentation wall is the exception: its tracks are 1fr,
+    // so its tiles stretch to fill the screen and the width has to
+    // be derived from the viewport.
+    if (!wall) return `${tileWidth}px`;
+
+    const w = wallTileGuess() ?? tileWidth;
+    return `${w}px`;
   });
 </script>
 
@@ -312,6 +558,8 @@
   class:disliked={isDisliked}
   class:menu-open={contextMenuOpen}
   class:wall
+  class:natural
+  class:clamped
   role={readOnly ? 'img' : 'link'}
   href={readOnly ? undefined : `/photo/${encodeURIComponent(pointId)}`}
   data-photo-id={pointId}
@@ -328,8 +576,8 @@
     bind:this={imgEl}
     class="full"
     src={fullSrc}
-    srcset={wantsFullWidth ? undefined : isEager ? eagerSrcset : undefined}
-    sizes={wantsFullWidth ? undefined : isEager ? eagerSizes : undefined}
+    srcset={wantsFullWidth ? undefined : isEager || alwaysSrcset ? eagerSrcset : undefined}
+    sizes={wantsFullWidth ? undefined : isEager || alwaysSrcset ? eagerSizes : undefined}
     alt=""
     loading={isEager ? 'eager' : 'lazy'}
     fetchpriority={eagerIndex === 0 ? 'high' : isEager ? 'auto' : 'low'}
@@ -453,6 +701,27 @@
   .tile:hover {
     border-color: var(--glass-edge-strong);
     box-shadow: var(--grid-tile-hover-shadow);
+  }
+
+  /* ---- the self-laid-out variants ----
+     The grid has already sized this tile from the photo's own
+     dimensions, so the tile fills that box instead of imposing a
+     square of its own. The photo inside is `object-fit: cover`, and
+     because the box's ratio IS the photo's ratio, nothing is
+     cropped. */
+  .tile.natural {
+    aspect-ratio: auto;
+    height: 100%;
+  }
+
+  /* A photo whose ratio is outside the layout's bounds is laid out
+     in a box that is not its shape. `cover` would cut it off, so it
+     shows WHOLE instead, with the tile's own background at the
+     edges. Losing a sliver of the photo is worse than a band of
+     background on a photo this rare. */
+  .tile.natural.clamped .ph,
+  .tile.natural.clamped .full {
+    object-fit: contain;
   }
 
   /* ---- the wall variant ----

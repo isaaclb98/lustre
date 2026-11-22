@@ -94,17 +94,58 @@ async function albumWithPhotos(page: Page): Promise<number> {
  */
 async function gridGeometry(page: Page) {
   return page.evaluate(() => {
+    // The grid has TWO layouts: the uniform grid (rows of tiles in
+    // a CSS grid) and masonry (tiles positioned absolutely, packed
+    // into columns). The measurements have to hold in both — the
+    // layout is a deployment choice, not the test's to make.
     const row = document.querySelector('.grid-row');
-    if (!row) return null;
-    const tiles = Array.from(row.querySelectorAll('.tile')) as HTMLElement[];
+    // The justified layout's rows are `.justified-row` — the tiles
+    // are placed at their own x offsets, so two tiles in a row have
+    // different widths and different left edges.
+    const justRow = document.querySelector('.justified-row');
+    // A row that holds MORE THAN ONE tile is the one that can be
+    // measured: the gap between two neighbours only exists inside
+    // a row, and a justified row legitimately holds a single photo
+    // (a wide one fills the row on its own).
+    const rows = Array.from(
+      document.querySelectorAll('.grid-row, .justified-row')
+    );
+    const scope =
+      rows.find((r) => r.querySelectorAll('.tile').length >= 2) ??
+      rows[0] ??
+      document;
+    const tiles = Array.from(scope.querySelectorAll('.tile')) as HTMLElement[];
     if (tiles.length < 2) return null;
-    const cs = getComputedStyle(row);
     const tcs = getComputedStyle(tiles[0]);
     const a = tiles[0].getBoundingClientRect();
-    const b = tiles[1].getBoundingClientRect();
+
+    // The rendered space between two neighbours. In the uniform grid
+    // that is the row's own gap, read off two tiles in the same
+    // row. In masonry the tiles are in columns, so it is the
+    // distance between two adjacent columns' left edges, less the
+    // tile width. In a justified row the tiles are placed at exact
+    // offsets, so two of them in the same row touch.
+    let gapBetweenTiles: number;
+    if (row || justRow) {
+      const b = tiles[1].getBoundingClientRect();
+      gapBetweenTiles = Math.round(b.x - (a.x + a.width));
+    } else {
+      const lefts = Array.from(
+        new Set(tiles.map((t) => Math.round(t.getBoundingClientRect().left)))
+      ).sort((x, y) => x - y);
+      gapBetweenTiles =
+        lefts.length > 1 ? Math.round(lefts[1] - lefts[0] - a.width) : 0;
+    }
+
     return {
-      gap: cs.gap,
-      gapBetweenTiles: Math.round(b.x - (a.x + a.width)),
+      masonry: !row && !justRow,
+      justified: !!justRow,
+      // The effective gutter. The uniform grid has a row whose CSS
+      // gap IS the gutter; masonry has no row, so the gutter is the
+      // rendered space between two columns. Same meaning, both
+      // layouts.
+      gap: row ? getComputedStyle(row).gap : `${gapBetweenTiles}px`,
+      gapBetweenTiles,
       radius: tcs.borderRadius,
       borderWidth: tcs.borderWidth,
       borderStyle: tcs.borderStyle,
@@ -116,9 +157,11 @@ async function gridGeometry(page: Page) {
 
 /** Wait for a grid with at least two tiles, and return its geometry. */
 async function waitForGrid(page: Page) {
-  await page.waitForSelector('.grid-row .tile', { timeout: 30000 });
+  // Both layouts render `.tile` elements — the uniform grid inside
+  // `.grid-row`, masonry directly in the wrapper.
+  await page.waitForSelector('.tile', { timeout: 30000 });
   await page.waitForFunction(
-    () => document.querySelectorAll('.grid-row .tile').length >= 2,
+    () => document.querySelectorAll('.tile').length >= 2,
     undefined,
     { timeout: 30000 }
   );
@@ -162,30 +205,30 @@ test.describe('dark theme', () => {
     }
   });
 
-  test('the theme decides the grid geometry', async ({ page }) => {
+  test('the grid geometry is gapless and square in every theme', async ({ page }) => {
     const albumId = await albumWithPhotos(page);
     await page.goto(`${APP}/albums/${albumId}`);
     const geom = await waitForGrid(page);
-    const theme = await documentTheme(page);
 
-    if (theme === 'dark') {
-      // No gutter: the row's own gap AND the space between two
-      // neighbours are both zero, so the photos touch.
-      expect(geom.gap).toBe('0px');
-      expect(geom.gapBetweenTiles).toBe(0);
-      // Square corners, and no border to separate the photos.
-      expect(geom.radius).toBe('0px');
-      expect(geom.borderWidth).toBe('0px');
+    // The grid is gapless and square in EVERY theme now: the dark
+    // theme's treatment is the only one. The row's own gap AND the
+    // space between two neighbours are both zero, so the photos
+    // touch; and the tiles are square corners with no border.
+    expect(geom.gap).toBe('0px');
+    expect(geom.gapBetweenTiles).toBe(0);
+    expect(geom.radius).toBe('0px');
+    expect(geom.borderWidth).toBe('0px');
+
+    // The uniform grid squares its tiles in both themes. Masonry
+    // does not: each tile is as tall as the photo's own aspect
+    // ratio, so a square photo is square and a portrait is not. The
+    // justified layout does not either — its tiles are the photo's
+    // own shape, scaled to the row's height.
+    if (geom.masonry || geom.justified) {
+      expect(geom.width).toBeGreaterThan(0);
     } else {
-      // The light theme keeps its 14px gutter and rounded tiles.
-      expect(geom.gap).not.toBe('0px');
-      expect(geom.gapBetweenTiles).toBeGreaterThan(0);
-      expect(geom.radius).not.toBe('0px');
-      expect(geom.borderWidth).not.toBe('0px');
+      expect(geom.width).toBe(geom.height);
     }
-
-    // Square tiles in both themes.
-    expect(geom.width).toBe(geom.height);
   });
 
   test('switching the marker switches the rendering', async ({ page }) => {
@@ -218,31 +261,26 @@ test.describe('dark theme', () => {
 
     // The geometry follows the store: the gap is part of the
     // theme, so the grid has to re-derive it.
+    //
+    // There is no gutter in either theme, so the geometry does not
+    // move when the theme flips.
     await expect
       .poll(async () => (await gridGeometry(page))?.gap)
-      .toBe(target === 'dark' ? '0px' : '14px');
+      .toBe('0px');
 
+    // The grid's geometry is the same in both themes now: gapless
+    // and square. Only the PALETTE follows the marker.
     const after = await gridGeometry(page);
-    if (target === 'dark') {
-      expect(after!.gapBetweenTiles).toBe(0);
-      expect(after!.radius).toBe('0px');
-      expect(after!.borderWidth).toBe('0px');
-    } else {
-      expect(after!.gapBetweenTiles).toBeGreaterThan(0);
-      expect(after!.radius).not.toBe('0px');
-      expect(after!.borderWidth).not.toBe('0px');
-    }
+    expect(after!.gapBetweenTiles).toBe(0);
+    expect(after!.radius).toBe('0px');
+    expect(after!.borderWidth).toBe('0px');
 
     // And the theme it came from was what it was — the change is
     // scoped to the marker, not to the page.
     expect(beforeBackground.toLowerCase()).not.toBe(
       expectedBackground.toLowerCase()
     );
-    if (current === 'dark') {
-      expect(before.gap).toBe('0px');
-    } else {
-      expect(before.gap).not.toBe('0px');
-    }
+    expect(before.gap).toBe('0px');
   });
 
   test('the dark theme leaves the presentation wall alone', async ({ page }) => {

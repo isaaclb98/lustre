@@ -32,15 +32,39 @@ SIGLIP_VARIANTS = {
     "L/16-256": ("ViT-L-16-SigLIP2-256", 1024),
     "gopt/16-384": ("ViT-gopt-16-SigLIP2-384", 1536),
     "so400m/16-384": ("ViT-so400m-patch16-384", 1152),
+    # C-RADIOv4-SO400M with the siglip2-g teacher adaptor. 1536-dim:
+    # SigLIP2-GIANT's joint space is 1536 (the so400m family's is
+    # 1152). The vectors are RADIO's summary token projected into
+    # SigLIP2-g, not SigLIP2's own vision tower — a different space
+    # from every SigLIP2 variant, and the dim differs from the prod
+    # model too, so the reconciler's dim check catches a stale
+    # collection before the payload check even runs.
+    "c-radio-v4/so400m": ("C-RADIOv4-SO400M", 1536),
 }
 
-# Reverse mapping: dim -> variant name. The reconciler uses this to
-# suggest a likely SIGLIP_VARIANT in the mismatch error message so
-# the operator doesn't have to dig through git history to figure
-# out which model produced the stored vectors.
-SIGLIP_VARIANTS_BY_DIM: dict[int, str] = {
-    dim: name for name, (_model, dim) in SIGLIP_VARIANTS.items()
-}
+# Reverse mapping: dim -> the variant names that produce it.
+#
+# Two models can share a dim and still be different spaces —
+# gopt/16-384 and c-radio-v4/so400m are both 1536 — so the map holds
+# EVERY candidate rather than guessing one. The reconciler's
+# mismatch message lists them all, because "set SIGLIP_VARIANT to
+# the right one" is only actionable if the operator can see both.
+SIGLIP_VARIANTS_BY_DIM: dict[int, tuple[str, ...]] = {}
+for _variant_name, (_variant_model, _variant_dim) in SIGLIP_VARIANTS.items():
+    SIGLIP_VARIANTS_BY_DIM[_variant_dim] = (
+        *SIGLIP_VARIANTS_BY_DIM.get(_variant_dim, ()),
+        _variant_name,
+    )
+
+
+def _likely_variants(dim: int) -> str:
+    """Human-readable list of the variants that produce `dim`."""
+    names = SIGLIP_VARIANTS_BY_DIM.get(dim)
+    if not names:
+        return "?"
+    if len(names) == 1:
+        return repr(names[0])
+    return " or ".join(repr(name) for name in names)
 
 
 class QdrantVariantMismatch(RuntimeError):
@@ -88,6 +112,16 @@ def get_vector_dim() -> int:
 
 # Thumbnail storage path (inside container)
 THUMBNAIL_DIR = os.environ.get("THUMBNAIL_DIR", "/app/data/thumbnails")
+
+# The thumbnail's long edge, in pixels. Read at import time because
+# the thumbnail router's `?w=` cap is a FastAPI query parameter
+# annotation, which is evaluated when the route is built.
+#
+# This must agree with the indexer's THUMBNAIL_SIZE: the indexer
+# renders the canonical thumbnail at that long edge, and the router
+# serves it. A request beyond it asks for an asset that does not
+# exist.
+THUMBNAIL_SIZE = int(os.environ.get("THUMBNAIL_SIZE", "640"))
 
 
 # Variant reconciliation against Qdrant. Replaces the older file-based
@@ -194,7 +228,7 @@ def reconcile_variant_from_qdrant(
             f"\n"
             f"Pick one of these recovery paths:\n"
             f"  (1) Set SIGLIP_VARIANT to the variant that produced the stored "
-            f"vectors (likely {SIGLIP_VARIANTS_BY_DIM.get(stored_dim, '?')!r}) and restart.\n"
+            f"vectors (likely {_likely_variants(stored_dim)}) and restart.\n"
             f"  (2) Reindex from scratch with the new variant. To preserve the "
             f"old data for postmortem, rename the bad collection first:\n"
             f"      curl -X PATCH http://{qdrant_url}/collections/{qdrant_collection} "
@@ -226,8 +260,45 @@ def reconcile_variant_from_qdrant(
 
     stored_variant = sample[0].payload.get("model_variant") if sample[0].payload else None
     if stored_variant is None:
-        # Legacy data — no `model_variant` payload. Dim already matches,
-        # so the binding constraint holds. Proceed.
+        # Legacy data — no `model_variant` payload. The dim is then
+        # the only evidence of which model wrote these vectors, and
+        # that evidence is only sufficient when exactly ONE variant
+        # produces that dim.
+        #
+        # Two variants can share a dim while being different spaces:
+        # gopt/16-384 and c-radio-v4/so400m are both 1536, but one
+        # is SigLIP2's own vision tower and the other is RADIO's
+        # summary token projected into SigLIP2-g. With the dim alone
+        # the reconciler cannot tell a matching collection from a
+        # mismatched one, so it must refuse rather than serve
+        # similarity results from a space it cannot prove.
+        candidates = SIGLIP_VARIANTS_BY_DIM.get(stored_dim, ())
+        if len(candidates) > 1:
+            raise QdrantVariantMismatch(
+                f"Qdrant collection {qdrant_collection!r} has dim={stored_dim} "
+                f"(matches env SIGLIP_VARIANT={env_variant!r}) but its sample "
+                f"point carries no `model_variant` payload, so there is no way "
+                f"to tell which model wrote these vectors — and dim={stored_dim} "
+                f"is produced by more than one variant ({_likely_variants(stored_dim)}). "
+                f"The vectors may be in the wrong embedding space. Refusing to "
+                f"start rather than serve results from a space it cannot "
+                f"prove.\n"
+                f"\n"
+                f"Pick one of these recovery paths:\n"
+                f"  (1) Reindex from scratch with the variant you want — the "
+                f"new indexer writes a `model_variant` payload on every point, "
+                f"which makes the check unambiguous from then on. To preserve "
+                f"the old data for postmortem, rename the bad collection "
+                f"first:\n"
+                f"      curl -X PATCH http://{qdrant_url}/collections/{qdrant_collection} "
+                f"-H 'Content-Type: application/json' -d '{{\"name\": \"{qdrant_collection}_bad_<timestamp>\"}}'\n"
+                f"      then set QDRANT_COLLECTION={qdrant_collection}_v2 and reindex.\n"
+                f"  (2) Backfill the payload with scripts/backfill_model_variant.py "
+                f"if you KNOW which variant wrote the collection.\n"
+            )
+        # Legacy data — no `model_variant` payload, but the dim maps to
+        # exactly one variant, so the dim is the binding constraint.
+        # Proceed.
         logger.info(
             "Qdrant dim matches env variant %s; sample point has no "
             "`model_variant` payload (legacy data). Proceeding.",
@@ -330,6 +401,12 @@ _CENTROID_MODEL_COMPAT = {
     "ViT-gopt-16-SigLIP2-384": "siglip2",
     "ViT-L-16-SigLIP2-256": "siglip2",
     "ViT-so400m-patch16-384": "siglip2",
+    # C-RADIOv4's text-aligned vectors live in SigLIP2-g's joint
+    # space, so a centroid computed for the "siglip2" family is
+    # dimensionally compatible but was computed from a different
+    # teacher. The tag is distinct so a mismatched centroid file is
+    # rejected rather than silently searched.
+    "C-RADIOv4-SO400M": "cradio-v4-siglip2g",
 }
 
 
@@ -549,6 +626,27 @@ class Config:
     # marker — switching themes is a redeploy, not a rebuild.
     theme: str = "light"
 
+    # The photo grid's layout mode. 'grid' = the uniform square grid
+    # (one tile size, one row height, rows sliced by the virtualizer).
+    # 'masonry' = Pinterest-style masonry: every photo keeps its own
+    # aspect ratio and the tiles are packed into the shortest column.
+    # 'justified' = the Flickr / Google Photos / Immich layout: every
+    # row has one height and the photos in it fill the row's width.
+    #
+    # It rides on the SPA shell as a `data-layout` attribute, exactly
+    # like the theme: the frontend is ONE static build shared by every
+    # deployment, so the mode cannot live in the bundle. The user's
+    # own preference (in the browser) overrides this default.
+    layout: str = "grid"
+
+    # The thumbnail's long edge, in pixels. The indexer renders
+    # thumbnails at this size, and the frontend builds its `srcset`
+    # from it — a srcset entry has to state the width the image
+    # actually is, and that is a deployment-level number (dev
+    # renders 512, production 384).
+    thumbnail_size: int = 384
+    thumbnail_variants: tuple[int, ...] = ()
+
 
 def _int(name: str, default: int) -> int:
     raw = os.environ.get(name)
@@ -594,6 +692,30 @@ def _theme(name: str, default: str = "light") -> str:
     raw = _str(name, default).strip().lower()
     if raw not in ("light", "dark"):
         raise ValueError(f"env {name}={raw!r} must be 'light' or 'dark'")
+    return raw
+
+
+def _layout(name: str, default: str = "grid") -> str:
+    """Read the grid layout env var.
+
+    Only 'grid', 'masonry' and 'justified' are accepted. An
+    unrecognised value is a startup error rather than a silent
+    fallback, for the same reason the theme is: a typo in the
+    operator's .env would otherwise ship the wrong layout with no
+    sign that anything went wrong.
+
+    The legacy LUSTRE_MASONRY boolean is still honoured — a
+    deployment that set it to 1 gets the masonry layout — so an
+    existing .env keeps working.
+    """
+    raw = _str(name, "").strip().lower()
+    if not raw:
+        # No LUSTRE_LAYOUT: fall back to the legacy boolean.
+        return "masonry" if _bool("LUSTRE_MASONRY", False) else default
+    if raw not in ("grid", "masonry", "justified"):
+        raise ValueError(
+            f"env {name}={raw!r} must be 'grid', 'masonry' or 'justified'"
+        )
     return raw
 
 
@@ -757,6 +879,13 @@ def load() -> Config:
         web_ui_url=_str("WEB_UI_URL", "http://localhost:8000"),
         log_level=_str("LOG_LEVEL", "INFO"),
         theme=_theme("LUSTRE_THEME", "light"),
+        layout=_layout("LUSTRE_LAYOUT", "grid"),
+        thumbnail_size=_int("THUMBNAIL_SIZE", 640),
+        thumbnail_variants=tuple(
+            int(part)
+            for part in _str("THUMBNAIL_VARIANT_SIZES", "240,360").split(",")
+            if part.strip().isdigit()
+        ),
         test_mode=bool(
             os.environ.get("SEARCH_TEST_MODE")
             or os.environ.get("SEARCH_NO_MODEL")
@@ -794,7 +923,11 @@ def load() -> Config:
         # single-source setup just sets the latter.
         indexer_sources=indexer_sources,
         indexer_device=_str("INDEXER_DEVICE", "cpu"),
-        indexer_batch_size=_int("INDEXER_BATCH_SIZE", 8),
+        # Clamped to the card's safe ceiling — see
+        # `indexer.local_sync.MAX_EMBED_BATCH_SIZE`. The 640 embed at
+        # batch 16 left ~90 MiB free on a 10 GiB card, which is the
+        # condition that took the GPU off the PCIe bus (Xid 79).
+        indexer_batch_size=min(_int("INDEXER_BATCH_SIZE", 8), 8),
         # Roots the orphan purge may resolve a stored path under: the
         # photos mount plus every indexer source that is NOT already
         # inside it. See the `photos_roots` field comment for why.

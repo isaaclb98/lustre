@@ -159,6 +159,13 @@ class AlbumMemberItem(BaseModel):
     # it the tile is a grey block until its photo lands, which on a
     # moving wall reads as pop-in.
     blurhash: str | None = None
+    # The photo's own dimensions. The masonry lays a tile out at the
+    # photo's aspect ratio, and it needs the dimensions to do that
+    # BEFORE the image arrives. Without them every album member
+    # falls back to a square, so the album grid renders as a grid of
+    # squares whatever the deployment's layout mode is.
+    width: int | None = None
+    height: int | None = None
 
 
 class AlbumDetailResponse(BaseModel):

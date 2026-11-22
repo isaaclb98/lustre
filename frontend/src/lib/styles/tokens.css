@@ -222,19 +222,23 @@
 
   /* photo-tile chrome.
      The tile's own border, shadow and state rings, as tokens rather
-     than literals, so a theme can restyle them. The dark theme sets
-     these to a borderless, flat tile — the photos touch pixel-to-
-     pixel there, so a border or a shadow would read as a seam
-     between two photos rather than as the edge of one.
-     The values here are the light theme's: a hairline border, a
-     resting shadow, and the rings that mark a disliked / mixed /
-     context-menu-open tile. */
-  --grid-tile-border-width: 1px;
-  --grid-tile-shadow: var(--shadow-1);
-  --grid-tile-hover-shadow: var(--shadow-3);
-  --grid-tile-menu-shadow: var(--shadow-glass-strong);
-  --grid-tile-dislike-ring: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
-  --grid-tile-mixed-ring: 0 0 0 1px var(--mixed-tile-ring);
+     than literals, so a theme can restyle them.
+
+     They are FLAT and BORDERLESS, and that is not a theme choice:
+     the grid has no gutter, so the photos touch pixel-to-pixel, and
+     a border or a shadow between them would read as a seam rather
+     than as the edge of one photo.
+
+     The state rings are INSET for the same reason. An outside ring
+     paints over the tile's neighbour, which — with no gutter to sit
+     in — would land on the next photo. An inset outline paints over
+     the photo it belongs to and never changes the layout. */
+  --grid-tile-border-width: 0px;
+  --grid-tile-shadow: none;
+  --grid-tile-hover-shadow: none;
+  --grid-tile-menu-shadow: inset 0 0 0 1px var(--accent);
+  --grid-tile-dislike-ring: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  --grid-tile-mixed-ring: inset 0 0 0 1px var(--mixed-tile-ring);
 
   /* spacing — 4px grid */
   --s-0: 4px;

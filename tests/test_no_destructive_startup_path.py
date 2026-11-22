@@ -215,18 +215,60 @@ def test_reconciler_is_reachable_from_config_load() -> None:
     ("L/16-256", 1024),
     ("gopt/16-384", 1536),
     ("so400m/16-384", 1152),
+    ("c-radio-v4/so400m", 1536),
 ])
 def test_variant_dims_are_unique_so_mismatches_are_detectable(
     variant: str, expected_dim: int,
 ) -> None:
-    """Each variant must map to its own dim — the dim is what the
-    reconciler compares, so two variants sharing a dim would make a
-    mismatch undetectable."""
+    """A variant's dim must be enough to tell its collection apart.
+
+    The reconciler compares the collection's dim against the env
+    variant's dim. That only identifies the model when exactly one
+    variant produces the dim — otherwise a mismatched collection
+    passes the dim check.
+
+    Two variants CAN share a dim while being different spaces:
+    gopt/16-384 and c-radio-v4/so400m are both 1536, one from
+    SigLIP2's own vision tower and one from RADIO's summary token
+    projected into SigLIP2-g. A shared dim is therefore only safe
+    if the reconciler REFUSES to serve a collection at that dim
+    whose points carry no `model_variant` payload to disambiguate
+    it — the dim proves nothing on its own, so the reconciler must
+    demand proof.
+
+    The behaviour is asserted in test_model_variant.py
+    (TestReconcileVariantFromQdrant); this test pins the shape of
+    the variant table that the behaviour depends on.
+    """
     from search import config
 
     assert config.SIGLIP_VARIANTS[variant][1] == expected_dim
-    dims = [spec[1] for spec in config.SIGLIP_VARIANTS.values()]
-    assert len(dims) == len(set(dims)), (
-        f"variant dims are not unique: {dims} — the reconciler "
-        "compares dims, so duplicates hide a real mismatch"
+
+    by_dim: dict[int, list[str]] = {}
+    for name, (_model, dim) in config.SIGLIP_VARIANTS.items():
+        by_dim.setdefault(dim, []).append(name)
+
+    # The SigLIP2 family keeps one dim each.
+    siglip2_dims = [
+        config.SIGLIP_VARIANTS[name][1]
+        for name in ("B/16-256", "L/16-256", "gopt/16-384", "so400m/16-384")
+    ]
+    assert len(siglip2_dims) == len(set(siglip2_dims)), (
+        f"the SigLIP2 variant dims are not unique: {siglip2_dims}"
     )
+
+    # Every dim shared between variants must be one the reconciler
+    # refuses to serve without a payload.
+    source = Path(config.__file__).read_text(encoding="utf-8")
+    for dim, names in by_dim.items():
+        if len(names) == 1:
+            continue
+        assert "candidates = SIGLIP_VARIANTS_BY_DIM.get(stored_dim, ())" in source, (
+            f"dim {dim} is produced by {names} but the reconciler does not "
+            "look up which variants share it — a mismatch at that dim would "
+            "be undetectable"
+        )
+        assert "if len(candidates) > 1:" in source, (
+            f"dim {dim} is produced by {names} but the reconciler does not "
+            "refuse an ambiguous dim"
+        )

@@ -43,6 +43,25 @@ function themeFromRootEnv() {
       if (!process.env.LUSTRE_THEME && rootEnv.LUSTRE_THEME) {
         process.env.LUSTRE_THEME = rootEnv.LUSTRE_THEME;
       }
+      // The grid's layout mode rides along with the theme: the dev
+      // server's shell has to carry the same marker the backend
+      // stamps, or the dev server would always show the square grid.
+      // The legacy boolean is read too, so a .env that predates
+      // LUSTRE_LAYOUT still picks the masonry layout.
+      if (!process.env.LUSTRE_LAYOUT && rootEnv.LUSTRE_LAYOUT) {
+        process.env.LUSTRE_LAYOUT = rootEnv.LUSTRE_LAYOUT;
+      }
+      if (!process.env.LUSTRE_MASONRY && rootEnv.LUSTRE_MASONRY) {
+        process.env.LUSTRE_MASONRY = rootEnv.LUSTRE_MASONRY;
+      }
+      // And so does the thumbnail size: the grid's srcset states the
+      // width the image IS, so the dev server has to know the size
+      // the dev backend's indexer renders. The value does not carry
+      // the LUSTRE_ prefix, so it needs its own load.
+      const sizeEnv = loadEnv(config.mode, repoRoot, 'THUMBNAIL_');
+      if (!process.env.THUMBNAIL_SIZE && sizeEnv.THUMBNAIL_SIZE) {
+        process.env.THUMBNAIL_SIZE = sizeEnv.THUMBNAIL_SIZE;
+      }
     }
   };
 }
@@ -59,6 +78,13 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: false,
+    // Vite refuses a request whose Host header it does not
+    // recognise (the DNS-rebinding guard). The dev server is
+    // reached over the tailnet by its device hostname, so the
+    // tailnet's domain has to be allowed — without this every
+    // request through `tailscale serve` comes back 403
+    // "Blocked request".
+    allowedHosts: ['.burmese-mermaid.ts.net'],
     proxy: {
       // Proxy API + photo + zip endpoints to FastAPI in dev. In prod
       // (k8s cluster) the Deployment sets API_PROXY_TARGET to the

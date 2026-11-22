@@ -17,14 +17,35 @@ the canonical 256px file (which is always present).
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response
 
-from search.config import THUMBNAIL_DIR
+from search.config import THUMBNAIL_DIR, THUMBNAIL_SIZE
 
 logger = logging.getLogger(__name__)
+
+
+def _max_published_width() -> int:
+    """The widest thumbnail width this deployment publishes.
+
+    The canonical thumbnail's long edge, and every variant the
+    deployment advertises on its shell. A request for any of those
+    widths is legitimate — the assets exist — so the endpoint's cap
+    has to cover all of them.
+
+    Read from the environment directly rather than through
+    config.load(): the router is built at import time, and load()
+    validates the WHOLE configuration (Qdrant, the model, the
+    photos directory), which a thumbnail request has no business
+    requiring.
+    """
+    raw = os.environ.get("THUMBNAIL_VARIANT_SIZES", "")
+    variants = [int(part) for part in raw.split(",") if part.strip().isdigit()]
+    published = [THUMBNAIL_SIZE, *variants]
+    return max(published)
 
 
 def build_thumbnails_router() -> APIRouter:
@@ -33,8 +54,9 @@ def build_thumbnails_router() -> APIRouter:
 
     @router.get("/thumb/{point_id}")
     async def get_thumbnail(
+        request: Request,
         point_id: str,
-        # Round-perf (issue #2): frontend srcset asks for a target width
+        # Round-perf (issue #2): the frontend's srcset asks for a target width
         # so the browser can pick the smallest variant that fits its
         # current rendered size. We don't generate new variants on
         # demand (that'd be a slow first-hit and burn disk) — instead
@@ -43,8 +65,31 @@ def build_thumbnails_router() -> APIRouter:
         # Pre-migration cap was 256. The indexer now produces a
         # single 384px variant (matches the so400m model input
         # resolution), so the cap moves up to 384 to match.
-        w: int | None = Query(None, ge=64, le=384),
-    ) -> FileResponse:
+        #
+        # The cap is the deployment's THUMBNAIL_SIZE: the indexer
+        # renders the canonical thumbnail at that long edge, so a
+        # request beyond it asks for an asset that does not exist.
+        # The dev stack renders 512, production 384 — a hardcoded
+        # 384 rejected the dev stack's own request with a 422.
+        #
+        # This is the DISPLAY size, not the model's input size. The
+        # two were the same number until the 640 embed took the GPU
+        # off the bus; they are separate now, and the cap follows
+        # the asset this endpoint actually serves.
+        #
+        # The smaller variants (`?w=192` and friends) sit BELOW this
+        # cap, so they pass through it unchanged.
+        #
+        # The cap is the LARGEST width the deployment publishes: its
+        # canonical thumbnail OR any of its variants. Capping at the
+        # canonical alone rejected a VARIANT with a 422 — and the
+        # browser treats a 422 as a failed image, so the tile went
+        # blank. A deployment may publish a variant wider than its
+        # canonical (the dense view's assets are named by the size
+        # they are, not by their order in the ladder), and the cap
+        # has to cover every width the shell advertises.
+        w: int | None = Query(None, ge=64, le=_max_published_width()),
+    ) -> Response:
         """
         Serve a pre-generated WebP thumbnail, optionally sized.
 
@@ -81,13 +126,47 @@ def build_thumbnails_router() -> APIRouter:
         if not thumb_path.exists():
             raise HTTPException(status_code=404, detail="Thumbnail not found")
 
-        # Immutable cache: thumbnails are deterministic by point_id
-        # and never change unless the image is reindexed (which changes the point_id)
-        return FileResponse(
-            path=thumb_path,
+        # Cache: revalidate, do not claim immutability.
+        #
+        # The thumbnail is addressed by point id, and the point id is
+        # a hash of the photo's PATH — so a re-embed, or a change to
+        # the thumbnail's rendering (its size, or its aspect policy),
+        # rewrites the file at the SAME URL. A browser holding the
+        # old bytes under `immutable` would keep them for a year.
+        #
+        # So the response revalidates: the ETag is over the file's
+        # bytes, and a client that already has the current bytes
+        # answers 304 with no body. The cost is one conditional
+        # request per thumbnail per expiry; the benefit is that a
+        # regenerated thumbnail is never served stale.
+        #
+        # The ETag is the file's mtime and size rather than a hash
+        # of its contents: it changes exactly when the file is
+        # rewritten, and computing a content hash of every thumbnail
+        # on every request would mean reading the whole file.
+        stat = thumb_path.stat()
+        etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+
+        # The conditional request. A plain Response does not do this
+        # itself — only StaticFiles does — so it is handled here:
+        # a client that already holds these exact bytes is told 304
+        # and nothing is sent.
+        if request.headers.get("if-none-match") == etag:
+            return Response(
+                status_code=304,
+                headers={
+                    "Cache-Control": "public, max-age=3600, must-revalidate",
+                    "ETag": etag,
+                    "Access-Control-Allow-Origin": "*",
+                },
+            )
+
+        return Response(
+            content=thumb_path.read_bytes(),
             media_type="image/webp",
             headers={
-                "Cache-Control": "public, max-age=31536000, immutable",
+                "Cache-Control": "public, max-age=3600, must-revalidate",
+                "ETag": etag,
                 "Access-Control-Allow-Origin": "*",
             },
         )

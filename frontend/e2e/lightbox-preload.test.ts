@@ -51,7 +51,23 @@ test('Lightbox mounts preload <img> nodes for adjacent photos', async ({ page })
 test('Preload window is 1 behind and 2 ahead of the cursor', async ({ page }) => {
   await page.goto('/random');
   await page.waitForSelector('.grid-tile');
-  await page.waitForTimeout(1500);
+
+  // The grid has to hold ENOUGH photos for the window to be
+  // observable: one behind, the cursor, and two ahead.
+  //
+  // How many photos are on screen depends on the layout, and the
+  // justified layout shows FEWER of them: its rows are as tall as
+  // the ladder's row height rather than a square tile's, so a
+  // viewport holds fewer rows and fewer photos. So the test asks
+  // the grid for more by scrolling, rather than assuming a count
+  // that only one layout produces.
+  await expect
+    .poll(async () => {
+      await page.mouse.wheel(0, 4000);
+      await page.waitForTimeout(400);
+      return (await gridPhotoIds(page)).length;
+    }, { timeout: 15000 })
+    .toBeGreaterThan(6);
 
   const gridIds = await gridPhotoIds(page);
   expect(gridIds.length).toBeGreaterThan(6);

@@ -192,24 +192,54 @@ test.describe('presentation wall', () => {
     await page.waitForSelector('.tile', { timeout: 30000 });
 
     const geom = await page.evaluate(() => {
-      const row = document.querySelector('.grid-row')!;
-      const tiles = Array.from(row.querySelectorAll('.tile')) as HTMLElement[];
-      const cs = getComputedStyle(row);
+      // Two layouts render the grid: the uniform grid (rows in a CSS
+      // grid) and masonry (tiles positioned absolutely into columns).
+      const row = document.querySelector('.grid-row');
+      // The justified layout's rows carry their own class — its
+      // tiles have their own widths, so the masonry measurement
+      // (column left edges) would not describe them.
+      const justRow = document.querySelector('.justified-row');
+      // A row that holds MORE THAN ONE tile is the one that can be
+      // measured: a justified row legitimately holds a single photo
+      // (a wide one fills the row on its own), and a row of one has
+      // no neighbour to measure a gap against.
+      const rows = Array.from(
+        document.querySelectorAll('.grid-row, .justified-row')
+      );
+      const scope =
+        rows.find((r) => r.querySelectorAll('.tile').length >= 2) ??
+        rows[0] ??
+        document;
+      const tiles = Array.from(scope.querySelectorAll('.tile')) as HTMLElement[];
+      if (tiles.length < 2) return null;
       const tcs = getComputedStyle(tiles[0]);
       const a = tiles[0].getBoundingClientRect();
-      const b = tiles[1].getBoundingClientRect();
+      let gapBetweenTiles: number;
+      if (row || justRow) {
+        const b = tiles[1].getBoundingClientRect();
+        gapBetweenTiles = Math.round(b.x - (a.x + a.width));
+      } else {
+        const lefts = Array.from(
+          new Set(tiles.map((t) => Math.round(t.getBoundingClientRect().left)))
+        ).sort((x, y) => x - y);
+        gapBetweenTiles =
+          lefts.length > 1 ? Math.round(lefts[1] - lefts[0] - a.width) : 0;
+      }
       return {
-        gap: cs.gap,
+        masonry: !row && !justRow,
+        gap: row ? getComputedStyle(row).gap : `${gapBetweenTiles}px`,
         radius: tcs.borderRadius,
         borderStyle: tcs.borderStyle,
-        gapBetweenTiles: Math.round(b.x - (a.x + a.width))
+        gapBetweenTiles
       };
     });
+    expect(geom).not.toBeNull();
 
-    expect(geom.gap).not.toBe('0px');
-    expect(geom.gapBetweenTiles).toBeGreaterThan(0);
-    expect(geom.radius).not.toBe('0px');
-    expect(geom.borderStyle).not.toBe('none');
+    // The app grid is gapless in every theme now — the same look the
+    // wall has. What must not leak is the wall's FRAME, and the app
+    // chrome is checked separately.
+    expect(geom!.gap).toBe('0px');
+    expect(geom!.gapBetweenTiles).toBe(0);
   });
 
   test('the app chrome is still on the ordinary routes', async ({ page }) => {

@@ -160,6 +160,88 @@ describe('grid size', () => {
   });
 });
 
+describe('the layout preference', () => {
+  it('starts as null, which means "follow the deployment"', async () => {
+    const { preferences: store } = await loadStore();
+    // Null is NOT 'grid': it means the deployment's default applies,
+    // and storing the resolved default instead would freeze the
+    // deployment's choice into this browser.
+    expect(get(store).layout).toBeNull();
+  });
+
+  it('persists an explicit choice', async () => {
+    const { preferences: store, setLayout } = await loadStore();
+    setLayout('justified');
+    const raw = localStorage.getItem('lustre:preferences');
+    expect(raw).not.toBeNull();
+    expect(JSON.parse(raw ?? '{}').layout).toBe('justified');
+    expect(get(store).layout).toBe('justified');
+  });
+
+  it('accepts all three layouts and rejects anything else', async () => {
+    const { preferences: store, setLayout } = await loadStore();
+    setLayout('grid');
+    expect(get(store).layout).toBe('grid');
+    setLayout('masonry');
+    expect(get(store).layout).toBe('masonry');
+    setLayout('justified');
+    expect(get(store).layout).toBe('justified');
+
+    setLayout('mosaic' as unknown as 'grid');
+    expect(get(store).layout).toBe('justified');
+  });
+
+  it('clears the choice back to following the deployment', async () => {
+    const { preferences: store, setLayout } = await loadStore();
+    setLayout('masonry');
+    setLayout(null);
+    expect(get(store).layout).toBeNull();
+  });
+
+  // A browser that stored the OLD shape has `masonry: boolean`
+  // instead of `layout`. true became 'masonry', false became
+  // 'grid', and null stayed null.
+  //
+  // One case per test: the module is imported once and cached, so a
+  // second loadStore() inside one test would return the FIRST
+  // store, not a freshly-read one.
+  it('migrates a legacy masonry=true to the masonry layout', async () => {
+    localStorage.setItem(
+      'lustre:preferences',
+      JSON.stringify({ masonry: true })
+    );
+    const { preferences: store } = await loadStore();
+    expect(get(store).layout).toBe('masonry');
+  });
+
+  it('migrates a legacy masonry=false to the square grid', async () => {
+    localStorage.setItem(
+      'lustre:preferences',
+      JSON.stringify({ masonry: false })
+    );
+    const { preferences: store } = await loadStore();
+    expect(get(store).layout).toBe('grid');
+  });
+
+  it('migrates a legacy masonry=null to following the deployment', async () => {
+    localStorage.setItem(
+      'lustre:preferences',
+      JSON.stringify({ masonry: null })
+    );
+    const { preferences: store } = await loadStore();
+    expect(get(store).layout).toBeNull();
+  });
+
+  it('falls back to following the deployment when the stored value is junk', async () => {
+    localStorage.setItem(
+      'lustre:preferences',
+      JSON.stringify({ layout: 'mosaic' })
+    );
+    const { preferences: store } = await loadStore();
+    expect(get(store).layout).toBeNull();
+  });
+});
+
 describe('GRID_SIZE_CONFIG', () => {
   it('exposes one entry per GridSize with sane numeric values', async () => {
     const { GRID_SIZE_CONFIG, DEFAULT_GRID_SIZE } = await import('../grid/config');
@@ -176,10 +258,8 @@ describe('GRID_SIZE_CONFIG', () => {
     for (const s of sizes) {
       const c = GRID_SIZE_CONFIG[s];
       expect(c.tile).toBeGreaterThan(0);
-      expect(c.gap).toBeGreaterThan(0);
       expect(c.maxCols).toBeGreaterThan(0);
       expect(Number.isInteger(c.tile)).toBe(true);
-      expect(Number.isInteger(c.gap)).toBe(true);
       expect(Number.isInteger(c.maxCols)).toBe(true);
     }
     const large = GRID_SIZE_CONFIG.large;

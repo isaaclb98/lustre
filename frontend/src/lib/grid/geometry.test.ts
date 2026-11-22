@@ -50,18 +50,15 @@ describe('columnsForWidth', () => {
   });
 
   it('matches the CSS auto-fit formula exactly', () => {
-    // The grid renders `repeat(auto-fit, TILE)` tracks with the
-    // configured gap, so the track count is floor((w + gap) /
-    // (tile + gap)) — capped at maxCols.
+    // The grid renders `repeat(auto-fit, TILE)` tracks with no
+    // gutter, so the track count is floor(w / tile) — capped at
+    // maxCols.
     for (const size of SIZES) {
       const config = GRID_SIZE_CONFIG[size];
       for (const width of WIDTHS) {
         const expected = Math.max(
           1,
-          Math.min(
-            config.maxCols,
-            Math.floor((width + config.gap) / (config.tile + config.gap))
-          )
+          Math.min(config.maxCols, Math.floor(width / config.tile))
         );
         expect(columnsForWidth(width, config)).toBe(expected);
       }
@@ -197,7 +194,7 @@ describe('widthForColumns', () => {
       const config = GRID_SIZE_CONFIG[size];
       for (let cols = 1; cols <= config.maxCols; cols++) {
         const width = widthForColumns(cols, config);
-        expect(width).toBe(cols * config.tile + (cols - 1) * config.gap);
+        expect(width).toBe(cols * config.tile);
         // A row that width fits must derive back the same count.
         expect(columnsForWidth(width, config)).toBe(cols);
       }

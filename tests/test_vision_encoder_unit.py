@@ -17,6 +17,37 @@ from indexer.vision_encoder import (
 )
 
 
+# ----- Device resolution -----
+
+class TestDeviceResolution:
+    """An explicit device must win over the env var.
+
+    The embedders resolve their device from the DEVICE env var. The
+    indexer passes `--device cuda`, but that flag used to be ignored
+    outright — the models fell back to the env var, which the
+    containers never set — so every index run and every query embed
+    ran on the CPU.
+    """
+
+    def test_an_explicit_device_overrides_the_env(self, monkeypatch):
+        import os
+
+        from indexer.vision_encoder import VisionEncoder
+
+        monkeypatch.setenv("DEVICE", "cpu")
+        VisionEncoder(arch=MOCK_MODEL_NAME, device="cuda")
+        assert os.environ["DEVICE"] == "cuda"
+
+    def test_the_env_is_left_alone_when_it_agrees(self, monkeypatch):
+        import os
+
+        from indexer.vision_encoder import VisionEncoder
+
+        monkeypatch.setenv("DEVICE", "cuda")
+        VisionEncoder(arch=MOCK_MODEL_NAME, device="cuda")
+        assert os.environ["DEVICE"] == "cuda"
+
+
 # ----- Module constants -----
 
 class TestModuleConstants:

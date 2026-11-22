@@ -23,9 +23,10 @@
  * in-memory defaults so the UI keeps working. The persistence
  * is a nice-to-have, never a hard requirement.
  */
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { SLIDESHOW_PRESETS_MS, DEFAULT_SLIDESHOW_MS } from '$lib/api/limits';
-import { DEFAULT_GRID_SIZE, type GridSize } from '$lib/grid/config';
+import { DEFAULT_GRID_SIZE, type GridLayout, type GridSize } from '$lib/grid/config';
+import { readLayoutDefault } from '$lib/layout';
 
 const STORAGE_KEY = 'lustre:preferences';
 
@@ -57,19 +58,35 @@ export { DEFAULT_SLIDESHOW_MS };
 type Preferences = {
   slideshowIntervalMs: number;
   gridSize: GridSize;
+  /**
+   * The user's layout choice, or null for "no choice".
+   *
+   * Null is not the same as 'grid': the deployment picks a default
+   * (LUSTRE_LAYOUT, stamped onto the shell), and the user can
+   * override it. A stored mode means the user chose; null means
+   * "follow the deployment". Storing the resolved default instead
+   * would freeze the deployment's choice into this browser the first
+   * time any other setting changed.
+   */
+  layout: GridLayout | null;
 };
 
 const defaults: Preferences = {
   slideshowIntervalMs: DEFAULT_SLIDESHOW_MS,
-  gridSize: DEFAULT_GRID_SIZE
+  gridSize: DEFAULT_GRID_SIZE,
+  layout: null
 };
+
+const LAYOUTS: GridLayout[] = ['grid', 'masonry', 'justified'];
 
 function load(): Preferences {
   if (typeof localStorage === 'undefined') return { ...defaults };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...defaults };
-    const parsed = JSON.parse(raw) as Partial<Preferences>;
+    const parsed = JSON.parse(raw) as Partial<Preferences> & {
+      masonry?: boolean | null;
+    };
     // Validate the slideshow knob.
     const candidate = parsed.slideshowIntervalMs;
     const slideshowValid =
@@ -87,9 +104,31 @@ function load(): Preferences {
       gridCandidate === 'small'
         ? gridCandidate
         : DEFAULT_GRID_SIZE;
+    // Validate the layout knob — one of the three known modes.
+    // A user-tampered or schema-drifted value falls back to
+    // following the deployment rather than rendering the grid with
+    // an unknown arrangement.
+    //
+    // A browser that stored the OLD shape has `masonry: boolean`
+    // instead of `layout`. Migrate it: true became 'masonry', false
+    // became 'grid', and null stayed null (follow the deployment).
+    const layoutCandidate = parsed.layout;
+    const legacyMasonry = parsed.masonry;
+    let layout: GridLayout | null;
+    if (layoutCandidate !== undefined && layoutCandidate !== null) {
+      layout = LAYOUTS.includes(layoutCandidate as GridLayout)
+        ? (layoutCandidate as GridLayout)
+        : null;
+    } else if (legacyMasonry !== undefined) {
+      layout =
+        legacyMasonry === true ? 'masonry' : legacyMasonry === false ? 'grid' : null;
+    } else {
+      layout = null;
+    }
     return {
       slideshowIntervalMs: slideshowValid ? candidate : defaults.slideshowIntervalMs,
-      gridSize
+      gridSize,
+      layout
     };
   } catch {
     return { ...defaults };
@@ -126,4 +165,39 @@ export function setSlideshowInterval(ms: number) {
 export function setGridSize(size: GridSize) {
   if (size !== 'large' && size !== 'medium' && size !== 'small') return;
   preferences.update((p) => ({ ...p, gridSize: size }));
+}
+
+/**
+ * Choose the grid's layout.
+ *
+ * `null` hands the choice back to the deployment's default, which
+ * is what "follow the deployment" means in the Settings page.
+ */
+export function setLayout(layout: GridLayout | null) {
+  if (layout !== null && !LAYOUTS.includes(layout)) return;
+  preferences.update((p) => ({ ...p, layout }));
+}
+
+/**
+ * The layout the grid should render right now.
+ *
+ * The user's explicit choice wins; otherwise the deployment's
+ * default applies.
+ */
+export function layoutEnabled(prefs: Preferences): GridLayout {
+  return prefs.layout ?? readLayoutDefault();
+}
+
+/**
+ * The layout mode right now, for code that runs outside a
+ * component.
+ *
+ * The fetch layer's column math (grid/geometry.ts) has no reactive
+ * context, exactly like the theme read there — it measures the DOM
+ * and reads the store at call time. The store's current value
+ * carries the user's Grid/Masonry/Justified choice, so this is the
+ * same answer the components get, just read imperatively.
+ */
+export function currentLayout(): GridLayout {
+  return layoutEnabled(get(preferences));
 }

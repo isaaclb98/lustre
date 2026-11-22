@@ -22,9 +22,11 @@
     preferences,
     SLIDESHOW_PRESETS,
     setSlideshowInterval,
-    setGridSize
+    setGridSize,
+    setLayout
   } from '$lib/stores/preferences';
-  import { type GridSize } from '$lib/grid/config';
+  import { type GridSize, type GridLayout } from '$lib/grid/config';
+  import { readLayoutDefault } from '$lib/layout';
 
   // Grid size — three user-facing labels, single knob. The
   // CSS/JS derive tile size, gap, and max columns from the
@@ -35,6 +37,24 @@
     { label: 'Medium', value: 'medium' },
     { label: 'Small', value: 'small' }
   ];
+
+  // The three grid arrangements, in the order they appear in the
+  // row. The value is the layout's own name, so the button and the
+  // stored preference cannot drift apart.
+  const LAYOUT_PRESETS: { label: string; value: GridLayout }[] = [
+    { label: 'Grid', value: 'grid' },
+    { label: 'Masonry', value: 'masonry' },
+    { label: 'Justified', value: 'justified' }
+  ];
+
+  // The deployment's own layout — what "Follow server" resolves to.
+  //
+  // The three presets are checked only when the user has CHOSEN
+  // one: a radio group has exactly one checked member, so showing
+  // the resolved default as checked too would put two radios in the
+  // group checked at once. The label says which layout following
+  // the server currently means.
+  const serverLayout = $derived(readLayoutDefault());
 
   type IndexerStatusResponse = components['schemas']['IndexerStatusResponse'];
   type IndexerLogResponse = components['schemas']['IndexerLogResponse'];
@@ -252,6 +272,48 @@
           {preset.label}
         </button>
       {/each}
+    </div>
+  </section>
+
+  <section class="card glass">
+    <h2 class="card-title">Grid layout</h2>
+    <p class="card-desc">
+      How the photo grid arranges the photos. <strong>Grid</strong> gives
+      every photo the same square tile and crops it to fit.
+      <strong>Masonry</strong> keeps each photo's own shape — portraits
+      stay tall, landscapes stay wide — and packs them into columns,
+      the way Pinterest does. <strong>Justified</strong> gives every ROW
+      one height and scales the photos in it to fill the row's width
+      exactly, the way Google Photos and Immich do. Applies to every
+      page that shows the photo grid.
+    </p>
+    <div
+      class="preset-row"
+      role="radiogroup"
+      aria-label="Grid layout"
+    >
+      {#each LAYOUT_PRESETS as preset (preset.value)}
+        <button
+          type="button"
+          class="preset"
+          role="radio"
+          aria-checked={$preferences.layout === preset.value}
+          data-active={$preferences.layout === preset.value}
+          onclick={() => setLayout(preset.value)}
+        >
+          {preset.label}
+        </button>
+      {/each}
+      <button
+        type="button"
+        class="preset"
+        role="radio"
+        aria-checked={$preferences.layout === null}
+        data-active={$preferences.layout === null}
+        onclick={() => setLayout(null)}
+      >
+        Follow server{serverLayout ? ` (${serverLayout})` : ''}
+      </button>
     </div>
   </section>
 </div>

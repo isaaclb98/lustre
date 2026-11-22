@@ -16,6 +16,7 @@ import open_clip
 import torch
 import transformers  # noqa: F401
 
+from lustre_kernel.limits import MAX_EMBED_BATCH_SIZE
 from lustre_kernel.registry import ModelSpec, Registry
 
 __all__ = ["register_into"]
@@ -61,11 +62,30 @@ class OpenClipEmbedder:
             self._device = "cpu"
         self._lock = __import__("threading").Lock()
         # Round‑15: batch size used by the pipeline's _embed phase to
-        # stack images into a single GPU forward pass. RTX 3080
-        # (10 GB VRAM) comfortably holds 32 L/16-256 tensors; bump
-        # for larger GPUs, drop for smaller ones.
-        self.embed_batch_size = int(
-            __import__("os").environ.get("EMBED_BATCH_SIZE", "32")
+        # stack images into a single GPU forward pass.
+        #
+        # CAPPED at 8, and the cap lives HERE — at the embedder,
+        # under every path — rather than at each caller. The
+        # activation memory of the ViT scales with the batch, and
+        # the card is a 10 GiB RTX 3080: at batch 16 the 640 run
+        # left ~90 MiB free while another process held the GPU, and
+        # that is the condition that took the card off the PCIe bus
+        # (Xid 79). Isaac's rule: batch size 8 max, anything over is
+        # dangerous.
+        #
+        # The indexer's own CLI/env clamp (MAX_EMBED_BATCH_SIZE in
+        # indexer/local_sync.py) covers the CLI and the env var. It
+        # does NOT cover a caller that asks the embedder directly,
+        # which is why the ceiling is enforced here too: a default
+        # of 32 was reachable by any code path that used the
+        # embedder without the indexer's clamp, and nothing about
+        # the deployment's own settings made that safe.
+        self.embed_batch_size = max(
+            1,
+            min(
+                int(__import__("os").environ.get("EMBED_BATCH_SIZE", "8")),
+                MAX_EMBED_BATCH_SIZE,
+            ),
         )
         # Round-perf (issue #1): opt-in fp16 autocast on the forward
         # pass. SigLIP2 is robust to fp16 (the pretrained weights were

@@ -22,19 +22,39 @@
  * `src="/thumb/{id}?w=384 384w"` (one entry, the 384 variant),
  * and the `src` defaults to `?w=384` for non-eager tiles.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+
+/**
+ * The deployment's thumbnail long edge, as the shell publishes it.
+ *
+ * It is a deployment-level number — the dev stack renders 512,
+ * production 384 — and the frontend reads it off the shell rather
+ * than hardcoding it. The test reads it the same way, so it holds
+ * on both.
+ */
+async function deploymentThumbnailSize(page: Page): Promise<number> {
+  const raw = await page.evaluate(() =>
+    document.documentElement.getAttribute('data-thumbnail-size')
+  );
+  const parsed = Number(raw);
+  expect(Number.isFinite(parsed) && parsed > 0).toBe(true);
+  return parsed;
+}
 
 test('PhotoTile sizes attribute reflects viewport-derived tile width', async ({ page }) => {
   // The PhotoGrid uses `auto-fill minmax(180px, 1fr)`, so the
-  // minimum tile width is 180 px regardless of viewport. The
-  // `sizes` attribute must reflect that, not a hardcoded value.
-  // Before Round 5: every tile had sizes="... 240px" — the
-  // browser would always pick the 240w variant even on phones
-  // where the tile renders at 180 px. After Round 5: the
-  // largest advertised size derives from the actual tile width
-  // (180, 240, 384). After Round 4 of the model-variant plan:
-  // the single thumbnail variant is 384, so the maximum cap
-  // here is 384 (was 240).
+  // The tile width is EXACT in both grids — the masonry places
+  // tiles at the ladder's fixed width, and the uniform grid's
+  // tracks are fixed too (auto-fit collapses EMPTY tracks; it
+  // never resizes a filled one). What changes with the viewport
+  // is the COLUMN COUNT, not the tile.
+  //
+  // So `sizes` is ONE width in both layouts, and it is the tile's
+  // real width. The old breakpoint ladder assumed viewport-
+  // stretching tracks, and it over-advertised the dense view: a
+  // 144px tile claimed 240px, and the browser fetched a 240w
+  // source for a 144px slot — two thirds more pixels than the
+  // tile can show.
   await page.setViewportSize({ width: 900, height: 800 });
   await page.goto('/random');
   await page.waitForSelector('.grid-tile img.full');
@@ -45,23 +65,89 @@ test('PhotoTile sizes attribute reflects viewport-derived tile width', async ({ 
   // Sanity: the attribute is set (it would be `undefined` if
   // eager-only and the first tile wasn't eager).
   expect(sizes).toBeTruthy();
-  // The attribute reflects an actual rendered CSS width — not
-  // a hardcoded literal. We just verify it ends in `px` and
-  // contains one of the variant widths (180, 240, or 384).
-  expect(sizes).toMatch(/(180|240|384)px/);
-  // And the srcset advertises the single 384 variant — the
-  // post-migration shape. The actual URL is `/thumb/{id}?w=384`.
+  // It is ONE exact width — no breakpoint ladder, because the
+  // tile width does not depend on the viewport.
+  expect(sizes).toMatch(/^\d+px$/);
+  //
+  // And it is the tile's REAL width, which is the ladder's rung
+  // for the layout the deployment serves. The masonry's ladder is
+  // a rung above the square grid's (360/240/180 vs 240/180/144).
+  const tileWidth = await page.evaluate(() => {
+    // The justified layout gives every tile its OWN width — the
+    // photo's own aspect ratio decides it — so the ladder's rung
+    // does not describe the tile. The tile's RENDERED width does.
+    const justified = document.documentElement.getAttribute('data-layout') === 'justified';
+    if (justified) {
+      const tile = document.querySelector('.grid-tile') as HTMLElement | null;
+      return tile ? Math.ceil(tile.getBoundingClientRect().width) : 0;
+    }
+    const raw = getComputedStyle(document.documentElement)
+      .getPropertyValue('--grid-tile-size')
+      .trim();
+    return Number(raw.slice(0, -2));
+  });
+  expect(sizes).toBe(`${tileWidth}px`);
+  // The srcset is a LADDER: the deployment's smaller variants plus
+  // the canonical, each advertised with the width it really is.
+  const thumbSize = await deploymentThumbnailSize(page);
   const srcset = await page.locator('.grid-tile img.full').first().getAttribute('srcset');
   if (srcset) {
-    expect(srcset).toContain('w=384');
+    expect(srcset).toContain(`w=${thumbSize}`);
   }
 });
 
-test('PhotoTile non-eager tile uses ?w=384', async ({ page }) => {
+test('the srcset is a ladder of the deployment\'s smaller variants', async ({ page }) => {
+  // The DENSE view's assets.
+  //
+  // The canonical thumbnail is sized for the LARGEST tile (360px
+  // in the masonry). A 180px tile does not need it: handing it
+  // one wastes bandwidth and decode time for pixels the browser
+  // scales straight back down.
+  //
+  // So the deployment publishes a ladder of smaller variants, the
+  // backend serves them from pre-generated siblings, and the
+  // srcset lists them all so the browser picks the smallest that
+  // covers the tile at the device's DPR.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/random');
+  await page.waitForSelector('.grid-tile img.full');
+  await page.waitForTimeout(800);
+
+  const variants = await page.evaluate(() => {
+    const raw = document.documentElement.getAttribute('data-thumbnail-variants');
+    return raw ? raw.split(',').map(Number).filter((n) => n > 0) : [];
+  });
+  const thumbSize = await deploymentThumbnailSize(page);
+  const srcset = await page.locator('.grid-tile img.full').first().getAttribute('srcset');
+  expect(srcset).toBeTruthy();
+
+  // Every variant the deployment publishes appears in the srcset,
+  // and so does the canonical — it is the fallback the router
+  // serves when a variant is missing.
+  //
+  // A deployment with NO ladder (the default) has a single-entry
+  // srcset: just the canonical. That is the correct behaviour for
+  // one — there is nothing smaller to pick.
+  for (const v of variants) {
+    expect(srcset).toContain(`?w=${v} `);
+  }
+  expect(srcset).toContain(`?w=${thumbSize} `);
+
+  // The ladder is ordered smallest first, so the browser walks it
+  // upward and takes the smallest asset that covers the tile.
+  const widths = (srcset as string)
+    .split(',')
+    .map((entry) => Number(entry.trim().match(/w=(\d+)/)![1]));
+  const sorted = [...widths].sort((a, b) => a - b);
+  expect(widths).toEqual(sorted);
+});
+
+test('PhotoTile non-eager tile uses the deployment thumbnail width', async ({ page }) => {
   // Non-eager tiles (any tile past the first 3 in the first row)
-  // use `src={thumbUrl(pointId, 384)}` per Round 4. Pre-migration
-  // these used `src={thumbUrl(pointId)}` (no width), which routed
-  // through the canonical 256px fallback in the router.
+  // use `src={thumbUrl(pointId, thumbnailSize)}` — the deployment's
+  // own thumbnail size. Pre-migration these used
+  // `src={thumbUrl(pointId)}` (no width), which routed through the
+  // canonical 256px fallback in the router.
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/random');
   await page.waitForSelector('.grid-tile img.full');
@@ -73,8 +159,9 @@ test('PhotoTile non-eager tile uses ?w=384', async ({ page }) => {
   const count = await tiles.count();
   if (count > 5) {
     const src = await tiles.nth(5).getAttribute('src');
-    // Non-eager tiles use `?w=384` per Round 4.
-    expect(src).toContain('w=384');
+    // Non-eager tiles use the deployment's thumbnail width.
+    const thumbSize = await deploymentThumbnailSize(page);
+    expect(src).toContain(`w=${thumbSize}`);
   } else {
     // Not enough tiles loaded — skip via assertion.
     expect(count).toBeGreaterThan(5);

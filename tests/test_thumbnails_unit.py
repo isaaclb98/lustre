@@ -20,7 +20,6 @@ from indexer.thumbnails import (
     THUMBNAIL_DIR,
     THUMBNAIL_QUALITY,
     THUMBNAIL_SIZE,
-    THUMBNAIL_SIZES,
     CHROMA_SUBSAMPLING,
     _HAS_PYVIPS,
     _PIL_FORCE,
@@ -88,62 +87,98 @@ class TestComputeThumbnail:
         result = compute_thumbnail(img, "abc123")
         assert result == thumbnail_path("abc123")
 
-    def test_thumbnail_dimensions_are_square(self, tmp_path, monkeypatch):
-        """Output should be exactly 384x384 (square-cropped, not letterboxed)."""
+    def test_thumbnail_keeps_the_source_aspect_ratio(self, tmp_path, monkeypatch):
+        """Output is native aspect: the long edge is capped, the short
+        edge follows the source. No crop, no squash, no letterbox."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
         img = Image.new("RGB", (1024, 768), color="green")
         result = compute_thumbnail(img, "abc123")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            # The long edge is the canonical; the short edge follows
+            # the source's ratio (4:3 -> 640x480).
+            assert thumb.size == (640, 480)
 
-    def test_smaller_image_upscaled_to_target(self, tmp_path, monkeypatch):
-        """Smaller square inputs are resized up to 384x384 (center-crop is no-op)."""
+    def test_smaller_image_is_not_upscaled(self, tmp_path, monkeypatch):
+        """A source already within the cap keeps its dimensions."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
         img = Image.new("RGB", (64, 64), color="red")
         result = compute_thumbnail(img, "small123")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            assert thumb.size == (64, 64)
 
     def test_square_image(self, tmp_path, monkeypatch):
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
-        img = Image.new("RGB", (512, 512), color="red")
+        # A source LARGER than the canonical, so the cap decides the
+        # size (a source under the cap is not upscaled — see
+        # test_smaller_image_is_not_upscaled).
+        img = Image.new("RGB", (1024, 1024), color="red")
         result = compute_thumbnail(img, "square12")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            assert thumb.size == (640, 640)
 
-    def test_portrait_image_becomes_square(self, tmp_path, monkeypatch):
-        """Tall portrait: center-crop the shorter (width) side, resize to square."""
+    def test_portrait_image_stays_portrait(self, tmp_path, monkeypatch):
+        """Tall portrait: the long edge is capped, the width follows."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
         img = Image.new("RGB", (400, 800), color="red")
         result = compute_thumbnail(img, "tall1234")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            # 1:2 source -> the long edge is the height (640), the
+            # width follows the ratio (320).
+            assert thumb.size == (320, 640)
 
-    def test_landscape_image_becomes_square(self, tmp_path, monkeypatch):
-        """Wide landscape: center-crop the shorter (height) side, resize to square."""
+    def test_landscape_image_stays_landscape(self, tmp_path, monkeypatch):
+        """Wide landscape: the long edge is capped, the height follows."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
         img = Image.new("RGB", (800, 400), color="red")
         result = compute_thumbnail(img, "wide1234")
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            # 2:1 source -> the long edge is the width (640).
+            assert thumb.size == (640, 320)
 
-    def test_center_crop_uses_center_of_image(self, tmp_path, monkeypatch):
-        """A 4x4 image with distinct corners — center crop should sample center."""
+    def test_no_crop_the_whole_picture_survives(self, tmp_path, monkeypatch):
+        """The thumbnail is the whole picture, not a centre crop.
+
+        A red band across the TOP of the source must still be at the
+        top of the thumbnail -- under the old square centre-crop it
+        was cropped away entirely.
+        """
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
-        # Build a 4x4 image where the center 2x2 is red, the borders are blue.
-        # Up-res to a larger image so center-crop has meaningful content.
+        img = Image.new("RGB", (400, 800), color="blue")
+        img.paste(Image.new("RGB", (400, 100), color="red"), (0, 0))
+        result = compute_thumbnail(img, "crop123")
+        with Image.open(result) as thumb:
+            # 1:2 source -> the long edge is the height (640).
+            assert thumb.size == (320, 640)
+            top = thumb.convert("RGB").crop((0, 0, 320, 20))
+            bottom = thumb.convert("RGB").crop((0, 620, 320, 640))
+            assert top.getpixel((160, 10))[0] > 150, "the red top band was cropped away"
+            assert bottom.getpixel((160, 10))[2] > 150, "the blue bottom was cropped away"
+
+    def test_nothing_is_cropped_away(self, tmp_path, monkeypatch):
+        """The whole picture survives — nothing is cropped.
+
+        A red band across the middle of a portrait source must still
+        be in the middle of the thumbnail. The old square centre-crop
+        would have kept it but thrown away the top and bottom.
+        """
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
         img = Image.new("RGB", (100, 400), color="blue")
         # Paint the center column red
         for y in range(150, 250):
             for x in range(100):
                 img.putpixel((x, y), (255, 0, 0))
         result = compute_thumbnail(img, "center12")
-        # Resized 384x384 should be predominantly red (center was red)
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
-            # Sample the center pixel — should be reddish
-            r, g, b = thumb.getpixel((128, 128))
+            # Portrait source -> portrait thumbnail. The source's long
+            # edge is 400, UNDER the 640 canonical, so it is NOT
+            # upscaled: the thumbnail is the source's own size.
+            assert thumb.size == (100, 400)
+            # The red band is still at the vertical middle.
+            r, g, b = thumb.getpixel((48, 192))
             assert r > g  # red dominates over blue
+            # And the top of the picture is the source's top (blue).
+            r, g, b = thumb.getpixel((48, 4))
+            assert b > r
 
     def test_rgba_image_converted(self, tmp_path, monkeypatch):
         """RGBA images should still produce valid WebP output."""
@@ -258,11 +293,98 @@ class TestGenerateThumbnailForPath:
 class TestThumbnailConstants:
     """Constants are stable (referenced from indexer/local_sync.py)."""
 
-    def test_thumbnail_size_is_384(self):
-        # Post the model-variant migration plan, the thumbnail is
-        # 384×384 (matching the so400m model input resolution). Pre-
-        # migration this was 256×256.
-        assert THUMBNAIL_SIZE == (384, 384)
+    def test_the_canonical_is_640(self):
+        # The canonical is the display asset's long edge: 640. It was
+        # 384 (the SigLIP2 era, matching the model input), then 256
+        # before that.
+        #
+        # It is the largest rung of the ladder {240, 360, 640}, and
+        # the model input is a SEPARATE number (MODEL_INPUT_SIZE) —
+        # they were welded together once, and the weld is what made
+        # a display change a re-embed.
+        assert THUMBNAIL_SIZE == 640
+
+    def test_the_variant_ladder_is_240_360(self):
+        """Three sizes, and the middle one is the layout's own row height.
+
+        The justified layout's rows are 360/240/180, so a 360 variant
+        is where the demand actually is: the large row's median need
+        is exactly 360, and without a rung there the browser jumped
+        to 480 and fetched a third more than it needed.
+        """
+        from indexer.thumbnails import THUMBNAIL_VARIANT_SIZES
+
+        assert THUMBNAIL_VARIANT_SIZES == (240, 360)
+
+    def test_every_variant_is_below_the_canonical(self):
+        """A variant at or above the canonical would be an upscale."""
+        from indexer.thumbnails import THUMBNAIL_VARIANT_SIZES
+
+        assert all(v < THUMBNAIL_SIZE for v in THUMBNAIL_VARIANT_SIZES)
+
+    def test_thumbnail_target_size_caps_the_long_edge(self):
+        """The sizing policy: long edge capped, aspect preserved."""
+        from indexer.thumbnails import thumbnail_target_size
+
+        # Portrait: the long edge is the height.
+        assert thumbnail_target_size(1080, 1350) == (512, 640)
+        # Landscape: the long edge is the width.
+        assert thumbnail_target_size(1920, 1080) == (640, 360)
+        # Square.
+        assert thumbnail_target_size(800, 800) == (640, 640)
+        # Already within the cap -> untouched.
+        assert thumbnail_target_size(200, 100) == (200, 100)
+        # An explicit size overrides the default.
+        assert thumbnail_target_size(1080, 1350, 500) == (400, 500)
+        # Degenerate input.
+        assert thumbnail_target_size(0, 0) == (640, 640)
+
+    def test_the_model_input_reuses_the_canonical_when_the_sizes_match(self, tmp_path, monkeypatch):
+        """One decode, one resize — even when they are the same size.
+
+        When MODEL_INPUT_SIZE equals the canonical's size, the model
+        input IS the canonical's pixels: the same resize, taken
+        before the WebP encode so nothing is recompressed on the way
+        to the GPU.
+
+        It used to resize the source a SECOND time to a size it had
+        just been resized to, because only the VARIANTS were kept for
+        reuse and the canonical's pixels were discarded after the
+        encode. At 640 that is a full extra resize per photo, on
+        every photo of a rebuild.
+        """
+        if not _HAS_PYVIPS:
+            import pytest
+
+            pytest.skip("pyvips not importable on this host")
+
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_SIZE", 640)
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_VARIANT_SIZES", (240, 360))
+
+        src = tmp_path / "src.jpg"
+        Image.new("RGB", (1280, 960), color=(40, 120, 200)).save(src, "JPEG", quality=92)
+
+        from indexer.thumbnails import generate_ladder_and_model_input
+
+        _, model_input, _, _ = generate_ladder_and_model_input(
+            src, "reuse123", model_input_size=640
+        )
+        assert model_input is not None
+        # The model's input is the canonical's own size.
+        assert max(model_input.size) == 640
+        # And it is the SAME PICTURE as the canonical: the canonical
+        # file and the model input must not drift, because the
+        # embedding is supposed to be of the picture the user sees.
+        from indexer.thumbnails import thumbnail_path
+
+        with Image.open(thumbnail_path("reuse123")) as canonical:
+            assert canonical.size == model_input.size
+            # Same pixels: compare a few sample points.
+            c = canonical.convert("RGB")
+            m = model_input.convert("RGB")
+            for x, y in ((10, 10), (100, 50), (300, 200)):
+                assert abs(c.getpixel((x, y))[2] - m.getpixel((x, y))[2]) <= 3
 
     def test_thumbnail_quality_is_80(self):
         # Post the 256→384 / q50→q80 thumbnail pipeline rework
@@ -340,40 +462,129 @@ class TestSizedThumbnailPath:
         assert a != b
 
 
+class TestThumbnailVariantLadder:
+    """The ladder of smaller display variants.
+
+    It is the DENSE view's assets. A 180px tile does not need the
+    canonical bitmap, and handing it one wastes bandwidth and decode
+    time for pixels the browser scales straight back down.
+    """
+
+    def test_empty_by_default(self):
+        from indexer.thumbnails import parse_variant_sizes
+
+        assert parse_variant_sizes("") == ()
+
+    def test_parsed_from_a_comma_separated_list(self):
+        from indexer.thumbnails import parse_variant_sizes
+
+        assert parse_variant_sizes("192,384") == (192, 384)
+
+    def test_junk_entries_are_ignored(self):
+        """A typo in a deployment's environment should cost it its
+        smaller variants, not its whole thumbnail pipeline."""
+        from indexer.thumbnails import parse_variant_sizes
+
+        assert parse_variant_sizes("192,,bogus,384") == (192, 384)
+
+    def test_sorted_and_deduplicated(self):
+        from indexer.thumbnails import parse_variant_sizes
+
+        assert parse_variant_sizes("384,192,384") == (192, 384)
+
+    def test_the_ladder_is_independent_of_the_canonical(self):
+        """The display size and the variant ladder are separate
+        numbers: raising the canonical does not change which smaller
+        variants exist, and vice versa.
+
+        This is the whole point of the split — the canonical's size
+        is a DISPLAY decision, and the ladder is which smaller
+        assets the dense view asks for.
+        """
+        from indexer.thumbnails import parse_variant_sizes
+
+        assert parse_variant_sizes("192") == (192,)
+        # A variant at or above the canonical is skipped at WRITE
+        # time (it would be an upscale), not here — so the ladder
+        # itself stays a plain list of sizes.
+        assert parse_variant_sizes("192,640") == (192, 640)
+
+
 class TestComputeThumbnailWritesSizedVariants:
-    """compute_thumbnail() should write the downscaled siblings alongside
-    the canonical 256px file so the frontend srcset can pick the smallest
-    variant that fits the rendered tile."""
+    """compute_thumbnail() writes the downscaled siblings alongside the
+    canonical file so the frontend srcset can pick the smallest variant
+    that fits the rendered tile.
+
+    The variants are the DENSE view's assets: a 180px tile does not
+    need the canonical 640px bitmap, and handing it one wastes both
+    bandwidth and decode time for pixels the browser scales back
+    down.
+
+    The ladder is empty by default (a deployment opts in), so these
+    tests patch it in.
+    """
+
+    LADDER = (192, 384)
+
+    def _install(self, tmp_path, monkeypatch):
+        """Point the thumbnail writer at a temp dir, with a canonical
+        above every rung of the ladder.
+
+        A variant at or above the canonical is skipped (it would be
+        an upscale), so the canonical is raised to clear the ladder.
+        """
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_SIZE", 512)
+        monkeypatch.setattr(
+            "indexer.thumbnails.THUMBNAIL_VARIANT_SIZES", self.LADDER
+        )
 
     def test_writes_all_sized_variants(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
+        self._install(tmp_path, monkeypatch)
         img = Image.new("RGB", (1024, 1024), color="purple")
         compute_thumbnail(img, "varsize1")
-        for w in THUMBNAIL_SIZES:
+        for w in self.LADDER:
             assert sized_thumbnail_path("varsize1", w).exists(), f"missing w={w}"
 
-    def test_sized_variants_are_smaller_than_canonical(self, tmp_path, monkeypatch):
+    def test_sized_variants_keep_the_native_aspect_ratio(self, tmp_path, monkeypatch):
+        self._install(tmp_path, monkeypatch)
+        """A variant is the SAME photo at a smaller size — never a
+        square crop.
+
+        The canonical is native-aspect, so a square variant would
+        mean the same photo is cropped in the small asset and whole
+        in the large one, and the masonry's no-crop promise would
+        hold only for the tiles that happened to get the canonical.
+        """
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
+        monkeypatch.setattr(
+            "indexer.thumbnails.THUMBNAIL_VARIANT_SIZES", self.LADDER
+        )
+        img = Image.new("RGB", (900, 1200), color="orange")
+        compute_thumbnail(img, "aspectvar")
+        for w in self.LADDER:
+            with Image.open(sized_thumbnail_path("aspectvar", w)) as v:
+                assert v.size == (int(w * 900 / 1200), w)
+
+    def test_sized_variants_are_smaller_than_canonical(self, tmp_path, monkeypatch):
+        self._install(tmp_path, monkeypatch)
         img = Image.new("RGB", (1024, 1024), color="orange")
         compute_thumbnail(img, "sizechk1")
         canonical = thumbnail_path("sizechk1")
         with Image.open(canonical) as t:
             canonical_size = t.size[0]
-        for w in THUMBNAIL_SIZES:
+        for w in self.LADDER:
             assert w < canonical_size, f"variant w={w} should be < canonical {canonical_size}"
             with Image.open(sized_thumbnail_path("sizechk1", w)) as v:
-                assert v.size == (w, w)
+                assert max(v.size) == w
 
-    def test_sized_variants_are_skipped_if_larger_than_source(self, tmp_path, monkeypatch):
-        """If the canonical 256px source is itself smaller than a sized
-        variant, we'd be upscaling — that's worse than the canonical
-        file. Skip those variants and the endpoint's 404-fallback serves
-        the canonical instead."""
+    def test_sized_variants_are_skipped_if_larger_than_canonical(self, tmp_path, monkeypatch):
+        """A variant at or above the canonical would be an upscale —
+        worse than serving the canonical file. The endpoint's
+        404-fallback serves the canonical instead."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
-        # Patch the variant list to include an "impossible" 999-px variant
-        # alongside a small one, then check only the small one is written.
         monkeypatch.setattr(
-            "indexer.thumbnails.THUMBNAIL_SIZES", (200, 999)
+            "indexer.thumbnails.THUMBNAIL_VARIANT_SIZES", (200, 999)
         )
         img = Image.new("RGB", (1024, 1024), color="blue")
         compute_thumbnail(img, "skipbig1")
@@ -413,7 +624,7 @@ class TestPyvipsPath:
         # Write a real source JPEG to disk so the pyvips path
         # has something to load.
         src = tmp_path / "src.jpg"
-        Image.new("RGB", (640, 480), color=(180, 60, 220)).save(
+        Image.new("RGB", (1280, 960), color=(180, 60, 220)).save(
             src, "JPEG", quality=85
         )
         # Caller has both a PIL Image (for the PIL path) and
@@ -423,7 +634,9 @@ class TestPyvipsPath:
         assert result is not None
         assert result.exists()
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            # The source is 1280x960; the long edge is capped at the
+            # canonical (640) and the aspect ratio is preserved.
+            assert thumb.size == (640, 480)
             assert thumb.format == "WEBP"
             # libvips auto-4:4:4 + ICC embed: the file MUST
             # carry the sRGB profile (matches what the PIL
@@ -439,12 +652,14 @@ class TestPyvipsPath:
         available. The indexer always has a source path so this
         path is for unit tests and other in-memory callers."""
         monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
-        img = Image.new("RGB", (512, 512), color="orange")
+        # A source LARGER than the canonical, so the cap decides the
+        # size (a source under the cap is not upscaled).
+        img = Image.new("RGB", (1024, 1024), color="orange")
         # No source_path argument → PIL path.
         result = compute_thumbnail(img, "pilpath1")
         assert result is not None
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            assert thumb.size == (640, 640)
             assert thumb.info.get("icc_profile") == _SRGB_PROFILE_BYTES
 
     def test_pil_path_runs_when_pyvips_forced_off(
@@ -466,6 +681,9 @@ class TestPyvipsPath:
         )
         assert result is not None
         with Image.open(result) as thumb:
-            assert thumb.size == (384, 384)
+            # The PIL path works from the IN-MEMORY image (16x16),
+            # not the source path — and a source already within the
+            # cap is not upscaled.
+            assert thumb.size == (16, 16)
             # PIL path also embeds the profile.
             assert thumb.info.get("icc_profile") == _SRGB_PROFILE_BYTES

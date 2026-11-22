@@ -15,17 +15,24 @@
    */
   import AppChrome from '$lib/components/AppChrome.svelte';
   import { onMount } from 'svelte';
-  import { preferences } from '$lib/stores/preferences';
-  import { theme } from '$lib/theme';
-  import { gridConfigFor } from '$lib/grid/config';
-  import { columnsForWidth, widthForColumns } from '$lib/grid/geometry';
+  import { preferences, layoutEnabled } from '$lib/stores/preferences';
+  import { layoutGridConfig } from '$lib/grid/config';
+  import {
+    columnsForWidth,
+    gridContainerWidth,
+    widthForColumns
+  } from '$lib/grid/geometry';
+  import { JUSTIFIED_GRID_SIZE_CONFIG } from '$lib/grid/config';
 
   let { children } = $props();
 
-  // Theme-aware: the dark theme's grid has no gutter, so the column
-  // count and the row width it publishes differ from the light
-  // theme's for the same viewport.
-  const config = $derived(gridConfigFor($preferences.gridSize, $theme));
+  // Each layout has its own size ladder (see MASONRY_GRID_SIZE_CONFIG
+  // and JUSTIFIED_GRID_SIZE_CONFIG). The published --grid-width must
+  // come from the SAME ladder the grid renders with, or the chrome
+  // would be sized for a different column count than the grid draws.
+  const config = $derived(
+    layoutGridConfig($preferences.gridSize, layoutEnabled($preferences))
+  );
 
   // Round-8: Cmd/Ctrl+K focuses the search composer input.
   // The convention is shared with GitHub, Linear, Vercel, and
@@ -83,8 +90,8 @@
   // measured value once mounted — the layout value is the seed.
   //
   // Math mirrors PhotoGrid's column calculation:
-  //   N = min(MAX_COLS, floor((containerWidth + GAP) / (TILE + GAP)))
-  //   gridWidth = N * TILE + (N - 1) * GAP
+  //   N = min(MAX_COLS, floor(containerWidth / TILE))
+  //   gridWidth = N * TILE
   //
   // The width comes from the app shell, which only exists on app
   // routes — so this measurement belongs here, not in the root
@@ -95,6 +102,25 @@
     const publishGridWidth = () => {
       const main = document.querySelector('.shell');
       if (!main) return;
+      // The justified layout has NO column count: a row fills the
+      // width it is given, so the grid's width IS the container's
+      // content width, capped at the ladder's 1440px promise. The
+      // other two layouts pack fixed-size columns, so their width is
+      // a multiple of the tile size.
+      //
+      // The container width is measured the same way the fetch
+      // layer measures it (grid/geometry.ts) — the CONTENT box, not
+      // the border box — so the chrome lines up with the rows.
+      if (layoutEnabled($preferences) === 'justified') {
+        const contentWidth = gridContainerWidth();
+        if (contentWidth <= 0) return;
+        const cap = JUSTIFIED_GRID_SIZE_CONFIG[$preferences.gridSize].maxWidth;
+        document.documentElement.style.setProperty(
+          '--grid-width',
+          Math.min(contentWidth, cap) + 'px'
+        );
+        return;
+      }
       const containerWidth = main.getBoundingClientRect().width;
       if (containerWidth <= 0) return;
       const cols = columnsForWidth(containerWidth, config);

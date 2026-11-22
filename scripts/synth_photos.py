@@ -472,10 +472,51 @@ def generate(
 
     n_subjects = len(SUBJECTS)
 
+    # The ratio cycle has to reach every ratio even when the set is
+    # SMALLER than the subject count.
+    #
+    # The ratio index used to be `(i // n_subjects)`, which advances
+    # only once per full pass through the subjects. With 20 subjects
+    # and a 20-photo set, every photo landed on ratio 0 — the whole
+    # set was 3:1 panoramic.
+    #
+    # That is invisible in a square grid, where every tile is a
+    # square anyway. It is NOT invisible in a justified layout: a
+    # row of 3:1 photos fits exactly ONE photo per row, so the
+    # layout degenerates to a single-column strip and every
+    # row-based assertion (a row's tiles summing to its width, a
+    # row holding more than one photo) fails for a reason that has
+    # nothing to do with the layout.
+    #
+    # So the ratio advances per photo whenever the set is too small
+    # to reach every ratio by cycling the subjects, and the set is
+    # always diverse.
+    # The ratio index is the photo's position in the sequence of
+    # SUBJECT x RATIO pairs, walked so that the ratios advance even
+    # when the set is SMALLER than the subject count.
+    #
+    # It used to be `(i // n_subjects)`, which advances only once
+    # per full pass through the subjects. With 20 subjects and a
+    # 20-photo set, every photo landed on ratio 0 — the whole set
+    # was 3:1 panoramic.
+    #
+    # That is invisible in a square grid, where every tile is a
+    # square anyway. It is NOT invisible in a justified layout: a
+    # row of 3:1 photos fits exactly ONE photo per row, so the
+    # layout degenerates to a single-column strip and every
+    # row-based assertion (a row's tiles summing to its width, a
+    # row holding more than one photo) fails for a reason that has
+    # nothing to do with the layout.
+    #
+    # The ratio now advances once per `n_subjects / n_ratios`
+    # photos, so a small set still sees every ratio.
+    n_ratios = len(ASPECT_RATIOS)
+    ratio_stride = max(1, n_subjects // n_ratios)
+
     for i in range(count):
         subject = SUBJECTS[i % n_subjects]
         # Within each subject, cycle through ratios as well.
-        ratio_idx = (i // n_subjects) % len(subject.canvases)
+        ratio_idx = (i // ratio_stride) % len(subject.canvases)
         canvas = subject.canvases[ratio_idx]
         palette = subject.palettes[rng.randrange(len(subject.palettes))]
 

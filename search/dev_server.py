@@ -102,13 +102,6 @@ def _build_demo_app(count: int) -> FastAPI:
     _thumb_dir = Path(tempfile.gettempdir()) / f"lustre-demo-thumbs-{os.getpid()}"
     os.environ["THUMBNAIL_DIR"] = str(_thumb_dir)
 
-    from qdrant_client import QdrantClient
-    from qdrant_client.http import models as qmodels
-
-    from search import config
-    from search.app import create_app
-    from search.qdrant_client import QdrantSearch
-
     os.environ["SEARCH_NO_MODEL"] = "1"
     os.environ["SEARCH_TEST_MODE"] = "1"
     # Per-worker NAS_IMAGES_BASE so concurrent pytest-xdist workers
@@ -123,14 +116,36 @@ def _build_demo_app(count: int) -> FastAPI:
     # (or _build_demo_app being called twice in one pytest session,
     # e.g. from test_v2_smoke and dev_server.py simultaneously) does
     # not collide on the albums/demodata UNIQUE constraints. The
-    # demo DB is short-lived by design — it lives in tempfile and
-    # is recreated every time someone runs `_build_demo_app`.
+    # demo DB is short-lived by design — it lives in tempfile and is
+    # recreated every time someone runs `_build_demo_app`.
     _demo_db_path = Path(tempfile.gettempdir()) / f"lustre-demo-{os.getpid()}-{id(object())}.db"
     os.environ["INDEX_DB_PATH"] = str(_demo_db_path)
     os.environ["QDRANT_COLLECTION"] = "images_demo"
     # API result URLs must point at this local server, not the production
     # default (localhost:8000), otherwise Chromium shows empty cards.
     os.environ.setdefault("WEB_UI_URL", "http://127.0.0.1:8765")
+    # Point the reconciler at a port nothing listens on. The demo runs
+    # against an IN-MEMORY Qdrant, so the URL is only read by the
+    # startup reconciler — and the default (localhost:6333) is a REAL
+    # Qdrant on any host that also runs the production stack. Importing
+    # search.app builds the module-level app, which reconciles the
+    # env variant against whatever QDRANT_URL points at: with the
+    # default that means the demo server inspects PRODUCTION's
+    # collection and refuses to start on a dim mismatch. An
+    # unreachable port makes the reconcile a no-op, which is what a
+    # demo with no real Qdrant wants.
+    os.environ["QDRANT_URL"] = "http://127.0.0.1:1"
+
+    # The imports come AFTER the environment is set: search.app builds
+    # a module-level app at import time, and that build reads the
+    # config — so anything the config depends on has to be in the
+    # environment first.
+    from qdrant_client import QdrantClient
+    from qdrant_client.http import models as qmodels
+
+    from search import config
+    from search.app import create_app
+    from search.qdrant_client import QdrantSearch
 
     demo_root = Path(os.environ["NAS_IMAGES_BASE"])
     paths = _make_demo_images(demo_root, count)

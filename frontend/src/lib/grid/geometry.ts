@@ -6,7 +6,7 @@
  * the grid's container, so the column count is a pure function of the
  * container width and the active grid size:
  *
- *   cols = min(maxCols, floor((width + GAP) / (TILE + GAP)))
+ *   cols = min(maxCols, floor(width / TILE))
  *
  * Three consumers depend on that number and must never disagree:
  *
@@ -45,10 +45,12 @@
 import {
   basePageSize,
   gridConfigFor,
+  justifiedBasePageSize,
+  justifiedConfigFor,
   type GridSize,
   type GridSizeConfig
 } from '$lib/grid/config';
-import { currentTheme } from '$lib/theme';
+import { currentLayout } from '$lib/stores/preferences';
 
 /**
  * The element the photo grid is laid out inside. The layout's
@@ -80,13 +82,7 @@ export const GRID_CONTAINER_SELECTOR = '.shell';
  * size the user picked everywhere else.
  */
 export function columnsForWidth(width: number, config: GridSizeConfig): number {
-  return Math.max(
-    1,
-    Math.min(
-      config.maxCols,
-      Math.floor((width + config.gap) / (config.tile + config.gap))
-    )
-  );
+  return Math.max(1, Math.min(config.maxCols, Math.floor(width / config.tile)));
 }
 
 /**
@@ -108,12 +104,12 @@ export function columnsForWidth(width: number, config: GridSizeConfig): number {
  * that the photos are the size they asked for.
  */
 export function wallColumnsForWidth(width: number, config: GridSizeConfig): number {
-  return Math.max(1, Math.round(width / (config.tile + config.gap)));
+  return Math.max(1, Math.round(width / config.tile));
 }
 
 /** Pixel width of a row of `cols` columns. */
 export function widthForColumns(cols: number, config: GridSizeConfig): number {
-  return cols * config.tile + (cols - 1) * config.gap;
+  return cols * config.tile;
 }
 
 /**
@@ -174,7 +170,14 @@ function px(value: string): number {
  * already a whole number of rows.
  */
 export function currentColumns(size: GridSize): number {
-  const config = gridConfigFor(size, currentTheme());
+  // The justified layout has no columns: a row holds however many
+  // photos fit its width, and that count depends on the photos' own
+  // aspect ratios. The ladder's figure is the AVERAGE — the only
+  // thing it is used for is the loading skeleton's shape.
+  if (currentLayout() === 'justified') {
+    return justifiedConfigFor(size).cols;
+  }
+  const config = gridConfigFor(size, currentLayout() === 'masonry');
   const width = gridContainerWidth();
   if (width <= 0) return config.maxCols;
   return columnsForWidth(width, config);
@@ -187,7 +190,18 @@ export function currentColumns(size: GridSize): number {
  * grid-size preference.
  */
 export function currentPageSize(size: GridSize): number {
-  const config = gridConfigFor(size, currentTheme());
+  // A justified row holds a variable number of photos, so a page
+  // cannot be aligned to whole rows the way the uniform grid and the
+  // masonry can — the row boundaries are the photos' own doing.
+  //
+  // The page is sized so it carries a whole number of ROWS at the
+  // ladder's average density instead. The rows then continue across
+  // the page boundary, which is exactly what a justified layout
+  // wants: the sequence is one continuous strip.
+  if (currentLayout() === 'justified') {
+    return justifiedBasePageSize(justifiedConfigFor(size));
+  }
+  const config = gridConfigFor(size, currentLayout() === 'masonry');
   const base = basePageSize(config);
   const width = gridContainerWidth();
   if (width <= 0) return base;
@@ -200,7 +214,10 @@ export function currentPageSize(size: GridSize): number {
  * of rows that still fits under the ceiling.
  */
 export function currentPageSizeWithin(size: GridSize, ceiling: number): number {
-  const config = gridConfigFor(size, currentTheme());
+  if (currentLayout() === 'justified') {
+    return pageSizeWithinColumns(ceiling, justifiedConfigFor(size).cols);
+  }
+  const config = gridConfigFor(size, currentLayout() === 'masonry');
   const width = gridContainerWidth();
   const cols = width <= 0 ? config.maxCols : columnsForWidth(width, config);
   return pageSizeWithinColumns(ceiling, cols);

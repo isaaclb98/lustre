@@ -46,6 +46,13 @@ ENV PYTHONUNBUFFERED=1 \
 # pulls in libjpeg/libpng/libwebp as needed. If libvips is
 # ever unavailable in the base image the indexer falls back
 # to a slower PIL+numpy path (see indexer/thumbnails.py).
+#
+# git is needed by torch.hub, which clones NVIDIA's RADIO repo at
+# runtime to reach the C-RADIOv4 code. The clone lands in
+# TORCH_HOME (on the data volume), not in the image — NVIDIA's
+# RADIO code is under the NVIDIA Source Code License, not an
+# open-source licence, so it must not be redistributed in the
+# image.
 # apt cache is mounted from the host so `apt-get update` and the
 # download list survive across builds.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -53,6 +60,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         curl \
+        git \
         libvips42 \
         libvips-tools \
     && rm -rf /var/lib/apt/lists/*
@@ -121,7 +129,11 @@ ENV WEB_CONCURRENCY=1 \
     # HF_HOME as the canonical cache root.
     HF_HOME=/app/data/hf-cache \
     HF_HUB_CACHE=/app/data/hf-cache/hub \
-    TRANSFORMERS_CACHE=/app/data/hf-cache/hub
+    TRANSFORMERS_CACHE=/app/data/hf-cache/hub \
+    # torch.hub's cache. C-RADIOv4's code is cloned here at runtime
+    # and kept on the data volume so a container recreate doesn't
+    # re-clone it. See the git note above.
+    TORCH_HOME=/app/data/torch-cache
 
 EXPOSE 8000
 

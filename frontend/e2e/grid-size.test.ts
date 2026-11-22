@@ -25,8 +25,29 @@ import { test, expect, type Page } from '@playwright/test';
  * actual request rounds UP to a whole number of rows at the
  * column count the viewport renders, so this is a minimum, never
  * an exact value. Mirrors $lib/grid/config.
+ *
+ * Masonry has its OWN ladder, one rung higher (a masonry tile is
+ * not cropped to a square, so the same width shows a smaller
+ * photo), and its column caps differ — so the floor differs too.
+ * The justified layout has a row HEIGHT rather than a tile width,
+ * and its ladder's density matches the masonry's.
+ * Which ladder applies depends on the DEPLOYMENT's layout mode,
+ * which the shell stamps on <html data-layout>.
  */
-const BASE_PAGE_SIZE = { large: 24, medium: 32, small: 40 } as const;
+const BASE_PAGE_SIZE_SQUARE = { large: 24, medium: 32, small: 40 } as const;
+// 4 rows x the masonry ladder's column caps (4 / 6 / 8) — and the
+// justified ladder's average photos per row, which is the same.
+const BASE_PAGE_SIZE_MASONRY = { large: 16, medium: 24, small: 32 } as const;
+
+/** The base page size for the layout this deployment serves. */
+async function basePageSizes(page: Page) {
+  const layout = await page.evaluate(() =>
+    document.documentElement.getAttribute('data-layout')
+  );
+  return layout === 'masonry' || layout === 'justified'
+    ? BASE_PAGE_SIZE_MASONRY
+    : BASE_PAGE_SIZE_SQUARE;
+}
 
 async function gotoSettings(page: Page) {
   await page.goto('/settings');
@@ -133,6 +154,7 @@ test.describe('Grid size preference', () => {
     //
     // Strategy: intercept the first /api/random?limit= call, then
     // read the rendered track count from the DOM and compare.
+    const baseSizes = await basePageSizes(page);
     for (const size of ['large', 'medium', 'small'] as const) {
       // Set the preference in localStorage before the page
       // mounts. Going through localStorage is faster than
@@ -157,22 +179,44 @@ test.describe('Grid size preference', () => {
       const limit = Number(url.searchParams.get('limit'));
 
       // The rendered track count is the ground truth for "how many
-      // columns does this page actually show".
-      await page.waitForSelector('.grid-row', { timeout: 15000 });
+      // columns does this page actually show". Two layouts render
+      // the grid: the uniform grid (rows in a CSS grid) and masonry
+      // (tiles positioned absolutely into columns), and the layout
+      // is a deployment choice — so read the columns from whichever
+      // one is live.
+      await page.waitForSelector('.tile', { timeout: 15000 });
       const renderedCols = await page.evaluate(() => {
         const row = document.querySelector('.grid-row');
-        if (!row) return 0;
-        return getComputedStyle(row).gridTemplateColumns
-          .split(' ')
-          .filter(Boolean).length;
+        if (row) {
+          return getComputedStyle(row).gridTemplateColumns
+            .split(' ')
+            .filter(Boolean).length;
+        }
+        // The justified layout has no columns: its rows hold a
+        // VARIABLE number of photos, because each photo's width
+        // comes from its own aspect ratio. There is no column
+        // count to divide the page size by.
+        if (document.querySelector('.justified-row')) return 0;
+        // Masonry: one column per distinct left edge.
+        const lefts = new Set(
+          Array.from(document.querySelectorAll('.tile')).map((t) =>
+            Math.round((t as HTMLElement).getBoundingClientRect().left)
+          )
+        );
+        return lefts.size;
       });
 
-      expect(renderedCols).toBeGreaterThan(0);
-      // The whole-row guarantee.
-      expect(limit % renderedCols).toBe(0);
+      expect(renderedCols).toBeGreaterThanOrEqual(0);
+      // The whole-row guarantee — for the layouts that HAVE columns.
+      // The justified layout's rows continue across the page
+      // boundary, so its page size is a multiple of the LADDER's
+      // average row length, not of anything the DOM can report.
+      if (renderedCols > 0) {
+        expect(limit % renderedCols).toBe(0);
+      }
       // And the page never carries fewer photos than the preset
       // asks for (4 rows at maximum density).
-      expect(limit).toBeGreaterThanOrEqual(BASE_PAGE_SIZE[size]);
+      expect(limit).toBeGreaterThanOrEqual(baseSizes[size]);
     }
   });
 
@@ -181,6 +225,7 @@ test.describe('Grid size preference', () => {
     // renders fewer columns, so the limit must grow (rounded up
     // to whole rows) to stay a multiple of the rendered columns.
     await page.goto('/');
+    const baseSizes = await basePageSizes(page);
     await page.evaluate(() => {
       localStorage.setItem(
         'lustre:preferences',
@@ -197,13 +242,21 @@ test.describe('Grid size preference', () => {
       await page.goto('/random', { waitUntil: 'domcontentloaded' });
       const req = await requestPromise;
       const limit = Number(new URL(req.url()).searchParams.get('limit'));
-      await page.waitForSelector('.grid-row', { timeout: 15000 });
+      await page.waitForSelector('.tile', { timeout: 15000 });
       const cols = await page.evaluate(() => {
         const row = document.querySelector('.grid-row');
-        if (!row) return 0;
-        return getComputedStyle(row).gridTemplateColumns
-          .split(' ')
-          .filter(Boolean).length;
+        if (row) {
+          return getComputedStyle(row).gridTemplateColumns
+            .split(' ')
+            .filter(Boolean).length;
+        }
+        // Masonry: one column per distinct left edge.
+        const lefts = new Set(
+          Array.from(document.querySelectorAll('.tile')).map((t) =>
+            Math.round((t as HTMLElement).getBoundingClientRect().left)
+          )
+        );
+        return lefts.size;
       });
       return { limit, cols };
     };
@@ -216,8 +269,8 @@ test.describe('Grid size preference', () => {
     // ...and both requests fill whole rows.
     expect(wide.limit % wide.cols).toBe(0);
     expect(narrow.limit % narrow.cols).toBe(0);
-    expect(narrow.limit).toBeGreaterThanOrEqual(BASE_PAGE_SIZE.large);
-    expect(wide.limit).toBeGreaterThanOrEqual(BASE_PAGE_SIZE.large);
+    expect(narrow.limit).toBeGreaterThanOrEqual(baseSizes.large);
+    expect(wide.limit).toBeGreaterThanOrEqual(baseSizes.large);
   });
 
   test('The CSS vars on :root reflect the chosen size', async ({ page }) => {
@@ -232,19 +285,27 @@ test.describe('Grid size preference', () => {
     // tick or two after the route mounts. Reading them once catches
     // the empty pre-publish value; POLL for them instead.
     //
-    // Medium config: 192/8. The leading-zero trimmed values should
-    // be '192px' and '8px'.
+    // Medium config: 180 in the square grid, 240 in masonry (a
+    // masonry tile is not cropped to a square, so the ladder starts
+    // one rung higher) and 240 in the justified layout (whose knob
+    // is the row height, and whose medium rung is the same number).
+    // There is no gutter in any theme.
+    const expected = await page.evaluate(() => {
+      const layout = document.documentElement.getAttribute('data-layout');
+      const tile = layout === 'grid' || layout === null ? '180px' : '240px';
+      return `${tile} / 0px`;
+    });
     await expect
       .poll(
         async () =>
           page.evaluate(() => {
             const style = getComputedStyle(document.documentElement);
             const tile = style.getPropertyValue('--grid-tile-size').trim();
-            const gap = style.getPropertyValue('--grid-gutter-size').trim();
+            const gap = style.getPropertyValue('--grid-gutter-size').trim() || '0px';
             return `${tile} / ${gap}`;
           }),
         { timeout: 10_000, message: 'the grid vars must be published' }
       )
-      .toBe('192px / 8px');
+      .toBe(expected);
   });
 });
