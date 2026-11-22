@@ -195,13 +195,17 @@ test.describe('presentation wall', () => {
       // Two layouts render the grid: the uniform grid (rows in a CSS
       // grid) and masonry (tiles positioned absolutely into columns).
       const row = document.querySelector('.grid-row');
-      const scope = row ?? document;
+      // The justified layout's rows carry their own class — its
+      // tiles have their own widths, so the masonry measurement
+      // (column left edges) would not describe them.
+      const justRow = document.querySelector('.justified-row');
+      const scope = row ?? justRow ?? document;
       const tiles = Array.from(scope.querySelectorAll('.tile')) as HTMLElement[];
       if (tiles.length < 2) return null;
       const tcs = getComputedStyle(tiles[0]);
       const a = tiles[0].getBoundingClientRect();
       let gapBetweenTiles: number;
-      if (row) {
+      if (row || justRow) {
         const b = tiles[1].getBoundingClientRect();
         gapBetweenTiles = Math.round(b.x - (a.x + a.width));
       } else {
@@ -212,7 +216,7 @@ test.describe('presentation wall', () => {
           lefts.length > 1 ? Math.round(lefts[1] - lefts[0] - a.width) : 0;
       }
       return {
-        masonry: !row,
+        masonry: !row && !justRow,
         gap: row ? getComputedStyle(row).gap : `${gapBetweenTiles}px`,
         radius: tcs.borderRadius,
         borderStyle: tcs.borderStyle,

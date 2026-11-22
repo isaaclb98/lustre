@@ -1,6 +1,7 @@
 /**
  * Grid size configuration — the numbers behind the user's
- * "Large / Medium / Small" choice.
+ * "Large / Medium / Small" choice, and the arrangement the grid
+ * uses to place them.
  *
  * This module owns the static numbers only: no DOM, no store, no
  * runtime imports. Everything that needs to reason about the grid —
@@ -38,6 +39,28 @@
 
 export type GridSize = 'large' | 'medium' | 'small';
 
+/**
+ * The grid's arrangement.
+ *
+ * 'grid' — the uniform square grid: one tile size, one row height,
+ * rows sliced by the virtualizer.
+ *
+ * 'masonry' — Pinterest-style: every photo keeps its own aspect
+ * ratio and the tiles are packed into the shortest column. The tile
+ * WIDTH is fixed and the height varies.
+ *
+ * 'justified' — the Flickr / Google Photos / Immich layout: every
+ * ROW has one height and the photos in it are scaled to fill the
+ * row's width exactly. The tile HEIGHT is fixed per row and the
+ * width varies.
+ *
+ * The three are different arrangements of the same photos, and the
+ * size ladder is per-arrangement: the square grid and the masonry
+ * both have a tile WIDTH, while the justified layout has a row
+ * HEIGHT instead.
+ */
+export type GridLayout = 'grid' | 'masonry' | 'justified';
+
 export interface GridSizeConfig {
   tile: number;
   maxCols: number;
@@ -73,7 +96,7 @@ export const GRID_SIZE_CONFIG: Record<GridSize, GridSizeConfig> = {
  * the ROW keeps its width whatever the tile size, so the grid does
  * not sprawl across a wide monitor. The square grid's large row is
  * 6 x 240 = 1440px. Masonry's large row is 4 x 360 = 1440px —
- * the same width, two thirds of the columns, half again the photo.
+ * the same width, two thirds the columns, half again the photo.
  *
  * That 1440px row is why the masonry's small rung is 180 and not
  * 192: 8x192 is 1536, so a 192 tile would make the SMALL view
@@ -121,6 +144,96 @@ export const GRID_TILE_RADIUS = 0;
  */
 export function gridConfigFor(size: GridSize, masonry = false): GridSizeConfig {
   return masonry ? MASONRY_GRID_SIZE_CONFIG[size] : GRID_SIZE_CONFIG[size];
+}
+
+/**
+ * The grid's numbers for the layout that is actually live.
+ *
+ * The three layouts measure different things: the square grid and
+ * the masonry have a tile WIDTH, the justified layout has a row
+ * HEIGHT. The consumers that only care about "how big is a photo
+ * here, and how many of them are in a row" — the CSS vars the
+ * chrome is sized against, the skeleton placeholder — do not care
+ * which of the two it is, so they read this one function.
+ *
+ * The justified ladder's numbers are chosen so that the row width
+ * the layout promises is the same 1440px the other two keep:
+ * 4 x 360, 6 x 240, 8 x 180.
+ */
+export function layoutGridConfig(
+  size: GridSize,
+  layout: GridLayout
+): GridSizeConfig {
+  if (layout === 'justified') {
+    const justified = JUSTIFIED_GRID_SIZE_CONFIG[size];
+    return {
+      tile: justified.rowHeight,
+      maxCols: justified.cols,
+      rows: justified.rows
+    };
+  }
+  return gridConfigFor(size, layout === 'masonry');
+}
+
+/**
+ * The justified layout's ladder.
+ *
+ * A justified layout has no fixed tile width — that is the whole
+ * point of it — so the size knob is the ROW HEIGHT instead. The
+ * row WIDTH is the grid's own width, capped at the ladder's promise.
+ *
+ * The three row heights are the masonry ladder's three tile widths,
+ * and they put the SAME number of photos on a row (measured on the
+ * real library at a 1440px row: 4.4 / 6.7 / 8.7 photos per row for
+ * heights 360 / 240 / 180, against the masonry's 4 / 6 / 8 columns).
+ * So switching between the masonry and the justified layout changes
+ * the ARRANGEMENT and not the density — which is what makes the two
+ * comparable at a glance.
+ *
+ * Immich's own desktop row height is 235, which lands between this
+ * ladder's medium (240) and large (360).
+ */
+export interface JustifiedGridSizeConfig {
+  /** The target height of a row, in px. */
+  rowHeight: number;
+  /** The width a row fills, in px. Never more than this. */
+  maxWidth: number;
+  /**
+   * The photos a row is expected to hold.
+   *
+   * Used only to size a page request — the actual count per row
+   * varies with the photos' aspect ratios, so this is the average.
+   */
+  cols: number;
+  /** Rows of photos one page holds. */
+  rows: number;
+}
+
+export const JUSTIFIED_GRID_SIZE_CONFIG: Record<GridSize, JustifiedGridSizeConfig> = {
+  large: { rowHeight: 360, maxWidth: 1440, cols: 4, rows: 4 },
+  medium: { rowHeight: 240, maxWidth: 1440, cols: 6, rows: 4 },
+  small: { rowHeight: 180, maxWidth: 1440, cols: 8, rows: 4 }
+};
+
+/**
+ * The justified layout's numbers for a size.
+ *
+ * Separate from gridConfigFor() because the two ladders measure
+ * different things: the square grid and the masonry have a tile
+ * WIDTH, the justified layout has a row HEIGHT.
+ */
+export function justifiedConfigFor(size: GridSize): JustifiedGridSizeConfig {
+  return JUSTIFIED_GRID_SIZE_CONFIG[size];
+}
+
+/**
+ * Photos per page before row alignment, for the justified layout.
+ *
+ * The same shape as basePageSize(): rows of photos, the row count
+ * being the stable part of the promise.
+ */
+export function justifiedBasePageSize(config: JustifiedGridSizeConfig): number {
+  return config.rows * config.cols;
 }
 
 /**

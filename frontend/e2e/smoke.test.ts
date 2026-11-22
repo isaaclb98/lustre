@@ -463,6 +463,17 @@ test('Search page infinite-scrolls: scrolls append a second page', async ({ page
         masonry: false
       };
     }
+    // The justified layout's rows hold a variable number of photos,
+    // so there is no column count to speak of. The tile count of the
+    // first row is the closest equivalent, and like masonry the
+    // whole-row guarantee does not apply to it.
+    const justRow = document.querySelector('section.results .justified-row');
+    if (justRow) {
+      return {
+        cols: justRow.querySelectorAll('.tile').length,
+        masonry: true
+      };
+    }
     const lefts = new Set(
       Array.from(document.querySelectorAll('section.results .tile')).map(
         (t) => Math.round((t as HTMLElement).getBoundingClientRect().left)

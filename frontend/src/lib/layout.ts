@@ -1,13 +1,14 @@
 /**
  * Layout mode — the photo grid's arrangement, chosen at runtime.
  *
- * The frontend is ONE static build shared by every deployment, so the
- * grid's layout cannot be baked into the bundle: a deployment picks
- * between the uniform square grid and Pinterest-style masonry, and
- * switching must not require a rebuild.
+ * The frontend is ONE static build shared by every deployment, so
+ * the grid's layout cannot be baked into the bundle: a deployment
+ * picks between the uniform square grid, Pinterest-style masonry,
+ * and the justified rows Immich uses, and switching must not
+ * require a rebuild.
  *
  * The backend stamps the deployment's default onto the shell it
- * serves, as a `data-masonry` attribute on <html> (see
+ * serves, as a `data-layout` attribute on <html> (see
  * search/layout.py), and this module reads it back — the same
  * contract the theme uses.
  *
@@ -15,42 +16,54 @@
  * browser (the Settings page), and their choice is remembered there.
  */
 import { readable } from 'svelte/store';
+import type { GridLayout } from '$lib/grid/config';
 
 /** The attribute the backend stamps the layout mode onto. */
-export const MASONRY_ATTRIBUTE = 'data-masonry';
+export const LAYOUT_ATTRIBUTE = 'data-layout';
 
 /**
- * Read the masonry mode from an attribute value.
+ * The layouts a deployment may choose.
  *
- * Only an explicit "1" or "true" turns masonry on — a missing or
- * unreadable marker means the uniform grid, which is what the app
- * has always rendered.
+ * The same three the backend accepts (see LAYOUTS in
+ * search/layout.py) — the frontend's dev-server hook validates the
+ * configured mode against this list, and the preferences store
+ * validates a stored one against it too.
  */
-export function masonryFromAttribute(value: string | null | undefined): boolean {
-  return value === '1' || value === 'true';
+export const LAYOUTS: GridLayout[] = ['grid', 'masonry', 'justified'];
+
+/**
+ * Read the layout mode from an attribute value.
+ *
+ * An unrecognised value means the square grid, which is what the
+ * app has always rendered — the same default the backend assumes
+ * when the marker is missing.
+ */
+export function layoutFromAttribute(value: string | null | undefined): GridLayout {
+  if (value === 'masonry' || value === 'justified') return value;
+  return 'grid';
 }
 
 /**
- * The masonry mode the current document was served with.
+ * The layout mode the current document was served with.
  *
- * Read from <html data-masonry="...">. Outside the browser there is
+ * Read from <html data-layout="...">. Outside the browser there is
  * no marker, so the default applies.
  */
-export function readMasonryDefault(): boolean {
-  if (typeof document === 'undefined') return false;
-  return masonryFromAttribute(
-    document.documentElement.getAttribute(MASONRY_ATTRIBUTE)
+export function readLayoutDefault(): GridLayout {
+  if (typeof document === 'undefined') return 'grid';
+  return layoutFromAttribute(
+    document.documentElement.getAttribute(LAYOUT_ATTRIBUTE)
   );
 }
 
 /**
- * The deployment's masonry default, read once at module load.
+ * The deployment's layout default, read once at module load.
  *
  * The shell's attribute is in the HTML the browser parsed before any
  * script ran, so it is available here — and it cannot change under
  * us, because a deployment change means a new shell.
  */
-export const masonryDefault = readable(readMasonryDefault());
+export const layoutDefault = readable(readLayoutDefault());
 
 /**
  * The attribute the backend stamps the thumbnail's long edge onto.

@@ -46,6 +46,11 @@ function themeFromRootEnv() {
       // The grid's layout mode rides along with the theme: the dev
       // server's shell has to carry the same marker the backend
       // stamps, or the dev server would always show the square grid.
+      // The legacy boolean is read too, so a .env that predates
+      // LUSTRE_LAYOUT still picks the masonry layout.
+      if (!process.env.LUSTRE_LAYOUT && rootEnv.LUSTRE_LAYOUT) {
+        process.env.LUSTRE_LAYOUT = rootEnv.LUSTRE_LAYOUT;
+      }
       if (!process.env.LUSTRE_MASONRY && rootEnv.LUSTRE_MASONRY) {
         process.env.LUSTRE_MASONRY = rootEnv.LUSTRE_MASONRY;
       }

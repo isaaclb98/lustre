@@ -99,7 +99,11 @@ async function gridGeometry(page: Page) {
     // into columns). The measurements have to hold in both — the
     // layout is a deployment choice, not the test's to make.
     const row = document.querySelector('.grid-row');
-    const scope = row ?? document;
+    // The justified layout's rows are `.justified-row` — the tiles
+    // are placed at their own x offsets, so two tiles in a row have
+    // different widths and different left edges.
+    const justRow = document.querySelector('.justified-row');
+    const scope = row ?? justRow ?? document;
     const tiles = Array.from(scope.querySelectorAll('.tile')) as HTMLElement[];
     if (tiles.length < 2) return null;
     const tcs = getComputedStyle(tiles[0]);
@@ -109,9 +113,10 @@ async function gridGeometry(page: Page) {
     // that is the row's own gap, read off two tiles in the same
     // row. In masonry the tiles are in columns, so it is the
     // distance between two adjacent columns' left edges, less the
-    // tile width.
+    // tile width. In a justified row the tiles are placed at exact
+    // offsets, so two of them in the same row touch.
     let gapBetweenTiles: number;
-    if (row) {
+    if (row || justRow) {
       const b = tiles[1].getBoundingClientRect();
       gapBetweenTiles = Math.round(b.x - (a.x + a.width));
     } else {
@@ -123,7 +128,8 @@ async function gridGeometry(page: Page) {
     }
 
     return {
-      masonry: !row,
+      masonry: !row && !justRow,
+      justified: !!justRow,
       // The effective gutter. The uniform grid has a row whose CSS
       // gap IS the gutter; masonry has no row, so the gutter is the
       // rendered space between two columns. Same meaning, both
@@ -205,8 +211,10 @@ test.describe('dark theme', () => {
 
     // The uniform grid squares its tiles in both themes. Masonry
     // does not: each tile is as tall as the photo's own aspect
-    // ratio, so a square photo is square and a portrait is not.
-    if (geom.masonry) {
+    // ratio, so a square photo is square and a portrait is not. The
+    // justified layout does not either — its tiles are the photo's
+    // own shape, scaled to the row's height.
+    if (geom.masonry || geom.justified) {
       expect(geom.width).toBeGreaterThan(0);
     } else {
       expect(geom.width).toBe(geom.height);

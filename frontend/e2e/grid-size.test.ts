@@ -29,19 +29,24 @@ import { test, expect, type Page } from '@playwright/test';
  * Masonry has its OWN ladder, one rung higher (a masonry tile is
  * not cropped to a square, so the same width shows a smaller
  * photo), and its column caps differ — so the floor differs too.
+ * The justified layout has a row HEIGHT rather than a tile width,
+ * and its ladder's density matches the masonry's.
  * Which ladder applies depends on the DEPLOYMENT's layout mode,
- * which the shell stamps on <html data-masonry>.
+ * which the shell stamps on <html data-layout>.
  */
 const BASE_PAGE_SIZE_SQUARE = { large: 24, medium: 32, small: 40 } as const;
-// 4 rows x the masonry ladder's column caps (4 / 6 / 8).
+// 4 rows x the masonry ladder's column caps (4 / 6 / 8) — and the
+// justified ladder's average photos per row, which is the same.
 const BASE_PAGE_SIZE_MASONRY = { large: 16, medium: 24, small: 32 } as const;
 
 /** The base page size for the layout this deployment serves. */
 async function basePageSizes(page: Page) {
-  const masonry = await page.evaluate(() =>
-    document.documentElement.getAttribute('data-masonry') === '1'
+  const layout = await page.evaluate(() =>
+    document.documentElement.getAttribute('data-layout')
   );
-  return masonry ? BASE_PAGE_SIZE_MASONRY : BASE_PAGE_SIZE_SQUARE;
+  return layout === 'masonry' || layout === 'justified'
+    ? BASE_PAGE_SIZE_MASONRY
+    : BASE_PAGE_SIZE_SQUARE;
 }
 
 async function gotoSettings(page: Page) {
@@ -272,11 +277,12 @@ test.describe('Grid size preference', () => {
     //
     // Medium config: 180 in the square grid, 240 in masonry (a
     // masonry tile is not cropped to a square, so the ladder starts
-    // one rung higher). There is no gutter in any theme.
+    // one rung higher) and 240 in the justified layout (whose knob
+    // is the row height, and whose medium rung is the same number).
+    // There is no gutter in any theme.
     const expected = await page.evaluate(() => {
-      const masonry =
-        document.documentElement.getAttribute('data-masonry') === '1';
-      const tile = masonry ? '240px' : '180px';
+      const layout = document.documentElement.getAttribute('data-layout');
+      const tile = layout === 'grid' || layout === null ? '180px' : '240px';
       return `${tile} / 0px`;
     });
     await expect

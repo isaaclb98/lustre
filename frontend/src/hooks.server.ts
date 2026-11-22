@@ -24,7 +24,8 @@ import type { Handle } from '@sveltejs/kit';
 import { DEFAULT_THEME, THEME_ATTRIBUTE } from '$lib/theme';
 import {
   DEFAULT_THUMBNAIL_SIZE,
-  MASONRY_ATTRIBUTE,
+  LAYOUTS,
+  LAYOUT_ATTRIBUTE,
   THUMBNAIL_SIZE_ATTRIBUTE
 } from '$lib/layout';
 
@@ -53,11 +54,32 @@ function configuredTheme(): string {
  * The configured grid layout.
  *
  * The same value the backend stamps onto the shell it serves, read
- * from the same environment. Off unless LUSTRE_MASONRY says on.
+ * from the same environment — LUSTRE_LAYOUT, one of 'grid',
+ * 'masonry' or 'justified'.
+ *
+ * An unknown value is an error rather than a silent fallback, for
+ * the same reason the theme is: a typo in .env must not look like
+ * "the dark theme is broken" when in fact the dark theme was never
+ * selected.
+ *
+ * The legacy LUSTRE_MASONRY boolean is still honoured, and only
+ * when LUSTRE_LAYOUT is absent — a deployment that set it to 1 gets
+ * the masonry layout, so an existing .env keeps working.
  */
-function configuredMasonry(): boolean {
-  const raw = (process.env.LUSTRE_MASONRY ?? '0').trim().toLowerCase();
-  return raw === '1' || raw === 'true' || raw === 'yes';
+function configuredLayout(): string {
+  const raw = (process.env.LUSTRE_LAYOUT ?? '').trim().toLowerCase();
+  if (!raw) {
+    const legacy = (process.env.LUSTRE_MASONRY ?? '').trim().toLowerCase();
+    return legacy === '1' || legacy === 'true' || legacy === 'yes'
+      ? 'masonry'
+      : 'grid';
+  }
+  if (!LAYOUTS.includes(raw as (typeof LAYOUTS)[number])) {
+    throw new Error(
+      `LUSTRE_LAYOUT="${raw}" is not a known layout (expected 'grid', 'masonry' or 'justified')`
+    );
+  }
+  return raw;
 }
 
 /**
@@ -83,7 +105,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (!contentType.includes('text/html')) return response;
 
   const theme = configuredTheme();
-  const masonry = configuredMasonry();
+  const layout = configuredLayout();
   const thumbnailSize = configuredThumbnailSize();
   const html = await response.text();
   const stamped = html.replace(
@@ -95,7 +117,7 @@ export const handle: Handle = async ({ event, resolve }) => {
           ''
         )
         .replace(
-          new RegExp(`\\s${MASONRY_ATTRIBUTE}=("[^"]*"|'[^']*'|[^\\s>]+)`, 'i'),
+          new RegExp(`\\s${LAYOUT_ATTRIBUTE}=("[^"]*"|'[^']*'|[^\\s>]+)`, 'i'),
           ''
         )
         .replace(
@@ -105,7 +127,10 @@ export const handle: Handle = async ({ event, resolve }) => {
           ),
           ''
         );
-      const marker = masonry ? ` ${MASONRY_ATTRIBUTE}="1"` : '';
+      // The square grid is the default, and the default carries no
+      // marker — the same rule the backend's inject_layout follows.
+      const marker =
+        layout === 'grid' ? '' : ` ${LAYOUT_ATTRIBUTE}="${layout}"`;
       return `<html${without} ${THEME_ATTRIBUTE}="${theme}"${marker} ${THUMBNAIL_SIZE_ATTRIBUTE}="${thumbnailSize}">`;
     }
   );

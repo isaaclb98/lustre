@@ -23,10 +23,10 @@
     SLIDESHOW_PRESETS,
     setSlideshowInterval,
     setGridSize,
-    setMasonry,
-    masonryEnabled
+    setLayout,
+    layoutEnabled
   } from '$lib/stores/preferences';
-  import { type GridSize } from '$lib/grid/config';
+  import { type GridSize, type GridLayout } from '$lib/grid/config';
 
   // Grid size — three user-facing labels, single knob. The
   // CSS/JS derive tile size, gap, and max columns from the
@@ -36,6 +36,15 @@
     { label: 'Large', value: 'large' },
     { label: 'Medium', value: 'medium' },
     { label: 'Small', value: 'small' }
+  ];
+
+  // The three grid arrangements, in the order they appear in the
+  // row. The value is the layout's own name, so the button and the
+  // stored preference cannot drift apart.
+  const LAYOUT_PRESETS: { label: string; value: GridLayout }[] = [
+    { label: 'Grid', value: 'grid' },
+    { label: 'Masonry', value: 'masonry' },
+    { label: 'Justified', value: 'justified' }
   ];
 
   type IndexerStatusResponse = components['schemas']['IndexerStatusResponse'];
@@ -264,41 +273,35 @@
       every photo the same square tile and crops it to fit.
       <strong>Masonry</strong> keeps each photo's own shape — portraits
       stay tall, landscapes stay wide — and packs them into columns,
-      the way Pinterest does. Applies to every page that shows the
-      photo grid.
+      the way Pinterest does. <strong>Justified</strong> gives every ROW
+      one height and scales the photos in it to fill the row's width
+      exactly, the way Google Photos and Immich do. Applies to every
+      page that shows the photo grid.
     </p>
     <div
       class="preset-row"
       role="radiogroup"
       aria-label="Grid layout"
     >
+      {#each LAYOUT_PRESETS as preset (preset.value)}
+        <button
+          type="button"
+          class="preset"
+          role="radio"
+          aria-checked={layoutEnabled($preferences) === preset.value}
+          data-active={layoutEnabled($preferences) === preset.value}
+          onclick={() => setLayout(preset.value)}
+        >
+          {preset.label}
+        </button>
+      {/each}
       <button
         type="button"
         class="preset"
         role="radio"
-        aria-checked={!masonryEnabled($preferences)}
-        data-active={!masonryEnabled($preferences)}
-        onclick={() => setMasonry(false)}
-      >
-        Grid
-      </button>
-      <button
-        type="button"
-        class="preset"
-        role="radio"
-        aria-checked={masonryEnabled($preferences)}
-        data-active={masonryEnabled($preferences)}
-        onclick={() => setMasonry(true)}
-      >
-        Masonry
-      </button>
-      <button
-        type="button"
-        class="preset"
-        role="radio"
-        aria-checked={$preferences.masonry === null}
-        data-active={$preferences.masonry === null}
-        onclick={() => setMasonry(null)}
+        aria-checked={$preferences.layout === null}
+        data-active={$preferences.layout === null}
+        onclick={() => setLayout(null)}
       >
         Follow server
       </button>

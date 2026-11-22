@@ -45,10 +45,12 @@
 import {
   basePageSize,
   gridConfigFor,
+  justifiedBasePageSize,
+  justifiedConfigFor,
   type GridSize,
   type GridSizeConfig
 } from '$lib/grid/config';
-import { currentMasonry } from '$lib/stores/preferences';
+import { currentLayout } from '$lib/stores/preferences';
 
 /**
  * The element the photo grid is laid out inside. The layout's
@@ -168,7 +170,14 @@ function px(value: string): number {
  * already a whole number of rows.
  */
 export function currentColumns(size: GridSize): number {
-  const config = gridConfigFor(size, currentMasonry());
+  // The justified layout has no columns: a row holds however many
+  // photos fit its width, and that count depends on the photos' own
+  // aspect ratios. The ladder's figure is the AVERAGE — the only
+  // thing it is used for is the loading skeleton's shape.
+  if (currentLayout() === 'justified') {
+    return justifiedConfigFor(size).cols;
+  }
+  const config = gridConfigFor(size, currentLayout() === 'masonry');
   const width = gridContainerWidth();
   if (width <= 0) return config.maxCols;
   return columnsForWidth(width, config);
@@ -181,7 +190,18 @@ export function currentColumns(size: GridSize): number {
  * grid-size preference.
  */
 export function currentPageSize(size: GridSize): number {
-  const config = gridConfigFor(size, currentMasonry());
+  // A justified row holds a variable number of photos, so a page
+  // cannot be aligned to whole rows the way the uniform grid and the
+  // masonry can — the row boundaries are the photos' own doing.
+  //
+  // The page is sized so it carries a whole number of ROWS at the
+  // ladder's average density instead. The rows then continue across
+  // the page boundary, which is exactly what a justified layout
+  // wants: the sequence is one continuous strip.
+  if (currentLayout() === 'justified') {
+    return justifiedBasePageSize(justifiedConfigFor(size));
+  }
+  const config = gridConfigFor(size, currentLayout() === 'masonry');
   const base = basePageSize(config);
   const width = gridContainerWidth();
   if (width <= 0) return base;
@@ -194,7 +214,10 @@ export function currentPageSize(size: GridSize): number {
  * of rows that still fits under the ceiling.
  */
 export function currentPageSizeWithin(size: GridSize, ceiling: number): number {
-  const config = gridConfigFor(size, currentMasonry());
+  if (currentLayout() === 'justified') {
+    return pageSizeWithinColumns(ceiling, justifiedConfigFor(size).cols);
+  }
+  const config = gridConfigFor(size, currentLayout() === 'masonry');
   const width = gridContainerWidth();
   const cols = width <= 0 ? config.maxCols : columnsForWidth(width, config);
   return pageSizeWithinColumns(ceiling, cols);

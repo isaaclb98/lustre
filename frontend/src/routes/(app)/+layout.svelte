@@ -15,18 +15,23 @@
    */
   import AppChrome from '$lib/components/AppChrome.svelte';
   import { onMount } from 'svelte';
-  import { preferences, masonryEnabled } from '$lib/stores/preferences';
-  import { gridConfigFor } from '$lib/grid/config';
-  import { columnsForWidth, widthForColumns } from '$lib/grid/geometry';
+  import { preferences, layoutEnabled } from '$lib/stores/preferences';
+  import { layoutGridConfig } from '$lib/grid/config';
+  import {
+    columnsForWidth,
+    gridContainerWidth,
+    widthForColumns
+  } from '$lib/grid/geometry';
+  import { JUSTIFIED_GRID_SIZE_CONFIG } from '$lib/grid/config';
 
   let { children } = $props();
 
-  // Masonry has its own size ladder (see MASONRY_GRID_SIZE_CONFIG).
-  // The published --grid-width must come from the SAME ladder the
-  // grid renders with, or the chrome would be sized for a different
-  // column count than the grid draws.
+  // Each layout has its own size ladder (see MASONRY_GRID_SIZE_CONFIG
+  // and JUSTIFIED_GRID_SIZE_CONFIG). The published --grid-width must
+  // come from the SAME ladder the grid renders with, or the chrome
+  // would be sized for a different column count than the grid draws.
   const config = $derived(
-    gridConfigFor($preferences.gridSize, masonryEnabled($preferences))
+    layoutGridConfig($preferences.gridSize, layoutEnabled($preferences))
   );
 
   // Round-8: Cmd/Ctrl+K focuses the search composer input.
@@ -97,6 +102,25 @@
     const publishGridWidth = () => {
       const main = document.querySelector('.shell');
       if (!main) return;
+      // The justified layout has NO column count: a row fills the
+      // width it is given, so the grid's width IS the container's
+      // content width, capped at the ladder's 1440px promise. The
+      // other two layouts pack fixed-size columns, so their width is
+      // a multiple of the tile size.
+      //
+      // The container width is measured the same way the fetch
+      // layer measures it (grid/geometry.ts) — the CONTENT box, not
+      // the border box — so the chrome lines up with the rows.
+      if (layoutEnabled($preferences) === 'justified') {
+        const contentWidth = gridContainerWidth();
+        if (contentWidth <= 0) return;
+        const cap = JUSTIFIED_GRID_SIZE_CONFIG[$preferences.gridSize].maxWidth;
+        document.documentElement.style.setProperty(
+          '--grid-width',
+          Math.min(contentWidth, cap) + 'px'
+        );
+        return;
+      }
       const containerWidth = main.getBoundingClientRect().width;
       if (containerWidth <= 0) return;
       const cols = columnsForWidth(containerWidth, config);

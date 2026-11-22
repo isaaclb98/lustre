@@ -5,23 +5,38 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_THUMBNAIL_SIZE,
-  masonryFromAttribute,
+  LAYOUTS,
+  layoutFromAttribute,
   parseThumbnailVariants,
   thumbnailWidthFor
 } from './layout';
 
-describe('masonryFromAttribute', () => {
-  it('turns masonry on only for an explicit marker', () => {
-    expect(masonryFromAttribute('1')).toBe(true);
-    expect(masonryFromAttribute('true')).toBe(true);
+describe('layoutFromAttribute', () => {
+  it('reads the two non-default layouts off an explicit marker', () => {
+    expect(layoutFromAttribute('masonry')).toBe('masonry');
+    expect(layoutFromAttribute('justified')).toBe('justified');
   });
 
   it('treats a missing or invalid marker as the square grid', () => {
-    expect(masonryFromAttribute(null)).toBe(false);
-    expect(masonryFromAttribute(undefined)).toBe(false);
-    expect(masonryFromAttribute('')).toBe(false);
-    expect(masonryFromAttribute('0')).toBe(false);
-    expect(masonryFromAttribute('false')).toBe(false);
+    // The square grid is the default, and the backend stamps NO
+    // marker for it — so a missing marker and an explicit 'grid'
+    // have to mean the same thing.
+    expect(layoutFromAttribute(null)).toBe('grid');
+    expect(layoutFromAttribute(undefined)).toBe('grid');
+    expect(layoutFromAttribute('')).toBe('grid');
+    expect(layoutFromAttribute('grid')).toBe('grid');
+    expect(layoutFromAttribute('0')).toBe('grid');
+    expect(layoutFromAttribute('false')).toBe('grid');
+    expect(layoutFromAttribute('Masonry')).toBe('grid');
+  });
+});
+
+describe('LAYOUTS', () => {
+  it('names the three arrangements the backend accepts', () => {
+    // The frontend's dev-server hook validates the configured mode
+    // against this list, and the backend validates its own against
+    // LAYOUTS in search/layout.py — so the two have to agree.
+    expect(LAYOUTS).toEqual(['grid', 'masonry', 'justified']);
   });
 });
 

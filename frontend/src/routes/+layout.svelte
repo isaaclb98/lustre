@@ -17,13 +17,13 @@
   import '../lib/styles/global.css';
   import { onNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
-  import { preferences, masonryEnabled } from '$lib/stores/preferences';
+  import { preferences, layoutEnabled } from '$lib/stores/preferences';
   import {
     GRID_HOVER_ZOOM,
     GRID_MOTION_EASE,
     GRID_MOTION_MS,
     GRID_TILE_RADIUS,
-    gridConfigFor
+    layoutGridConfig
   } from '$lib/grid/config';
   import { widthForColumns } from '$lib/grid/geometry';
 
@@ -58,14 +58,17 @@
   // Large is 240px tiles at 6 cols → a 1440px content width. There
   // is no gutter: the photos touch, edge to edge.
   //
-  // Masonry has its own size ladder (see MASONRY_GRID_SIZE_CONFIG):
-  // a masonry tile is not cropped to a square, so the same width
-  // shows a smaller photo and the ladder starts one rung higher.
+  // Each layout has its own size ladder (see MASONRY_GRID_SIZE_CONFIG
+  // and JUSTIFIED_GRID_SIZE_CONFIG): a masonry tile is not cropped to
+  // a square, so the same width shows a smaller photo and the ladder
+  // starts one rung higher; a justified row has no tile width at
+  // all, so its knob is the row HEIGHT.
+  //
   // The published vars must follow the ladder the grid actually
   // renders, or the CSS would lay out a different tile size than
   // the virtualizer assumes.
   const config = $derived(
-    gridConfigFor($preferences.gridSize, masonryEnabled($preferences))
+    layoutGridConfig($preferences.gridSize, layoutEnabled($preferences))
   );
   // Max row width = MAX_COLS * TILE. Used
   // as `--grid-row-max-width` so the CSS grid's max-width clamp
