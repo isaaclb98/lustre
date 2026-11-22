@@ -23,10 +23,10 @@
     SLIDESHOW_PRESETS,
     setSlideshowInterval,
     setGridSize,
-    setLayout,
-    layoutEnabled
+    setLayout
   } from '$lib/stores/preferences';
   import { type GridSize, type GridLayout } from '$lib/grid/config';
+  import { readLayoutDefault } from '$lib/layout';
 
   // Grid size — three user-facing labels, single knob. The
   // CSS/JS derive tile size, gap, and max columns from the
@@ -46,6 +46,15 @@
     { label: 'Masonry', value: 'masonry' },
     { label: 'Justified', value: 'justified' }
   ];
+
+  // The deployment's own layout — what "Follow server" resolves to.
+  //
+  // The three presets are checked only when the user has CHOSEN
+  // one: a radio group has exactly one checked member, so showing
+  // the resolved default as checked too would put two radios in the
+  // group checked at once. The label says which layout following
+  // the server currently means.
+  const serverLayout = $derived(readLayoutDefault());
 
   type IndexerStatusResponse = components['schemas']['IndexerStatusResponse'];
   type IndexerLogResponse = components['schemas']['IndexerLogResponse'];
@@ -288,8 +297,8 @@
           type="button"
           class="preset"
           role="radio"
-          aria-checked={layoutEnabled($preferences) === preset.value}
-          data-active={layoutEnabled($preferences) === preset.value}
+          aria-checked={$preferences.layout === preset.value}
+          data-active={$preferences.layout === preset.value}
           onclick={() => setLayout(preset.value)}
         >
           {preset.label}
@@ -303,7 +312,7 @@
         data-active={$preferences.layout === null}
         onclick={() => setLayout(null)}
       >
-        Follow server
+        Follow server{serverLayout ? ` (${serverLayout})` : ''}
       </button>
     </div>
   </section>
