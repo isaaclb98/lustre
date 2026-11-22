@@ -480,7 +480,12 @@
     // A tile the layout sized for ITSELF states its own width. The
     // justified rows give every photo a different width, so one
     // shared number would be wrong for nearly every tile in a row.
-    if (renderWidth) return `${Math.round(renderWidth)}px`;
+    //
+    // ROUNDED UP, never down: the tile is as wide as the layout
+    // says, so a `sizes` below it asks the browser for fewer pixels
+    // than the tile needs, and it hands over an asset it then has to
+    // enlarge.
+    if (renderWidth) return `${Math.ceil(renderWidth)}px`;
 
     // The tile width is EXACT in both grids, and it does not depend
     // on the viewport.
