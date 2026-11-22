@@ -339,6 +339,53 @@ class TestThumbnailConstants:
         # Degenerate input.
         assert thumbnail_target_size(0, 0) == (640, 640)
 
+    def test_the_model_input_reuses_the_canonical_when_the_sizes_match(self, tmp_path, monkeypatch):
+        """One decode, one resize — even when they are the same size.
+
+        When MODEL_INPUT_SIZE equals the canonical's size, the model
+        input IS the canonical's pixels: the same resize, taken
+        before the WebP encode so nothing is recompressed on the way
+        to the GPU.
+
+        It used to resize the source a SECOND time to a size it had
+        just been resized to, because only the VARIANTS were kept for
+        reuse and the canonical's pixels were discarded after the
+        encode. At 640 that is a full extra resize per photo, on
+        every photo of a rebuild.
+        """
+        if not _HAS_PYVIPS:
+            import pytest
+
+            pytest.skip("pyvips not importable on this host")
+
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_DIR", str(tmp_path))
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_SIZE", 640)
+        monkeypatch.setattr("indexer.thumbnails.THUMBNAIL_VARIANT_SIZES", (240, 360))
+
+        src = tmp_path / "src.jpg"
+        Image.new("RGB", (1280, 960), color=(40, 120, 200)).save(src, "JPEG", quality=92)
+
+        from indexer.thumbnails import generate_ladder_and_model_input
+
+        _, model_input, _, _ = generate_ladder_and_model_input(
+            src, "reuse123", model_input_size=640
+        )
+        assert model_input is not None
+        # The model's input is the canonical's own size.
+        assert max(model_input.size) == 640
+        # And it is the SAME PICTURE as the canonical: the canonical
+        # file and the model input must not drift, because the
+        # embedding is supposed to be of the picture the user sees.
+        from indexer.thumbnails import thumbnail_path
+
+        with Image.open(thumbnail_path("reuse123")) as canonical:
+            assert canonical.size == model_input.size
+            # Same pixels: compare a few sample points.
+            c = canonical.convert("RGB")
+            m = model_input.convert("RGB")
+            for x, y in ((10, 10), (100, 50), (300, 200)):
+                assert abs(c.getpixel((x, y))[2] - m.getpixel((x, y))[2]) <= 3
+
     def test_thumbnail_quality_is_80(self):
         # Post the 256→384 / q50→q80 thumbnail pipeline rework
         # (commit 44bac8c deleted docs/archive/thumbnail-pipeline.md

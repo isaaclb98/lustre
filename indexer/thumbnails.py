@@ -385,7 +385,14 @@ def _write_ladder_pyvips(src: Any, point_id: str) -> tuple[Path, dict[int, Any]]
     )
 
     # Sized variants. Same pipeline at smaller dimensions.
-    resized: dict[int, Any] = {}
+    #
+    # The CANONICAL's own pixels go in the dict too, under its own
+    # size. They are the same resize the model input wants when the
+    # model input IS the canonical's size (MODEL_INPUT_SIZE ==
+    # THUMBNAIL_SIZE), and re-resizing the source to a size it was
+    # just resized to is pure waste: one decode and one resize per
+    # photo, not two.
+    resized: dict[int, Any] = {THUMBNAIL_SIZE: thumb}
     for size in THUMBNAIL_VARIANT_SIZES:
         if size >= THUMBNAIL_SIZE:
             continue
