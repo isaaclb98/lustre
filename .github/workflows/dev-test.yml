@@ -54,7 +54,11 @@ on:
       layout:
         description: >-
           The grid layout the dev server renders: grid, masonry or
-          justified. Defaults to grid.
+          justified. Defaults to grid. NOTE: GitHub validates a
+          dispatch's inputs against the workflow file on the
+          DEFAULT BRANCH, so this input only works once main
+          carries it. Until then, put the layout in
+          .github/dev-test-layout in the branch under test.
         required: false
         type: string
         default: grid
@@ -152,16 +156,27 @@ jobs:
           # shell and the srcset lists them, so the browser picks
           # the smallest that covers the tile.
           THUMBNAIL_VARIANT_SIZES: "240,480"
+        run: |
+          set -euo pipefail
+          mkdir -p .dev-test-logs
+
           # The grid layout the server stamps onto the shell. The
           # suite's geometry assertions follow the marker, so this
           # decides WHICH layout is exercised — a run with no
           # layout set only ever tests the square grid, and the
           # justified rows go untested no matter how many times
           # the suite passes.
-          LUSTRE_LAYOUT: ${{ inputs.layout || 'grid' }}
-        run: |
-          set -euo pipefail
-          mkdir -p .dev-test-logs
+          #
+          # It is read from the CHECKED OUT tree, not from a
+          # dispatch input: GitHub validates a dispatch's inputs
+          # against the workflow file on the DEFAULT BRANCH, so an
+          # input that only exists on a feature branch cannot be
+          # passed at all. The file is optional — with none, the
+          # suite runs the square grid, which is the default
+          # deployment.
+          LUSTRE_LAYOUT="$(cat .github/dev-test-layout 2>/dev/null || echo grid)"
+          echo "grid layout under test: ${LUSTRE_LAYOUT}"
+          export LUSTRE_LAYOUT
 
           # --demo-data synthesises 20 JPEGs into
           # $TMPDIR/lustre-demo/ and indexes them into an
