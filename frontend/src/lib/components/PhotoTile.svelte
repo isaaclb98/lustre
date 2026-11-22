@@ -362,21 +362,48 @@
    * would tell the browser the image is wider than it is, and it
    * would then pick a lower density than the one it needs.
    *
-   * The canonical is last: it is the fallback the router serves
-   * when a variant is absent, and the browser walks the list
-   * upward, so the smallest asset that covers the tile wins.
+   * The list is SORTED BY WIDTH, ascending.
+   *
+   * The canonical is not necessarily the widest entry: a deployment
+   * whose canonical is 384 and whose variants are 240 and 480 puts
+   * the 480 variant AFTER... no, BEFORE the canonical, or the list
+   * reads 240, 480, 384 and the browser walks it out of order.
+   * The browser is meant to walk the list upward and take the
+   * smallest asset that covers the tile, and that only works if the
+   * widths ascend.
+   *
+   * So the entries are built and then sorted. Sorting by WIDTH
+   * rather than by the rung's nominal size is what matters: a
+   * portrait photo's 480 variant is narrower than a landscape
+   * photo's 240 variant, so the same list has a different order
+   * for every photo.
    */
   let eagerSrcset = $derived.by(() => {
-    const entries = $thumbnailVariants.map((variant) => {
+    const entries: { width: number; url: string }[] = [];
+    for (const variant of $thumbnailVariants) {
       const width = thumbnailWidthFor(variant, photoWidth, photoHeight);
-      return `${thumbUrl(pointId, variant)} ${width}w`;
-    });
-    entries.push(`${thumbUrl(pointId, thumbnailSize)} ${eagerSrcWidth}w`);
+      entries.push({ width, url: thumbUrl(pointId, variant) });
+    }
+    entries.push({ width: eagerSrcWidth, url: thumbUrl(pointId, thumbnailSize) });
     // The extra rungs, when the tile needs one (see rawRungs).
     for (const rung of rawRungs) {
-      entries.push(`${rung.url} ${rung.width}w`);
+      entries.push({ width: rung.width, url: rung.url });
     }
-    return entries.join(', ');
+    entries.sort((a, b) => a.width - b.width);
+    // Two entries with the SAME width descriptor make the whole
+    // srcset invalid, and the browser then rejects the entire list
+    // — not just the duplicate. A portrait photo's 480 variant can
+    // round to the same width as the 384 canonical, so the
+    // duplicates are dropped here rather than at the end.
+    const seen: number[] = [];
+    return entries
+      .filter((e) => {
+        if (seen.includes(e.width)) return false;
+        seen.push(e.width);
+        return true;
+      })
+      .map((e) => `${e.url} ${e.width}w`)
+      .join(', ');
   });
 
   /**
