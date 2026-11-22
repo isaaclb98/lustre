@@ -192,6 +192,11 @@ test.describe('Grid size preference', () => {
             .split(' ')
             .filter(Boolean).length;
         }
+        // The justified layout has no columns: its rows hold a
+        // VARIABLE number of photos, because each photo's width
+        // comes from its own aspect ratio. There is no column
+        // count to divide the page size by.
+        if (document.querySelector('.justified-row')) return 0;
         // Masonry: one column per distinct left edge.
         const lefts = new Set(
           Array.from(document.querySelectorAll('.tile')).map((t) =>
@@ -201,9 +206,14 @@ test.describe('Grid size preference', () => {
         return lefts.size;
       });
 
-      expect(renderedCols).toBeGreaterThan(0);
-      // The whole-row guarantee.
-      expect(limit % renderedCols).toBe(0);
+      expect(renderedCols).toBeGreaterThanOrEqual(0);
+      // The whole-row guarantee — for the layouts that HAVE columns.
+      // The justified layout's rows continue across the page
+      // boundary, so its page size is a multiple of the LADDER's
+      // average row length, not of anything the DOM can report.
+      if (renderedCols > 0) {
+        expect(limit % renderedCols).toBe(0);
+      }
       // And the page never carries fewer photos than the preset
       // asks for (4 rows at maximum density).
       expect(limit).toBeGreaterThanOrEqual(baseSizes[size]);

@@ -73,6 +73,14 @@ test('PhotoTile sizes attribute reflects viewport-derived tile width', async ({ 
   // for the layout the deployment serves. The masonry's ladder is
   // a rung above the square grid's (360/240/180 vs 240/180/144).
   const tileWidth = await page.evaluate(() => {
+    // The justified layout gives every tile its OWN width — the
+    // photo's own aspect ratio decides it — so the ladder's rung
+    // does not describe the tile. The tile's RENDERED width does.
+    const justified = document.documentElement.getAttribute('data-layout') === 'justified';
+    if (justified) {
+      const tile = document.querySelector('.grid-tile') as HTMLElement | null;
+      return tile ? Math.ceil(tile.getBoundingClientRect().width) : 0;
+    }
     const raw = getComputedStyle(document.documentElement)
       .getPropertyValue('--grid-tile-size')
       .trim();

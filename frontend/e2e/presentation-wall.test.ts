@@ -199,7 +199,17 @@ test.describe('presentation wall', () => {
       // tiles have their own widths, so the masonry measurement
       // (column left edges) would not describe them.
       const justRow = document.querySelector('.justified-row');
-      const scope = row ?? justRow ?? document;
+      // A row that holds MORE THAN ONE tile is the one that can be
+      // measured: a justified row legitimately holds a single photo
+      // (a wide one fills the row on its own), and a row of one has
+      // no neighbour to measure a gap against.
+      const rows = Array.from(
+        document.querySelectorAll('.grid-row, .justified-row')
+      );
+      const scope =
+        rows.find((r) => r.querySelectorAll('.tile').length >= 2) ??
+        rows[0] ??
+        document;
       const tiles = Array.from(scope.querySelectorAll('.tile')) as HTMLElement[];
       if (tiles.length < 2) return null;
       const tcs = getComputedStyle(tiles[0]);

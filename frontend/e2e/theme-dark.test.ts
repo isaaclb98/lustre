@@ -103,7 +103,17 @@ async function gridGeometry(page: Page) {
     // are placed at their own x offsets, so two tiles in a row have
     // different widths and different left edges.
     const justRow = document.querySelector('.justified-row');
-    const scope = row ?? justRow ?? document;
+    // A row that holds MORE THAN ONE tile is the one that can be
+    // measured: the gap between two neighbours only exists inside
+    // a row, and a justified row legitimately holds a single photo
+    // (a wide one fills the row on its own).
+    const rows = Array.from(
+      document.querySelectorAll('.grid-row, .justified-row')
+    );
+    const scope =
+      rows.find((r) => r.querySelectorAll('.tile').length >= 2) ??
+      rows[0] ??
+      document;
     const tiles = Array.from(scope.querySelectorAll('.tile')) as HTMLElement[];
     if (tiles.length < 2) return null;
     const tcs = getComputedStyle(tiles[0]);
