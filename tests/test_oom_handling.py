@@ -154,6 +154,48 @@ class TestBatchSizeCeiling:
         assert _clamp_batch_size(0) == 1
         assert _clamp_batch_size(-5) == 1
 
+    def test_the_embedder_itself_clamps_the_batch(self) -> None:
+        """The ceiling holds on the path that has no clamp of its own.
+
+        The indexer clamps its CLI flag and its env var, but a
+        caller that asks the EMBEDDER for a batch never passes
+        through that clamp — and the embedder's own default was 32,
+        from EMBED_BATCH_SIZE or its fallback. So a deployment (or
+        any code path that used the embedder directly) could put 32
+        images in one forward pass on a 10 GiB card.
+
+        The ceiling now lives at the embedder too, so every path to
+        the GPU is bounded by the same number.
+        """
+        import os
+
+        from lustre_kernel._real_models import OpenClipEmbedder
+        from lustre_kernel.limits import MAX_EMBED_BATCH_SIZE as shared
+
+        def make(env_value: str | None):
+            if env_value is None:
+                os.environ.pop("EMBED_BATCH_SIZE", None)
+            else:
+                os.environ["EMBED_BATCH_SIZE"] = env_value
+            try:
+                return OpenClipEmbedder(
+                    arch_tag="ViT-B-32",
+                    pretrained="openai",
+                    dim=512,
+                    resolution=224,
+                ).embed_batch_size
+            finally:
+                os.environ.pop("EMBED_BATCH_SIZE", None)
+
+        assert shared == MAX_EMBED_BATCH_SIZE
+        # An explicit request over the ceiling is refused.
+        assert make("32") == MAX_EMBED_BATCH_SIZE
+        assert make("16") == MAX_EMBED_BATCH_SIZE
+        # The DEFAULT is inside the ceiling too — that was the gap.
+        assert make(None) == MAX_EMBED_BATCH_SIZE
+        # A smaller request is honoured.
+        assert make("4") == 4
+
     def test_the_cli_flag_is_clamped(self) -> None:
         args = local_sync_mod.parse_args(
             ["--source", "/photos", "--batch-size", "16"]

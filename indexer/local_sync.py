@@ -55,6 +55,7 @@ from indexer.thumbnails import (
 )
 from indexer.vision_encoder import VisionEncoder
 from lustre_kernel import orphan_marking
+from lustre_kernel.limits import MAX_EMBED_BATCH_SIZE as _SHARED_MAX_EMBED_BATCH_SIZE
 from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
 from lustre_kernel.registry import get as _registry_get
 
@@ -136,7 +137,7 @@ def _vram_free_mib() -> int | None:
 # var are both clamped, so no deployment or operator can exceed it
 # by accident. A smaller batch costs throughput, and throughput is
 # cheap to give up — a crashed card is not.
-MAX_EMBED_BATCH_SIZE = 8
+MAX_EMBED_BATCH_SIZE = _SHARED_MAX_EMBED_BATCH_SIZE
 
 
 def _clamp_batch_size(value: int) -> int:
