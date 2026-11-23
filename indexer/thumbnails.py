@@ -353,14 +353,19 @@ def _use_pyvips() -> bool:
     return _HAS_PYVIPS and not _PIL_FORCE
 
 
-def _write_ladder_pyvips(src: Any, point_id: str) -> tuple[Path, dict[int, Any]]:
-    """Write the canonical thumbnail + every sized variant.
+def _write_canonical_pyvips(src: Any, point_id: str) -> tuple[Path, Any]:
+    """Write ONLY the canonical thumbnail.
 
     `src` is an already-open libvips image, so the caller can reuse
     the same decode for the model's input.
 
-    Returns the canonical path and the resized images keyed by the
-    size they were made at.
+    The canonical is the ONE asset the indexer cannot defer: it is
+    what the embedder consumes (the model input IS the canonical's
+    pixels when MODEL_INPUT_SIZE == THUMBNAIL_SIZE), and it is the
+    fallback the serving endpoint returns when a sized variant is
+    missing.
+
+    Returns the canonical path and the resized canonical image.
     """
     out_path = thumbnail_path(point_id)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -384,25 +389,29 @@ def _write_ladder_pyvips(src: Any, point_id: str) -> tuple[Path, dict[int, Any]]
         profile=_ensure_srgb_profile_path(),
     )
 
-    # Sized variants. Same pipeline at smaller dimensions.
-    #
-    # The CANONICAL's own pixels go in the dict too, under its own
-    # size. They are the same resize the model input wants when the
-    # model input IS the canonical's size (MODEL_INPUT_SIZE ==
-    # THUMBNAIL_SIZE), and re-resizing the source to a size it was
-    # just resized to is pure waste: one decode and one resize per
-    # photo, not two.
-    resized: dict[int, Any] = {THUMBNAIL_SIZE: thumb}
+    return out_path, thumb
+
+
+def _write_variants_pyvips(src: Any, point_id: str) -> dict[int, Any]:
+    """Write the sized display variants (everything below the canonical).
+
+    Split out from the canonical write so the caller can run it
+    OFF the indexer's critical path. The variants are display-only
+    assets — the serving endpoint falls back to the canonical when
+    one is missing — so nothing downstream depends on them being
+    on disk by the time the embed finishes.
+
+    NO crop: a variant keeps the source's aspect ratio, exactly
+    like the canonical. `crop="centre"` here would make the variant
+    a SQUARE while the canonical is native-aspect — so the same
+    photo would be cropped in the small asset and whole in the large
+    one, and the masonry's no-crop promise would hold only for the
+    tiles that happened to get the canonical.
+    """
+    resized: dict[int, Any] = {}
     for size in THUMBNAIL_VARIANT_SIZES:
         if size >= THUMBNAIL_SIZE:
             continue
-        # NO crop: the variant keeps the source's aspect ratio,
-        # exactly like the canonical. `crop="centre"` here would
-        # make the variant a SQUARE while the canonical is
-        # native-aspect — so the same photo would be cropped in the
-        # small asset and whole in the large one, and the
-        # masonry's no-crop promise would hold only for the
-        # tiles that happened to get the canonical.
         variant = src.thumbnail_image(
             size,
             height=size,
@@ -415,7 +424,24 @@ def _write_ladder_pyvips(src: Any, point_id: str) -> tuple[Path, dict[int, Any]]
             effort=4,
             profile=_ensure_srgb_profile_path(),
         )
+    return resized
 
+
+def _write_ladder_pyvips(src: Any, point_id: str) -> tuple[Path, dict[int, Any]]:
+    """Write the canonical thumbnail + every sized variant.
+
+    The canonical and its variants are written in one call, which is
+    what the PIL fallback path and the standalone regen path use.
+    The indexer's hot path uses `_write_canonical_pyvips` +
+    `_write_variants_pyvips` separately so the variants can run
+    asynchronously.
+
+    Returns the canonical path and the resized images keyed by the
+    size they were made at.
+    """
+    out_path, thumb = _write_canonical_pyvips(src, point_id)
+    resized: dict[int, Any] = {THUMBNAIL_SIZE: thumb}
+    resized.update(_write_variants_pyvips(src, point_id))
     return out_path, resized
 
 
@@ -461,6 +487,158 @@ def _vips_to_pil(img: Any) -> Image.Image:
     return Image.frombuffer(
         "RGB", (img.width, img.height), img.write_to_memory()
     )
+
+
+def generate_canonical_and_model_input(
+    path: Path,
+    point_id: str,
+    *,
+    model_input_size: int | None = None,
+) -> tuple[Path | None, Image.Image | None, int | None, int | None]:
+    """Write ONLY the canonical thumbnail; return the model's input.
+
+    The canonical is the one asset the indexer cannot defer: the
+    embedder consumes its pixels, and the serving endpoint falls
+    back to it when a sized variant is missing.
+
+    The sized display variants are written separately by
+    `generate_variants_for_path`, which the indexer runs OFF the
+    critical path. Measured on prod: the three WebP encodes are
+    ~195 ms/photo against a 21 ms decode, and the variant writes
+    land on NFS at ~30 ms each — so writing them inline kept the
+    GPU idle ~68% of a run.
+
+    Returns `(thumbnail_path, model_input, source_width,
+    source_height)`. `model_input` is None when `model_input_size`
+    is None or the source cannot be prepared.
+    """
+    if _use_pyvips():
+        # Late import so the module loads on hosts without pyvips.
+        import pyvips as _pv
+
+        try:
+            src: Any = _pv.Image.new_from_file(str(path))
+            out_path, thumb = _write_canonical_pyvips(src, point_id)
+            source_w, source_h = src.width, src.height
+
+            model_input = None
+            if model_input_size is not None:
+                if model_input_size == THUMBNAIL_SIZE:
+                    # The model input IS the canonical's pixels,
+                    # taken before the WebP encode so nothing is
+                    # recompressed.
+                    model_input = _vips_to_pil(thumb)
+                else:
+                    model_input = _vips_to_pil(
+                        src.thumbnail_image(
+                            model_input_size, height=model_input_size
+                        )
+                    )
+            return out_path, model_input, source_w, source_h
+        except _pv.Error as e:
+            logger.warning("libvips failed for %s: %s", point_id, e)
+            return None, None, None, None
+        except (OSError, ValueError, RuntimeError) as e:
+            logger.warning(
+                "Failed to generate thumbnail for %s: %s", point_id, e
+            )
+            return None, None, None, None
+
+    # PIL fallback: decode once, use the decode for both the ladder
+    # and the model input.
+    from indexer.image_loader import load_image_pil_with_dims
+
+    try:
+        image, source_w, source_h = load_image_pil_with_dims(path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to load %s: %s", path, exc)
+        return None, None, None, None
+
+    pil_out: Path | None = _compute_thumbnail_pil(image, point_id)
+
+    model_input = None
+    if model_input_size is not None:
+        target = thumbnail_target_size(
+            image.width, image.height, model_input_size
+        )
+        try:
+            if _LINEAR_RESIZE:
+                model_input = _resize_in_linear_light(
+                    image.convert("RGB"), target
+                )
+            else:
+                model_input = image.resize(
+                    target, Image.Resampling.LANCZOS
+                )
+        except (OSError, ValueError, RuntimeError) as e:
+            logger.warning("model input resize failed for %s: %s", point_id, e)
+    return pil_out, model_input, source_w, source_h
+
+
+def generate_variants_for_path(path: Path, point_id: str) -> int:
+    """Write the sized display variants for `path`. Returns the count.
+
+    Runs off the indexer's critical path: the variants are
+    display-only assets, and the serving endpoint falls back to the
+    canonical when one is missing.
+
+    Re-decodes the source (the canonical's decode is long gone by
+    the time this runs, and libvips images are lazily bound to their
+    file). A source that cannot be decoded yields 0 variants, and
+    the canonical — already on disk — still serves.
+    """
+    if not THUMBNAIL_VARIANT_SIZES:
+        return 0
+
+    if _use_pyvips():
+        import pyvips as _pv
+
+        try:
+            src: Any = _pv.Image.new_from_file(str(path))
+            resized = _write_variants_pyvips(src, point_id)
+            return len(resized)
+        except _pv.Error as e:
+            logger.warning("libvips failed for %s: %s", point_id, e)
+            return 0
+        except (OSError, ValueError, RuntimeError) as e:
+            logger.warning(
+                "Failed to generate variants for %s: %s", point_id, e
+            )
+            return 0
+
+    from indexer.image_loader import load_image_pil_with_dims
+
+    try:
+        image, _sw, _sh = load_image_pil_with_dims(path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to load %s: %s", path, exc)
+        return 0
+
+    written = 0
+    for size in THUMBNAIL_VARIANT_SIZES:
+        if size >= THUMBNAIL_SIZE:
+            continue
+        target = thumbnail_target_size(image.width, image.height, size)
+        variant_path = sized_thumbnail_path(point_id, size)
+        variant_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if _LINEAR_RESIZE:
+                variant_img = _resize_in_linear_light(
+                    image.convert("RGB"), target
+                )
+            else:
+                variant_img = image.resize(target, Image.Resampling.LANCZOS)
+            variant_img.save(
+                variant_path,
+                format="WEBP",
+                quality=THUMBNAIL_QUALITY,
+            )
+            written += 1
+        except (OSError, ValueError, RuntimeError) as e:
+            logger.warning(
+                "Failed to write variant %s for %s: %s", size, point_id, e
+            )
+    return written
 
 
 def generate_ladder_and_model_input(
