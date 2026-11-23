@@ -24,7 +24,7 @@ def _save_centroid(
     path: Path,
     name: str,
     *,
-    model: str = "siglip2",
+    model: str = "cradio-v4-siglip2g",
     feature_dim: int = 1536,
     centroid_shape: tuple[int, ...] | None = None,
     n_images: int = 10,
@@ -54,7 +54,7 @@ def _save_centroid(
 
 
 def test_load_empty_dir(tmp_path: Path) -> None:
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     assert s.load() == 0
     assert s.list_all() == []
     assert s.count() == 0
@@ -63,27 +63,27 @@ def test_load_empty_dir(tmp_path: Path) -> None:
 def test_load_missing_dir(tmp_path: Path) -> None:
     """A missing dir is fine — store is empty, no error."""
     missing = tmp_path / "does-not-exist"
-    s = CentroidStore(missing, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(missing, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     assert s.load() == 0
     assert s.list_all() == []
 
 
 def test_load_none_dir() -> None:
     """`centroids_dir=None` is the unset-env-var case — never errors."""
-    s = CentroidStore(None, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(None, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     assert s.load() == 0
 
 
 def test_load_one_valid(tmp_path: Path) -> None:
     _save_centroid(tmp_path / "wuxia.pt", "wuxia_female_leads")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     assert s.load() == 1
     spec = s.get("wuxia_female_leads")
     assert spec is not None
     assert spec.feature_dim == 1536
     assert spec.n_images == 10
-    assert spec.model == "siglip2"
-    assert spec.model_type == "siglip2"
+    assert spec.model == "cradio-v4-siglip2g"
+    assert spec.model_type == "cradio-v4-siglip2g"
     assert spec.model_id is None
     assert spec.extracted_at == "2026-06-17T00:00:00"
     # Vector is materialized as a list[float] of the right length.
@@ -107,7 +107,7 @@ def test_skip_dim_mismatch(tmp_path: Path) -> None:
     """A 4096-dim dino v3 centroid is silently skipped against a 1536-dim store."""
     _save_centroid(tmp_path / "dino.pt", "dino_centroid", model="dinov3", feature_dim=4096)
     _save_centroid(tmp_path / "ok.pt", "ok_centroid")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     assert s.load() == 1
     assert s.get("dino_centroid") is None
     assert s.get("ok_centroid") is not None
@@ -116,7 +116,7 @@ def test_skip_dim_mismatch(tmp_path: Path) -> None:
 def test_skip_model_mismatch(tmp_path: Path) -> None:
     """Same dim but a different model tag is also rejected."""
     _save_centroid(tmp_path / "other.pt", "other_centroid", model="clip-vit-l", feature_dim=1536)
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     assert s.load() == 0
     assert s.get("other_centroid") is None
 
@@ -127,28 +127,28 @@ def test_skip_bad_shape(tmp_path: Path) -> None:
         tmp_path / "bad.pt", "bad_centroid",
         centroid_shape=(1, 1536), feature_dim=1536,
     )
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     assert s.load() == 0
 
 
 def test_skip_empty_name(tmp_path: Path) -> None:
     _save_centroid(tmp_path / "empty.pt", "")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     assert s.load() == 0
 
 
 def test_skip_missing_keys(tmp_path: Path) -> None:
     """A blob missing the 'centroid' or 'name' key is rejected, doesn't crash."""
-    torch.save({"name": "x", "model": "siglip2", "feature_dim": 1536}, tmp_path / "no_centroid.pt")
-    torch.save({"centroid": torch.randn(1536), "model": "siglip2", "feature_dim": 1536}, tmp_path / "no_name.pt")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    torch.save({"name": "x", "model": "cradio-v4-siglip2g", "feature_dim": 1536}, tmp_path / "no_centroid.pt")
+    torch.save({"centroid": torch.randn(1536), "model": "cradio-v4-siglip2g", "feature_dim": 1536}, tmp_path / "no_name.pt")
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     assert s.load() == 0
 
 
 def test_skip_corrupt_file(tmp_path: Path) -> None:
     (tmp_path / "junk.pt").write_bytes(b"not a torch file")
     _save_centroid(tmp_path / "ok.pt", "ok_centroid")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     # Corrupt file skipped, valid one still loads — a single bad file
     # does not abort the load.
     assert s.load() == 1
@@ -159,7 +159,7 @@ def test_duplicate_name_keeps_first(tmp_path: Path) -> None:
     """Two files with the same stored name — keep the first by sorted path order."""
     _save_centroid(tmp_path / "a_wuxia.pt", "wuxia", n_images=1)
     _save_centroid(tmp_path / "b_wuxia.pt", "wuxia", n_images=99)
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     s.load()
     spec = s.get("wuxia")
     assert spec is not None
@@ -173,7 +173,7 @@ def test_duplicate_name_keeps_first(tmp_path: Path) -> None:
 
 def test_get_case_insensitive(tmp_path: Path) -> None:
     _save_centroid(tmp_path / "x.pt", "Wuxia_Female_Leads")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     s.load()
     assert s.get("Wuxia_Female_Leads") is not None
     assert s.get("wuxia_female_leads") is not None
@@ -182,7 +182,7 @@ def test_get_case_insensitive(tmp_path: Path) -> None:
 
 def test_get_missing_returns_none(tmp_path: Path) -> None:
     _save_centroid(tmp_path / "x.pt", "wuxia")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     s.load()
     assert s.get("not_loaded") is None
 
@@ -191,7 +191,7 @@ def test_list_sorted_by_name(tmp_path: Path) -> None:
     _save_centroid(tmp_path / "b.pt", "beta")
     _save_centroid(tmp_path / "a.pt", "alpha")
     _save_centroid(tmp_path / "c.pt", "gamma")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     s.load()
     assert [c.name for c in s.list_all()] == ["alpha", "beta", "gamma"]
 
@@ -201,11 +201,11 @@ def test_as_dict_has_public_fields(tmp_path: Path) -> None:
         tmp_path / "x.pt", "wuxia",
         n_images=42, model_type="ensemble", model_id="facebook/dinov3",
     )
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     s.load()
     d = s.list_all()[0].as_dict()
     assert d["name"] == "wuxia"
-    assert d["model"] == "siglip2"
+    assert d["model"] == "cradio-v4-siglip2g"
     assert d["model_type"] == "ensemble"
     assert d["model_id"] == "facebook/dinov3"
     assert d["feature_dim"] == 1536
@@ -220,7 +220,7 @@ def test_as_dict_has_public_fields(tmp_path: Path) -> None:
 def test_load_is_idempotent(tmp_path: Path) -> None:
     """Calling load() twice with no disk changes returns the same set."""
     _save_centroid(tmp_path / "x.pt", "wuxia")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     s.load()
     n1 = s.count()
     s.load()
@@ -230,7 +230,7 @@ def test_load_is_idempotent(tmp_path: Path) -> None:
 def test_load_picks_up_new_files(tmp_path: Path) -> None:
     """A second load() after a new file appears loads it (reload semantics)."""
     _save_centroid(tmp_path / "x.pt", "wuxia")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     s.load()
     assert s.count() == 1
     _save_centroid(tmp_path / "y.pt", "noir")
@@ -243,7 +243,7 @@ def test_load_drops_deleted_files(tmp_path: Path) -> None:
     """A reload after a file is removed drops the corresponding entry."""
     _save_centroid(tmp_path / "x.pt", "wuxia")
     _save_centroid(tmp_path / "y.pt", "noir")
-    s = CentroidStore(tmp_path, expected_model="siglip2", expected_feature_dim=1536)
+    s = CentroidStore(tmp_path, expected_model="cradio-v4-siglip2g", expected_feature_dim=1536)
     s.load()
     assert s.count() == 2
     (tmp_path / "y.pt").unlink()

@@ -26,7 +26,7 @@ import pytest
 # Set the env vars BEFORE importing the app so config.load() sees them.
 os.environ.setdefault("SEARCH_TEST_MODE", "1")
 os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
-os.environ.setdefault("MODEL_NAME", "hf-hub:timm/ViT-gopt-16-SigLIP2-384")
+os.environ.setdefault("MODEL_NAME", "C-RADIOv4-SO400M")
 
 from search.app import create_app
 

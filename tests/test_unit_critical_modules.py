@@ -125,16 +125,19 @@ class TestImageLoader:
         Image.new("RGB", (32, 32), color=(255, 0, 0)).save(p, "PNG")
         # Round‑30: load() returns (img, source_w, source_h).
         img, _sw, _sh = load(p)
-        assert img.size == (384, 384)  # default resolution
+        # The live model is native-aspect: the picture keeps its own
+        # aspect ratio, it is not letterboxed onto a square canvas.
+        # The source is 32x32, so native keeps 32x32.
+        assert img.size == (32, 32)
 
-    def test_load_letterboxes_to_registered_resolution(self, tmp_path: Path):
-        """Smaller model → smaller letterbox target."""
+    def test_load_keeps_native_aspect_for_the_live_model(self, tmp_path: Path):
+        """The live model is native-aspect: no square letterbox target."""
         from indexer.image_loader import load
 
         p = tmp_path / "valid.png"
         Image.new("RGB", (32, 32), color=(0, 255, 0)).save(p, "PNG")
-        img, _sw, _sh = load(p, model_name="ViT-L-16-SigLIP2-256")
-        assert img.size == (256, 256)
+        img, _sw, _sh = load(p, model_name="C-RADIOv4-SO400M")
+        assert img.size == (32, 32)
 
     def test_load_raises_on_corrupt_file(self, tmp_path: Path):
         from indexer.image_loader import LoaderError, load
@@ -172,7 +175,8 @@ class TestImageLoader:
         p = tmp_path / "no_exif.jpg"
         Image.new("RGB", (100, 200), color=(0, 0, 255)).save(p, "JPEG")
         img, _sw, _sh = load(p)
-        assert img.size == (384, 384)  # letterboxed
+        # Native policy — no letterboxing, the aspect ratio is kept.
+        assert img.size == (100, 200)
 
 
 # ---------------------------------------------------------------------------

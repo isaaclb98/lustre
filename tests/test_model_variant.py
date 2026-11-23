@@ -1,6 +1,12 @@
 """
 Test model variant configuration and validation.
 
+C-RADIOv4-SO400M is the only variant the kernel ships — the
+SigLIP2 family is gone. The mismatch coverage this file provided
+against four SigLIP2 variants is kept, and now runs against the
+one real variant plus collections at OTHER dims (which are still
+genuine mismatches and must still be refused).
+
 Uses monkeypatch for all env var mutations so each test's changes
 are restored automatically — prevents the SIGLIP_VARIANT='invalid'
 from leaking into subsequent test modules (test_v2_smoke.py
@@ -9,6 +15,17 @@ at call time, not at import time).
 """
 import pytest
 from search import config
+
+
+# The one variant the kernel ships.
+LIVE_VARIANT = "c-radio-v4/so400m"
+LIVE_MODEL = "C-RADIOv4-SO400M"
+LIVE_DIM = 1536
+
+# A dim the live variant does NOT produce. A collection at this dim
+# is a genuine mismatch and must be refused — the same protection
+# the old "stored 768, wanted 1152" test provided.
+FOREIGN_DIM = 768
 
 
 # ----- Variant lookup -----
@@ -41,40 +58,58 @@ def test_default_variant_resolves_to_registered_model(monkeypatch):
     spec = _registry_get(model_name)
     assert spec is not None, (
         f"default model {model_name!r} not in kernel registry — "
-        f"check lustre_kernel/_real_models.register_into"
+        f"check lustre_kernel/_radio_models.register_into"
     )
     assert spec.dim == dim, (
         f"registry dim ({spec.dim}) != config dim ({dim}) for {model_name}"
     )
 
 
-@pytest.mark.parametrize("variant,expected_model,expected_dim", [
-    ("B/16-256", "ViT-B-16-SigLIP2-256", 768),
-    ("L/16-256", "ViT-L-16-SigLIP2-256", 1024),
-    ("gopt/16-384", "ViT-gopt-16-SigLIP2-384", 1536),
-    ("so400m/16-384", "ViT-so400m-patch16-384", 1152),
-])
-def test_all_known_variants(monkeypatch, variant, expected_model, expected_dim):
-    """Each registered variant maps to the right model and dim."""
-    monkeypatch.setenv("SIGLIP_VARIANT", variant)
-    assert config.get_siglip_variant() == variant
-    assert config.get_model_name_for_variant(variant) == expected_model
-    assert config.get_vector_dim_for_variant(variant) == expected_dim
-    assert config.get_vector_dim() == expected_dim
-
-
-def test_gopt_variant(monkeypatch):
-    """gopt variant should be 1536-dim."""
-    monkeypatch.setenv("SIGLIP_VARIANT", "gopt/16-384")
+def test_live_variant_maps_to_the_radio_model(monkeypatch):
+    """The one variant maps to C-RADIOv4-SO400M at 1536 dims."""
+    monkeypatch.setenv("SIGLIP_VARIANT", LIVE_VARIANT)
 
     variant = config.get_siglip_variant()
-    assert variant == "gopt/16-384"
+    assert variant == LIVE_VARIANT
+    assert config.get_model_name_for_variant(variant) == LIVE_MODEL
+    assert config.get_vector_dim_for_variant(variant) == LIVE_DIM
+    assert config.get_vector_dim() == LIVE_DIM
 
-    model_name = config.get_model_name_for_variant(variant)
-    assert model_name == "ViT-gopt-16-SigLIP2-384"
 
-    dim = config.get_vector_dim_for_variant(variant)
-    assert dim == 1536
+def test_siglip2_variants_are_gone():
+    """The SigLIP2 family must not be selectable any more.
+
+    Each of the four names is asserted ABSENT from the variant
+    table. They used to be registered, and that registration is how
+    an index run could silently embed with SigLIP2 while the
+    operator believed it used C-RADIOv4 — so their absence is a
+    property worth pinning, not an accident.
+    """
+    removed = {
+        "B/16-256",
+        "L/16-256",
+        "gopt/16-384",
+        "so400m/16-384",
+    }
+    assert not (removed & set(config.SIGLIP_VARIANTS.keys())), (
+        "SigLIP2 variants are still selectable: "
+        f"{sorted(removed & set(config.SIGLIP_VARIANTS.keys()))}"
+    )
+
+
+def test_siglip2_models_are_not_registered():
+    """The four SigLIP2 model names must not be in the kernel registry."""
+    from lustre_kernel.registry import ModelNotFoundError
+    from lustre_kernel.registry import get as _registry_get
+
+    for model_name in (
+        "ViT-B-16-SigLIP2-256",
+        "ViT-L-16-SigLIP2-256",
+        "ViT-gopt-16-SigLIP2-384",
+        "ViT-so400m-patch16-384",
+    ):
+        with pytest.raises(ModelNotFoundError):
+            _registry_get(model_name)
 
 
 def test_invalid_variant_raises(monkeypatch):
@@ -84,19 +119,17 @@ def test_invalid_variant_raises(monkeypatch):
     with pytest.raises(ValueError) as exc_info:
         config.get_siglip_variant()
     assert "Invalid SIGLIP_VARIANT" in str(exc_info.value)
-    assert "B/16-256" in str(exc_info.value)
-    assert "L/16-256" in str(exc_info.value)
-    assert "gopt/16-384" in str(exc_info.value)
+    assert LIVE_VARIANT in str(exc_info.value)
 
 
 @pytest.mark.parametrize("bad_variant", [
     "",
     "b/16-256",                          # case-sensitive
-    "L/16-512",                          # valid format but no such variant
+    "so400m/16-384",                     # a removed SigLIP2 variant
     "gopt-16-384",                       # wrong separator
-    "ViT-L-16-SigLIP2-256",              # model name, not variant name
+    LIVE_MODEL,                          # model name, not variant name
     "random",
-    "L/16",                              # missing resolution
+    "c-radio-v4",                        # missing resolution
 ])
 def test_various_invalid_variants_raise(monkeypatch, bad_variant):
     """Various malformed variant names all raise ValueError."""
@@ -108,7 +141,7 @@ def test_various_invalid_variants_raise(monkeypatch, bad_variant):
 def test_unknown_variant_in_lookup_functions(monkeypatch):
     """get_model_name_for_variant / get_vector_dim_for_variant
     reject unknown variants even when the global env is valid."""
-    monkeypatch.setenv("SIGLIP_VARIANT", "L/16-256")
+    monkeypatch.setenv("SIGLIP_VARIANT", LIVE_VARIANT)
     with pytest.raises(ValueError, match="Unknown variant"):
         config.get_model_name_for_variant("not-a-real-variant")
     with pytest.raises(ValueError, match="Unknown variant"):
@@ -117,53 +150,31 @@ def test_unknown_variant_in_lookup_functions(monkeypatch):
 
 def test_get_vector_dim_uses_active_variant(monkeypatch):
     """get_vector_dim() reads from the active env-configured variant."""
-    monkeypatch.setenv("SIGLIP_VARIANT", "B/16-256")
-    assert config.get_vector_dim() == 768
-
-    monkeypatch.setenv("SIGLIP_VARIANT", "gopt/16-384")
-    assert config.get_vector_dim() == 1536
+    monkeypatch.setenv("SIGLIP_VARIANT", LIVE_VARIANT)
+    assert config.get_vector_dim() == LIVE_DIM
 
 
 def test_siglip_variants_dict_is_complete():
-    """SIGLIP_VARIANTS dict should have all four documented SigLIP2
-    variants, and every variant in it must be usable.
+    """SIGLIP_VARIANTS must hold exactly the one live variant, and
+    every variant in it must be usable.
 
-    The four SigLIP2 variants are checked by name and by the rules
-    that make them loadable. A variant from another model family
-    (C-RADIOv4) is allowed in the same table but is held to the
-    rules that matter for it instead: a kernel-registry entry whose
-    dim agrees, and a centroid-compat mapping — config.load() raises
-    without both.
+    A variant must resolve to a registered model of the same dim,
+    and must have a centroid-compat mapping or config.load() refuses
+    to boot.
     """
-    siglip2 = {"B/16-256", "L/16-256", "gopt/16-384", "so400m/16-384"}
-    assert siglip2 <= set(config.SIGLIP_VARIANTS.keys())
+    assert set(config.SIGLIP_VARIANTS.keys()) == {LIVE_VARIANT}
     for variant, (model_name, dim) in config.SIGLIP_VARIANTS.items():
         assert isinstance(model_name, str)
         assert isinstance(dim, int)
         assert dim > 0
-        if variant in siglip2:
-            assert model_name.startswith("ViT-"), f"{variant}: bad model name {model_name!r}"
-            # The so400m HF repo is named `timm/ViT-so400m-patch16-384`
-            # without a "SigLIP2" suffix (quirk of HF repo naming); the
-            # other three have "SigLIP2" in their HF repo names. Accept
-            # either, since `_CENTROID_MODEL_COMPAT` is what actually
-            # drives the model-family grouping.
-            assert ("SigLIP2" in model_name or "so400m" in model_name), (
-                f"{variant}: model {model_name!r} is not in the SigLIP2 family"
-            )
-            assert dim in (768, 1024, 1152, 1536), f"{variant}: unexpected dim {dim}"
-        else:
-            # A variant from another family must still resolve to a
-            # registered model of the same dim, and must have a
-            # centroid-compat mapping or config.load() refuses to boot.
-            from lustre_kernel.registry import get as _registry_get
+        from lustre_kernel.registry import get as _registry_get
 
-            spec = _registry_get(model_name)
-            assert spec.dim == dim, (
-                f"{variant}: registry dim {spec.dim} disagrees with the "
-                f"variant table's {dim}"
-            )
-            config.centroid_compat_for(model_name)
+        spec = _registry_get(model_name)
+        assert spec.dim == dim, (
+            f"{variant}: registry dim {spec.dim} disagrees with the "
+            f"variant table's {dim}"
+        )
+        config.centroid_compat_for(model_name)
 
 
 # ----- Variant reconciliation against Qdrant (round 34) -----
@@ -214,7 +225,7 @@ class TestReconcileVariantFromQdrant:
         )
         # Never create the collection. Should not raise.
         config.reconcile_variant_from_qdrant(
-            "B/16-256",
+            LIVE_VARIANT,
             qdrant_url="ignored",
             qdrant_api_key=None,
             qdrant_collection="images",
@@ -228,14 +239,14 @@ class TestReconcileVariantFromQdrant:
         client = _make_client_for_reconcile()
         client.create_collection(
             collection_name="images",
-            vectors_config=qm.VectorParams(size=768, distance=qm.Distance.COSINE),
+            vectors_config=qm.VectorParams(size=LIVE_DIM, distance=qm.Distance.COSINE),
         )
         monkeypatch.setattr(
             config, "QdrantClient",
             lambda **kw: client,
         )
         config.reconcile_variant_from_qdrant(
-            "B/16-256",
+            LIVE_VARIANT,
             qdrant_url="ignored", qdrant_api_key=None,
             qdrant_collection="images",
         )
@@ -243,13 +254,13 @@ class TestReconcileVariantFromQdrant:
     def test_matching_dim_proceeds(self, monkeypatch):
         """Collection dim matches env variant's expected dim → no-op."""
         client = _make_client_for_reconcile()
-        _dim_via_payloads(client, "images", dim=1152)  # so400m = 1152
+        _dim_via_payloads(client, "images", dim=LIVE_DIM)
         monkeypatch.setattr(
             config, "QdrantClient",
             lambda **kw: client,
         )
         config.reconcile_variant_from_qdrant(
-            "so400m/16-384",
+            LIVE_VARIANT,
             qdrant_url="ignored", qdrant_api_key=None,
             qdrant_collection="images",
         )
@@ -264,15 +275,15 @@ class TestReconcileVariantFromQdrant:
         this test exists to prevent.
         """
         client = _make_client_for_reconcile()
-        # Old data at 768 (B/16-256). User now wants so400m (1152).
-        _dim_via_payloads(client, "images", dim=768)
+        # Old data at a dim the live variant does not produce.
+        _dim_via_payloads(client, "images", dim=FOREIGN_DIM)
         monkeypatch.setattr(
             config, "QdrantClient",
             lambda **kw: client,
         )
         with pytest.raises(config.QdrantVariantMismatch) as excinfo:
             config.reconcile_variant_from_qdrant(
-                "so400m/16-384",
+                LIVE_VARIANT,
                 qdrant_url="ignored", qdrant_api_key=None,
                 qdrant_collection="images",
             )
@@ -294,16 +305,14 @@ class TestReconcileVariantFromQdrant:
         from qdrant_client.http import models as qm
         client.create_collection(
             collection_name="images",
-            vectors_config=qm.VectorParams(size=1152, distance=qm.Distance.COSINE),
+            vectors_config=qm.VectorParams(size=LIVE_DIM, distance=qm.Distance.COSINE),
         )
-        # Single point with model_variant=L/16-256 (dim=1024, but we're
-        # pretending the indexer wrote the wrong payload for the actual
-        # 1152-dim vectors).
+        # Single point whose payload claims a different model wrote it.
         client.upsert(
             collection_name="images",
             points=[qm.PointStruct(
-                id=1, vector=[0.0] * 1152,
-                payload={"model_variant": "L/16-256"},
+                id=1, vector=[0.0] * LIVE_DIM,
+                payload={"model_variant": "so400m/16-384"},
             )],
         )
         monkeypatch.setattr(
@@ -312,12 +321,12 @@ class TestReconcileVariantFromQdrant:
         )
         with pytest.raises(config.QdrantVariantMismatch) as excinfo:
             config.reconcile_variant_from_qdrant(
-                "so400m/16-384",
+                LIVE_VARIANT,
                 qdrant_url="ignored", qdrant_api_key=None,
                 qdrant_collection="images",
             )
         msg = str(excinfo.value)
-        assert "L/16-256" in msg, "must report the actual stored variant"
+        assert "so400m/16-384" in msg, "must report the actual stored variant"
         # Collection still exists.
         info = client.get_collection(collection_name="images")
         assert info is not None
@@ -328,19 +337,19 @@ class TestReconcileVariantFromQdrant:
         the stored dim, so the operator doesn't have to guess.
         """
         client = _make_client_for_reconcile()
-        # Stored at 768 → likely variant is B/16-256.
-        _dim_via_payloads(client, "images", dim=768)
+        # Stored at a dim the live variant does not produce.
+        _dim_via_payloads(client, "images", dim=FOREIGN_DIM)
         monkeypatch.setattr(
             config, "QdrantClient",
             lambda **kw: client,
         )
         with pytest.raises(config.QdrantVariantMismatch) as excinfo:
             config.reconcile_variant_from_qdrant(
-                "so400m/16-384",
+                LIVE_VARIANT,
                 qdrant_url="ignored", qdrant_api_key=None,
                 qdrant_collection="images",
             )
-        assert "B/16-256" in str(excinfo.value)
+        assert str(FOREIGN_DIM) in str(excinfo.value)
 
     def test_legacy_payload_missing_proceeds(self, monkeypatch):
         """Dim matches, payload missing (legacy data) → proceed."""
@@ -348,12 +357,12 @@ class TestReconcileVariantFromQdrant:
         from qdrant_client.http import models as qm
         client.create_collection(
             collection_name="images",
-            vectors_config=qm.VectorParams(size=1152, distance=qm.Distance.COSINE),
+            vectors_config=qm.VectorParams(size=LIVE_DIM, distance=qm.Distance.COSINE),
         )
         # Single point, no model_variant payload (legacy).
         client.upsert(
             collection_name="images",
-            points=[qm.PointStruct(id=1, vector=[0.0] * 1152, payload={})],
+            points=[qm.PointStruct(id=1, vector=[0.0] * LIVE_DIM, payload={})],
         )
         monkeypatch.setattr(
             config, "QdrantClient",
@@ -361,7 +370,7 @@ class TestReconcileVariantFromQdrant:
         )
         # Should not raise, should not drop.
         config.reconcile_variant_from_qdrant(
-            "so400m/16-384",
+            LIVE_VARIANT,
             qdrant_url="ignored", qdrant_api_key=None,
             qdrant_collection="images",
         )
@@ -369,25 +378,24 @@ class TestReconcileVariantFromQdrant:
         info = client.get_collection(collection_name="images")
         assert info.points_count == 1
 
-    def test_ambiguous_dim_without_payload_raises(self, monkeypatch):
-        """A dim two variants share, with no payload to tell them
-        apart, must NOT be served.
+    def test_foreign_dim_without_payload_raises(self, monkeypatch):
+        """A dim no variant produces, with no payload to tell which
+        model wrote it, must NOT be served.
 
-        1536 is produced by both gopt/16-384 and c-radio-v4/so400m,
-        and the two live in different embedding spaces. A collection
-        at that dim whose points carry no `model_variant` payload
-        could be either, so the reconciler cannot prove the vectors
-        match the running model — it has to refuse.
+        The live variant produces 1536. A collection at another dim
+        could have been written by any model, so the reconciler
+        cannot prove the vectors match the running model — it has to
+        refuse.
         """
         client = _make_client_for_reconcile()
         from qdrant_client.http import models as qm
         client.create_collection(
             collection_name="images",
-            vectors_config=qm.VectorParams(size=1536, distance=qm.Distance.COSINE),
+            vectors_config=qm.VectorParams(size=FOREIGN_DIM, distance=qm.Distance.COSINE),
         )
         client.upsert(
             collection_name="images",
-            points=[qm.PointStruct(id=1, vector=[0.0] * 1536, payload={})],
+            points=[qm.PointStruct(id=1, vector=[0.0] * FOREIGN_DIM, payload={})],
         )
         monkeypatch.setattr(
             config, "QdrantClient",
@@ -395,33 +403,32 @@ class TestReconcileVariantFromQdrant:
         )
         with pytest.raises(config.QdrantVariantMismatch) as excinfo:
             config.reconcile_variant_from_qdrant(
-                "c-radio-v4/so400m",
+                LIVE_VARIANT,
                 qdrant_url="ignored", qdrant_api_key=None,
                 qdrant_collection="images",
             )
         message = str(excinfo.value)
-        assert "model_variant" in message
-        assert "c-radio-v4/so400m" in message
-        assert "gopt/16-384" in message
+        assert LIVE_VARIANT in message
+        assert str(FOREIGN_DIM) in message
         # The collection must survive the refusal.
         info = client.get_collection(collection_name="images")
         assert info.points_count == 1
 
-    def test_ambiguous_dim_with_matching_payload_proceeds(self, monkeypatch):
-        """The same collection, but the payload says which model wrote
-        it → the check is satisfied and the app boots."""
+    def test_matching_payload_proceeds(self, monkeypatch):
+        """The live dim whose payload names the live model → the check
+        is satisfied and the app boots."""
         client = _make_client_for_reconcile()
         from qdrant_client.http import models as qm
         client.create_collection(
             collection_name="images",
-            vectors_config=qm.VectorParams(size=1536, distance=qm.Distance.COSINE),
+            vectors_config=qm.VectorParams(size=LIVE_DIM, distance=qm.Distance.COSINE),
         )
         client.upsert(
             collection_name="images",
             points=[qm.PointStruct(
                 id=1,
-                vector=[0.0] * 1536,
-                payload={"model_variant": "c-radio-v4/so400m"},
+                vector=[0.0] * LIVE_DIM,
+                payload={"model_variant": LIVE_VARIANT},
             )],
         )
         monkeypatch.setattr(
@@ -429,7 +436,7 @@ class TestReconcileVariantFromQdrant:
             lambda **kw: client,
         )
         config.reconcile_variant_from_qdrant(
-            "c-radio-v4/so400m",
+            LIVE_VARIANT,
             qdrant_url="ignored", qdrant_api_key=None,
             qdrant_collection="images",
         )

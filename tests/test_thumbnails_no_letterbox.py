@@ -63,28 +63,39 @@ PORTRAIT_SRC = Path(
 )
 
 
-def test_letterboxed_input_produces_bars() -> None:
-    """The pre-fix code path: `load()` returns a letterboxed image, and
-    compute_thumbnail receives that. This test pins the bug so any
-    future change that re-introduces the regression fails loudly."""
+def test_load_does_not_letterbox_and_thumbnail_has_no_bars() -> None:
+    """The loader must not hand a square, bar-padded canvas downstream.
+
+    The round-30 bug was: `load()` returned a letterboxed (square,
+    black-padded) image, and `compute_thumbnail()` center-cropped that
+    square — so the bars survived into the final WebP.
+
+    The bug is pinned at its ROOT now rather than by reproducing it:
+    `load()` returns the picture at its own aspect ratio, so the
+    square input the bug needed cannot be produced. If a future
+    change reintroduces the letterbox at the loader, this fails.
+
+    And the thumbnail built from what `load()` actually returns must
+    not have bars on any edge.
+    """
     from indexer.image_loader import load
     from indexer.thumbnails import compute_thumbnail
 
     if not PORTRAIT_SRC.exists():
         pytest.skip(f"test source not present: {PORTRAIT_SRC}")
 
-    letterboxed, sw, sh = load(PORTRAIT_SRC)
-    assert letterboxed.size[0] == letterboxed.size[1], (
-        f"load() should return a square letterboxed image, got {letterboxed.size}"
+    loaded, sw, sh = load(PORTRAIT_SRC)
+    assert loaded.size[0] != loaded.size[1], (
+        f"load() returned a square image ({loaded.size}) — the letterbox "
+        f"canvas is back, and the bars would return with it"
     )
 
-    thumb = compute_thumbnail(letterboxed, "test-round30-bad")
-    assert thumb is not None, "compute_thumbnail returned None on letterboxed input"
+    thumb = compute_thumbnail(loaded, "test-round30-no-bars")
+    assert thumb is not None, "compute_thumbnail returned None on loaded input"
     arr = np.array(Image.open(thumb).convert("RGB"))
     means = _edge_means(arr)
-    assert _has_bars(means), (
-        f"Expected the buggy path to produce black bars, but means were {means}. "
-        f"If this fails, the bug may have been inadvertently fixed at the load() layer."
+    assert not _has_bars(means), (
+        f"Thumbnail from load() output has black bars (means={means})."
     )
 
 
