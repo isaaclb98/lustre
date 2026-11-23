@@ -53,11 +53,11 @@ def test_api_centroids_lists_loaded(app_with_centroids):
     # Sorted, only the two valid ones — the dinov3 file was skipped.
     assert names == [NOIR_CENTROID, WUXIA_CENTROID]
     spec = data["centroids"][0]
-    assert spec["model"] == "siglip2"
+    assert spec["model"] == "cradio-v4-siglip2g"
     assert spec["feature_dim"] == VECTOR_DIM
     assert spec["n_images"] == 25
     assert "source_path" in spec
-    assert data["expected_model"] == "siglip2"
+    assert data["expected_model"] == "cradio-v4-siglip2g"
     assert data["expected_feature_dim"] == VECTOR_DIM
 
 
@@ -89,7 +89,7 @@ def test_api_centroids_empty_when_dir_unset():
         # the static store has any `.pt` files to load).
         body = resp.json()
         assert body["centroids"] == []
-        assert body["expected_model"] == "siglip2"
+        assert body["expected_model"] == "cradio-v4-siglip2g"
         # Dim tracks whichever variant is the current prod default;
         # so400m/16-384 = 1152. Hardcoding the literal would couple
         # the test to the variant choice — pull from the registry
@@ -170,7 +170,7 @@ def test_reload_picks_up_new_file(app_with_centroids, tmp_path):
 
 def test_reload_drops_deleted_file(app_with_centroids):
     centroids_dir = Path(app_with_centroids.get("/api/centroids").json()["centroids"][0]["source_path"]).parent
-    (centroids_dir / "siglip2_2026-06-17_wuxia.pt").unlink()
+    (centroids_dir / "cradio_2026-06-17_wuxia.pt").unlink()
     resp = app_with_centroids.post("/api/centroids/reload")
     assert resp.status_code == 200
     assert resp.json()["count"] == 1

@@ -50,7 +50,7 @@ def test_build_payload_receives_dims(indexed_source):
     from indexer.upsert import build_payload
 
     p = indexed_source
-    payload = build_payload(p, shard="", model_name="ViT-L-16-SigLIP2-256",
+    payload = build_payload(p, shard="", model_name="C-RADIOv4-SO400M",
                             model_revision="", collection="test-src",
                             width=1024, height=1405)
     assert payload["width"] == 1024
@@ -63,7 +63,7 @@ def test_build_payload_omits_dims_when_not_passed(indexed_source):
     from indexer.upsert import build_payload
 
     p = indexed_source
-    payload = build_payload(p, shard="", model_name="ViT-L-16-SigLIP2-256",
+    payload = build_payload(p, shard="", model_name="C-RADIOv4-SO400M",
                             model_revision="", collection="test-src")
     assert payload["width"] is None
     assert payload["height"] is None

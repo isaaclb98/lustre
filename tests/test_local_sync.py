@@ -38,7 +38,7 @@ def test_build_payload_includes_blurhash(tmp_path: Path) -> None:
     ASCII, within the structural bounds checked by `is_valid_blurhash`).
     """
     png = _make_png(tmp_path)
-    payload = build_payload(png, shard="", model_name="ViT-gopt-16-SigLIP2-384",
+    payload = build_payload(png, shard="", model_name="C-RADIOv4-SO400M",
                            model_revision="", collection="kpop/data")
     assert "blurhash" in payload, (
         "build_payload must include 'blurhash' — local_sync relies on it for LQIP"
@@ -57,14 +57,14 @@ def test_build_payload_uses_source_name(tmp_path: Path) -> None:
     """
     png = _make_png(tmp_path)
     for source_name in ("kpop/data", "kpop/collections", "my-lib"):
-        payload = build_payload(png, shard="", model_name="ViT-gopt-16-SigLIP2-384",
+        payload = build_payload(png, shard="", model_name="C-RADIOv4-SO400M",
                                model_revision="", collection=source_name)
         assert payload.get("collection") == source_name, (
             f"source mismatch: passed {source_name!r}, got {payload.get('collection')!r}"
         )
 
 
-def test_vector_dim_matches_siglip2() -> None:
+def test_vector_dim_matches_the_live_model() -> None:
     """The vector dim is shared between the embedder and the Qdrant
     collection config. If either side drifts, the in-memory Qdrant
     backend will reject upserts with a shape error.

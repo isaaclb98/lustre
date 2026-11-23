@@ -1,8 +1,8 @@
 """
 indexer/vision_encoder.py
 
-Thin wrapper around the model registry (§A3). The actual SigLIP2
-loading lives in `lustre_kernel._real_models.OpenClipEmbedder`;
+Thin wrapper around the model registry (§A3). The actual model
+loading lives in `lustre_kernel._radio_models.RadioEmbedder`;
 this module exists only to preserve the historical
 `VisionEncoder(...)` API for callers (`local_sync.py`, the benchmark
 suite) and to centralize test-mode dispatch to the registry's
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Default model name registered with the kernel. Callers may override
 # via the constructor.
-DEFAULT_MODEL_NAME: str = "ViT-so400m-patch16-384"
+DEFAULT_MODEL_NAME: str = "C-RADIOv4-SO400M"
 # Mock entry registered by `lustre_kernel.registry.get_default_registry`.
 MOCK_MODEL_NAME: str = "mock-1536"
 
@@ -34,8 +34,8 @@ class VisionEncoder:
     registered for `model_name` in the model registry.
 
     The `device` parameter is accepted for backward compatibility; it
-    is forwarded to the registered embedder if that embedder is a
-    `OpenClipEmbedder`. Mock embedders ignore it.
+    is forwarded to the registered embedder. Mock embedders
+    ignore it.
 
     The `test_mode` flag selects the `mock-1536` registry entry
     regardless of `model_name`.

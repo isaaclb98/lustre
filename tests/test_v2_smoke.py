@@ -27,7 +27,7 @@ from fastapi.testclient import TestClient
 # Set env BEFORE importing — matches dev_server invariants.
 os.environ.setdefault("SEARCH_TEST_MODE", "1")
 os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
-os.environ.setdefault("MODEL_NAME", "hf-hub:timm/ViT-SO400M-16-SigLIP2-384")
+os.environ.setdefault("MODEL_NAME", "C-RADIOv4-SO400M")
 os.environ.setdefault("NAS_IMAGES_BASE", "/tmp/_is_v2_smoke_nas")  # noqa: S108
 
 _REPO = Path(__file__).resolve().parent.parent

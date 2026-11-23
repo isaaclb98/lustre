@@ -54,7 +54,7 @@ def save_centroid(
     path: Path,
     name: str,
     *,
-    model: str = "siglip2",
+    model: str = "cradio-v4-siglip2g",
     feature_dim: int = VECTOR_DIM,
 ) -> None:
     """Build a minimal valid centroid .pt file for tests."""
@@ -85,8 +85,8 @@ def app_with_centroids(qdrant_in_memory, nas_base, tmp_path):
     """
     centroids_dir = tmp_path / "centroids"
     centroids_dir.mkdir()
-    save_centroid(centroids_dir / "siglip2_2026-06-17_wuxia.pt", WUXIA_CENTROID)
-    save_centroid(centroids_dir / "siglip2_2026-06-17_noir.pt", NOIR_CENTROID)
+    save_centroid(centroids_dir / "cradio_2026-06-17_wuxia.pt", WUXIA_CENTROID)
+    save_centroid(centroids_dir / "cradio_2026-06-17_noir.pt", NOIR_CENTROID)
     save_centroid(
         centroids_dir / "dinov3_junk.pt", "dinov3_junk",
         model="dinov3", feature_dim=4096,
@@ -108,7 +108,7 @@ def app_with_centroids(qdrant_in_memory, nas_base, tmp_path):
         log_level="WARNING",
         test_mode=True,
         centroids_dir=str(centroids_dir),
-        centroid_expected_model="siglip2",
+        centroid_expected_model="cradio-v4-siglip2g",
         centroid_expected_feature_dim=VECTOR_DIM,
     )
 

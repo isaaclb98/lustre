@@ -2,7 +2,7 @@
 tests/test_text_encoder_unit.py — Unit tests for search/text_encoder.py.
 
 Tests the pure-Python helpers (no actual ML model required):
-  - _normalize_query_for_siglip2
+  - _normalize_query_for_text_tower
   - _canonical_prompt_tuple
   - ModelStatus enum
   - get_status / reset_encoder_for_tests
@@ -17,7 +17,7 @@ from search.text_encoder import (
     ModelStatus,
     TextEncoder,
     _canonical_prompt_tuple,
-    _normalize_query_for_siglip2,
+    _normalize_query_for_text_tower,
     clear_cache,
     get_status,
     reset_encoder_for_tests,
@@ -77,34 +77,34 @@ class TestModuleConstants:
         assert spec is not None
 
 
-# ----- _normalize_query_for_siglip2 -----
+# ----- _normalize_query_for_text_tower -----
 
 class TestNormalizeQueryForSiglip2:
     """Lowercase normalization for SigLIP2 text tower."""
 
     def test_lowercases(self):
-        assert _normalize_query_for_siglip2("Cat") == "cat"
+        assert _normalize_query_for_text_tower("Cat") == "cat"
 
     def test_already_lowercase_unchanged(self):
-        assert _normalize_query_for_siglip2("cat") == "cat"
+        assert _normalize_query_for_text_tower("cat") == "cat"
 
     def test_uppercase_to_lowercase(self):
-        assert _normalize_query_for_siglip2("CAT") == "cat"
+        assert _normalize_query_for_text_tower("CAT") == "cat"
 
     def test_mixed_case(self):
-        assert _normalize_query_for_siglip2("cAtDoG") == "catdog"
+        assert _normalize_query_for_text_tower("cAtDoG") == "catdog"
 
     def test_empty_string(self):
-        assert _normalize_query_for_siglip2("") == ""
+        assert _normalize_query_for_text_tower("") == ""
 
     def test_unicode_lowercase(self):
         """Unicode lowercase works (e.g., É → é)."""
-        result = _normalize_query_for_siglip2("Café")
+        result = _normalize_query_for_text_tower("Café")
         assert result == "café"
 
     def test_with_numbers_unchanged(self):
         """Numbers don't have case, so they pass through."""
-        assert _normalize_query_for_siglip2("IMG_2024") == "img_2024"
+        assert _normalize_query_for_text_tower("IMG_2024") == "img_2024"
 
 
 # ----- _canonical_prompt_tuple -----

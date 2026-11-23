@@ -39,6 +39,6 @@ __all__ = ["MAX_EMBED_BATCH_SIZE"]
 #   640           16      5671 MB   <- never run this
 #
 # The indexer's CLI/env clamp is in indexer/local_sync.py; the
-# embedder's own is in lustre_kernel/_real_models.py. Both read this
+# embedder's own is in lustre_kernel/_radio_models.py. Both read this
 # constant, so they cannot drift apart.
 MAX_EMBED_BATCH_SIZE = 8

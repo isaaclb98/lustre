@@ -11,8 +11,7 @@ adaptor additionally carries SigLIP2-g's text tower and tokenizer,
 so a single forward pass produces text-aligned vectors that are
 directly comparable with text queries.
 
-This module registers the model the same way `_real_models.py`
-registers the SigLIP2 family: lazily, so importing the kernel
+This module registers the model lazily, so importing the kernel
 never pulls torch or downloads weights.
 
 Three differences from the SigLIP2 path that the rest of the
@@ -56,6 +55,7 @@ from typing import Any
 
 from PIL import Image
 
+from lustre_kernel.limits import MAX_EMBED_BATCH_SIZE
 from lustre_kernel.registry import ModelSpec, Registry
 
 __all__ = ["MODEL_INPUT_SIZE", "register_into"]
@@ -111,6 +111,7 @@ class RadioEmbedder:
         dim: int = 1536,
         long_edge: int = 512,
         revision: str = "c-radio-v4-so400m",
+        device: str | None = None,
     ) -> None:
         self._dim = dim
         self._long_edge = long_edge
@@ -120,8 +121,30 @@ class RadioEmbedder:
         # `None` from the initial assignment and treat every use as
         # unreachable.
         self._model: Any = None
-        self._device = self._resolve_device()
+        self._device = self._resolve_device(device)
         self._lock = threading.Lock()
+
+        # The largest batch this embedder will put in ONE forward
+        # pass. The indexer clamps its own CLI flag and env var, but
+        # a caller that asks the embedder directly never passes
+        # through that clamp — so the ceiling is enforced here too.
+        # The activation memory of the ViT scales with the batch, and
+        # the card is a 10 GiB RTX 3080: the 640-input run at batch 16
+        # left ~90 MiB free, which is the condition that took the card
+        # off the PCIe bus (Xid 79).
+        #
+        # `embed_images` groups by shape and stacks each group into a
+        # single forward pass, so without this the group size — not
+        # the caller's request — decides the peak. A group is at most
+        # as large as the batch handed in, but a direct caller could
+        # hand in 32 images of one shape and put all 32 in one pass.
+        self.embed_batch_size = max(
+            1,
+            min(
+                int(os.environ.get("EMBED_BATCH_SIZE", str(MAX_EMBED_BATCH_SIZE))),
+                MAX_EMBED_BATCH_SIZE,
+            ),
+        )
 
     # -- Embedder protocol ------------------------------------------------
 
@@ -193,17 +216,23 @@ class RadioEmbedder:
             with suppress(Exception):
                 torch.cuda.reset_peak_memory_stats()
         for indices in groups.values():
-            batch = torch.stack([tensors[i] for i in indices]).to(self._device)
-            with torch.no_grad():
-                vis_output = self._model(batch)
-                summary = vis_output[RADIO_ADAPTOR][0]
-            summary = summary.float()
-            if summary.dim() == 3:
-                summary = summary.squeeze(1)
-            summary = summary / summary.norm(dim=-1, keepdim=True)
-            values = summary.cpu().tolist()
-            for slot, vector in zip(indices, values, strict=True):
-                out[slot] = vector
+            # Chunk the group: a shape group can be larger than the
+            # batch ceiling (every photo in the corpus can share one
+            # shape), and the whole group would otherwise go into a
+            # single forward pass.
+            for start in range(0, len(indices), self.embed_batch_size):
+                chunk = indices[start : start + self.embed_batch_size]
+                batch = torch.stack([tensors[i] for i in chunk]).to(self._device)
+                with torch.no_grad():
+                    vis_output = self._model(batch)
+                    summary = vis_output[RADIO_ADAPTOR][0]
+                summary = summary.float()
+                if summary.dim() == 3:
+                    summary = summary.squeeze(1)
+                summary = summary / summary.norm(dim=-1, keepdim=True)
+                values = summary.cpu().tolist()
+                for slot, vector in zip(chunk, values, strict=True):
+                    out[slot] = vector
         if log_vram and self._device == "cuda":
             from contextlib import suppress as _suppress
 
@@ -225,8 +254,16 @@ class RadioEmbedder:
 
     # -- Internals ---------------------------------------------------------
 
-    def _resolve_device(self) -> str:
-        device = os.environ.get("DEVICE", "cpu").strip().lower()
+    def _resolve_device(self, requested: str | None = None) -> str:
+        """Resolve the device this embedder runs on.
+
+        `requested` wins when given. Otherwise the DEVICE env var
+        decides, which is how the indexer selects its device (its
+        --device flag writes DEVICE before the registry is built).
+        """
+        if requested is None:
+            requested = os.environ.get("DEVICE", "cpu")
+        device = requested.strip().lower()
         if device == "cuda":
             import torch
 
@@ -311,11 +348,9 @@ def _move_to_device(tokens: Any, device: str) -> Any:
 def register_into(registry: Registry) -> None:
     """Register the C-RADIOv4-SO400M entry.
 
-    Separate from `_real_models.register_into` on purpose: the
-    RADIO path needs runtime bits the SigLIP2 path does not
-    (`einops` for torch.hub's dependency check, `git` for the
-    clone). Keeping them apart means a host without those still
-    gets the open_clip registrations.
+    The RADIO path needs runtime bits the old SigLIP2 loader did
+    not (`einops` for torch.hub's dependency check, `git` for the
+    clone), so its import is guarded.
 
     The input's long edge is MODEL_INPUT_SIZE, not a number of
     this module's own and NOT the display thumbnail's size.
@@ -339,15 +374,38 @@ def register_into(registry: Registry) -> None:
     Read from the environment because the kernel cannot import the
     indexer (the architecture test forbids it).
     """
-    embedder = RadioEmbedder(dim=1536, long_edge=MODEL_INPUT_SIZE)
+    # The text tower and the vision tower are SEPARATE embedders,
+    # and they can sit on different devices.
+    #
+    # The API and the indexer share this container: the API answers
+    # text queries, the indexer (a child process) embeds photos. Both
+    # would otherwise resolve the same DEVICE env var and land on the
+    # GPU — so the API's first text query would pull the whole model
+    # onto the card and take memory away from a running embed. The
+    # indexer's --device flag writes DEVICE, so the vision tower has
+    # to follow DEVICE; the text tower follows TEXT_ENCODER_DEVICE,
+    # which defaults to cpu.
+    #
+    # The two towers are never loaded in the same process (the API
+    # only embeds text, the indexer only embeds images), so this
+    # does not double the resident weights.
+    text_embedder = RadioEmbedder(
+        dim=1536,
+        long_edge=MODEL_INPUT_SIZE,
+        device=os.environ.get("TEXT_ENCODER_DEVICE", "cpu"),
+    )
+    vision_embedder = RadioEmbedder(
+        dim=1536,
+        long_edge=MODEL_INPUT_SIZE,
+    )
     registry.register(
         ModelSpec(
             name="C-RADIOv4-SO400M",
             dim=1536,
             resolution=MODEL_INPUT_SIZE,
             revision="c-radio-v4-so400m",
-            text=embedder,
-            vision=embedder,
+            text=text_embedder,
+            vision=vision_embedder,
             preprocess="native",
         )
     )

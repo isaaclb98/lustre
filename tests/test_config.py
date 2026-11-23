@@ -9,7 +9,7 @@ def test_default_result_limit_is_28(monkeypatch, tmp_path):
     monkeypatch.delenv("TOP_K_DEFAULT", raising=False)
     monkeypatch.setenv("SEARCH_TEST_MODE", "1")
     monkeypatch.setenv("NAS_IMAGES_BASE", str(tmp_path))
-    monkeypatch.setenv("MODEL_NAME", "ViT-gopt-16-SigLIP2-384")
+    monkeypatch.setenv("MODEL_NAME", "C-RADIOv4-SO400M")
 
     loaded = config.load()
 
@@ -29,7 +29,7 @@ def test_photos_dir_is_canonical(monkeypatch, tmp_path):
     monkeypatch.delenv("NAS_IMAGES_BASE", raising=False)
     monkeypatch.setenv("SEARCH_TEST_MODE", "1")
     monkeypatch.setenv("PHOTOS_DIR", str(tmp_path))
-    monkeypatch.setenv("MODEL_NAME", "ViT-gopt-16-SigLIP2-384")
+    monkeypatch.setenv("MODEL_NAME", "C-RADIOv4-SO400M")
 
     loaded = config.load()
 
@@ -43,7 +43,7 @@ def test_nas_images_base_works_as_deprecated_alias(monkeypatch, tmp_path):
     monkeypatch.delenv("PHOTOS_DIR", raising=False)
     monkeypatch.setenv("SEARCH_TEST_MODE", "1")
     monkeypatch.setenv("NAS_IMAGES_BASE", str(tmp_path))
-    monkeypatch.setenv("MODEL_NAME", "ViT-gopt-16-SigLIP2-384")
+    monkeypatch.setenv("MODEL_NAME", "C-RADIOv4-SO400M")
 
     with pytest.warns(DeprecationWarning, match="NAS_IMAGES_BASE is deprecated"):
         loaded = config.load()
@@ -64,7 +64,7 @@ def test_photos_dir_wins_over_nas_images_base(monkeypatch, tmp_path):
     monkeypatch.setenv("SEARCH_TEST_MODE", "1")
     monkeypatch.setenv("PHOTOS_DIR", str(new_dir))
     monkeypatch.setenv("NAS_IMAGES_BASE", str(old_dir))
-    monkeypatch.setenv("MODEL_NAME", "ViT-gopt-16-SigLIP2-384")
+    monkeypatch.setenv("MODEL_NAME", "C-RADIOv4-SO400M")
 
     loaded = config.load()
 
@@ -79,7 +79,7 @@ def test_missing_photos_dir_raises_outside_test_mode(monkeypatch, tmp_path):
     monkeypatch.delenv("PHOTOS_DIR", raising=False)
     monkeypatch.delenv("NAS_IMAGES_BASE", raising=False)
     monkeypatch.delenv("SEARCH_TEST_MODE", raising=False)
-    monkeypatch.setenv("MODEL_NAME", "ViT-gopt-16-SigLIP2-384")
+    monkeypatch.setenv("MODEL_NAME", "C-RADIOv4-SO400M")
 
     with pytest.raises(ValueError, match="PHOTOS_DIR is required"):
         config.load()

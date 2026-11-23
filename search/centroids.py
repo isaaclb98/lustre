@@ -7,8 +7,8 @@ to disk by `isaac-image-scoring` as a torch .pt file with this shape:
     torch.save({
         "centroid":     Tensor[FEATURE_DIM],  # unit-norm
         "name":         str,
-        "model":        str,                  # e.g. "siglip2"
-        "model_type":   str,                  # e.g. "siglip2", "ensemble", "dinov3"
+        "model":        str,                  # e.g. "cradio-v4-siglip2g"
+        "model_type":   str,                  # e.g. "cradio-v4-siglip2g", "dinov3"
         "model_id":     str | None,
         "feature_dim":  int,
         "n_images":     int,

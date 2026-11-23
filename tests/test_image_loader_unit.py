@@ -170,15 +170,16 @@ class TestLetterboxResize:
 # ----- load -----
 
 class TestLoad:
-    """Full load pipeline: open → EXIF → RGB → letterbox."""
+    """Full load pipeline: open → EXIF → RGB → model policy."""
 
     def test_basic_load(self, tmp_path):
         img_path = tmp_path / "test.jpg"
         Image.new("RGB", (300, 200), color="red").save(img_path, "JPEG")
         # Round‑30: load() returns (img, source_w, source_h).
         loaded_img, _sw, _sh = load(img_path)
-        # Should be letterboxed to model's resolution
-        assert loaded_img.size == (_default_resolution(), _default_resolution())
+        # The live model is native-aspect: the picture comes back as
+        # decoded, NOT letterboxed onto a square canvas.
+        assert loaded_img.size == (300, 200)
 
     def test_load_returns_rgb(self, tmp_path):
         img_path = tmp_path / "test.png"
@@ -187,18 +188,21 @@ class TestLoad:
         assert loaded_img.mode == "RGB"
 
     def test_load_with_specific_model(self, tmp_path):
-        """Loading with a different model name should use that model's resolution."""
+        """Loading with an explicit model name uses that model's policy."""
         img_path = tmp_path / "test.jpg"
         Image.new("RGB", (300, 200), color="red").save(img_path, "JPEG")
 
         from lustre_kernel.registry import get as registry_get
-        # Use a model that has a different resolution
-        for model_name in ["ViT-L-16-SigLIP2-256", "ViT-B-16-SigLIP2-256"]:
+        for model_name in ["C-RADIOv4-SO400M"]:
             _logger = logging.getLogger(__name__)
             try:
                 spec = registry_get(model_name)
                 loaded_img, _sw, _sh = load(img_path, model_name=model_name)
-                assert loaded_img.size == (spec.resolution, spec.resolution)
+                # Native policy: the image keeps its own aspect ratio.
+                if getattr(spec, "preprocess", "letterbox") == "native":
+                    assert loaded_img.size == (300, 200)
+                else:
+                    assert loaded_img.size == (spec.resolution, spec.resolution)
             except (KeyError, ModelNotFoundError) as exc:
                 # Model not registered in test env — skip. Logged
                 # at debug so a missing-model setup is easy to

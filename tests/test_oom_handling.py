@@ -169,7 +169,7 @@ class TestBatchSizeCeiling:
         """
         import os
 
-        from lustre_kernel._real_models import OpenClipEmbedder
+        from lustre_kernel._radio_models import RadioEmbedder
         from lustre_kernel.limits import MAX_EMBED_BATCH_SIZE as shared
 
         def make(env_value: str | None):
@@ -178,11 +178,9 @@ class TestBatchSizeCeiling:
             else:
                 os.environ["EMBED_BATCH_SIZE"] = env_value
             try:
-                return OpenClipEmbedder(
-                    arch_tag="ViT-B-32",
-                    pretrained="openai",
-                    dim=512,
-                    resolution=224,
+                return RadioEmbedder(
+                    dim=1536,
+                    long_edge=480,
                 ).embed_batch_size
             finally:
                 os.environ.pop("EMBED_BATCH_SIZE", None)

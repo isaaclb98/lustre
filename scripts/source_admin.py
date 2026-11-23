@@ -65,10 +65,7 @@ def _model_for_dim(dim: int) -> str | None:
 
     registry = get_default_registry()
     for name in (
-        "ViT-so400m-patch16-384",
-        "ViT-gopt-16-SigLIP2-384",
-        "ViT-L-16-SigLIP2-256",
-        "ViT-B-16-SigLIP2-256",
+        "C-RADIOv4-SO400M",
     ):
         try:
             if registry.get(name).dim == dim:

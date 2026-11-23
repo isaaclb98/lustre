@@ -30,7 +30,7 @@ def test_build_payload_includes_width_and_height(tmp_path: Path):
     p.write_bytes(b"")
     payload = build_payload(
         path=p, shard="",
-        model_name="ViT-L-16-SigLIP2-256",
+        model_name="C-RADIOv4-SO400M",
         model_revision="webli",
         collection="",
         width=3000, height=2000,
@@ -47,7 +47,7 @@ def test_build_payload_width_and_height_default_to_none(tmp_path: Path):
     p.write_bytes(b"")
     payload = build_payload(
         path=p, shard="",
-        model_name="ViT-L-16-SigLIP2-256",
+        model_name="C-RADIOv4-SO400M",
         model_revision="webli",
         collection="",
     )
@@ -89,11 +89,12 @@ def test_load_returns_source_dims_alongside_letterboxed_image(tmp_path: Path):
     # load: returns source dims from peek_source_dims (called BEFORE
     # draft), so they're the true source even when load_image_pil's
     # draft step would otherwise have mutated img.size.
-    img, source_w, source_h = load(p, model_name="ViT-L-16-SigLIP2-256")
+    img, source_w, source_h = load(p, model_name="C-RADIOv4-SO400M")
     assert source_w == 100
     assert source_h == 200
-    # Letterboxed image is square at the registered resolution.
-    assert img.size == (256, 256)
+    # The live model is native-aspect: the picture keeps its own
+    # aspect ratio, it is not letterboxed onto a square canvas.
+    assert img.size == (100, 200)
 
 
 def test_load_jpeg_source_dims_survive_draft(tmp_path: Path):
@@ -118,7 +119,8 @@ def test_load_jpeg_source_dims_survive_draft(tmp_path: Path):
     # behaviour, not in pixel count.
     Image.new("RGB", (600, 400), (0, 128, 255)).save(p, "JPEG", quality=80)
 
-    img, source_w, source_h = load(p, model_name="ViT-L-16-SigLIP2-256")
+    img, source_w, source_h = load(p, model_name="C-RADIOv4-SO400M")
     assert source_w == 600, f"source_w={source_w} (expected 600)"
     assert source_h == 400, f"source_h={source_h} (expected 400)"
-    assert img.size == (256, 256)
+    # Native-aspect: the decoded image keeps the source's shape.
+    assert img.size == (600, 400)

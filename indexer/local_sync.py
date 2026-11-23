@@ -211,7 +211,7 @@ def parse_args(argv=None):
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--prune", action="store_true")
-    p.add_argument("--model", type=str, default="ViT-so400m-patch16-384")
+    p.add_argument("--model", type=str, default="C-RADIOv4-SO400M")
     p.add_argument("--device", type=str, default="cuda")
     p.add_argument("--qdrant-url", type=str, default=os.environ.get("QDRANT_URL", "http://localhost:6333"))
     p.add_argument("--qdrant-api-key", type=str, default=os.environ.get("QDRANT_API_KEY") or None)
@@ -515,6 +515,16 @@ def main(argv=None):
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
     args = parse_args(argv)
 
+    # The embedders resolve their device from the DEVICE env var, and
+    # they read it when they are BUILT — lazily, on the first embed.
+    # The indexer's own --device flag has to be authoritative, or an
+    # index run silently embeds on the CPU (about 20x slower) whenever
+    # the environment does not happen to carry DEVICE. That is exactly
+    # what prod did: its compose set INDEXER_DEVICE but not DEVICE, so
+    # the C-RADIOv4 ViT ran on the CPU at 0.57 photos/s.
+    if args.device:
+        os.environ["DEVICE"] = args.device
+
     # Wire subprocess-level concerns (cancel signals, JSON progress) BEFORE
     # any work begins. Both are no-ops if their respective flags are off.
     global _json_progress
@@ -560,9 +570,9 @@ def main(argv=None):
     # when INDEX_DB_PATH isn't set (tests, standalone indexer runs).
     if not args.dry_run:
         # Resolve the collection's vector dim from the chosen model so a
-        # non-default --model (e.g. ViT-L-16-SigLIP2-256) gets a
-        # 1024-dim collection instead of upsert.ensure_collection's
-        # hardcoded 1536 (the gopt default).
+        # model's own dim, so a registry entry with a different dim
+        # gets a correctly-sized collection instead of
+        # upsert.ensure_collection's hardcoded default.
         model_dim = _registry_get(args.model).dim
 
         if args.rebuild:
@@ -1175,7 +1185,7 @@ def main(argv=None):
                     )
                     payload["path"] = path
                     # Record the SigLIP variant shorthand (e.g.
-                    # "so400m/16-384") on each point so the search backend's
+                    # "c-radio-v4/so400m") on each point so the search backend's
                     # startup reconciler can detect variant mismatches against
                     # Qdrant instead of a redundant on-disk JSON file.
                     _variant = _active_variant()

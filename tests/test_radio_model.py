@@ -68,40 +68,22 @@ def test_radio_model_has_a_centroid_compat_mapping():
     assert dim == 1536
 
 
-def test_radio_variant_is_a_different_space_from_the_siglip_family():
-    """C-RADIOv4 must not be servable against a SigLIP2 collection.
+def test_the_siglip_family_is_not_servable():
+    """A SigLIP2 collection must not be servable by C-RADIOv4.
 
-    Two independent guards have to hold:
-
-    - the DIM differs, so the reconciler's dim check refuses to
-      boot against a collection written by the prod model;
-    - the variant NAME differs, so the per-point `model_variant`
-      payload check refuses too.
-
-    The dim guard is the load-bearing one (a stale collection is
-    the realistic mistake); the payload guard is the belt-and-braces
-    for a collection that happens to share the dim.
+    The SigLIP2 family is gone from the variant table, so there is
+    no variant to point the reconciler at — and that is the point:
+    a collection written by a removed model cannot be matched by
+    dim, by variant name, or by payload, because none of those
+    names exist any more. The only thing left is to refuse.
     """
-    radio_dim = config.get_vector_dim_for_variant(RADIO_VARIANT)
-    siglip_dim = config.get_vector_dim_for_variant("so400m/16-384")
-    assert radio_dim == 1536
-    assert siglip_dim == 1152
-    assert radio_dim != siglip_dim
-    assert RADIO_VARIANT != "so400m/16-384"
+    assert RADIO_VARIANT in config.SIGLIP_VARIANTS
+    assert config.get_vector_dim_for_variant(RADIO_VARIANT) == 1536
 
-
-def test_radio_dim_matches_the_gopt_dim_but_not_its_space():
-    """gopt is also 1536-dim — the payload guard is what separates them.
-
-    Two models can share a dim and still be different spaces. This
-    is the case where the dim check alone would NOT catch a
-    mismatched collection, which is exactly why the reconciler also
-    reads the per-point `model_variant` payload.
-    """
-    radio_dim = config.get_vector_dim_for_variant(RADIO_VARIANT)
-    gopt_dim = config.get_vector_dim_for_variant("gopt/16-384")
-    assert radio_dim == gopt_dim == 1536
-    assert RADIO_VARIANT != "gopt/16-384"
+    for gone in ("so400m/16-384", "gopt/16-384", "B/16-256", "L/16-256"):
+        assert gone not in config.SIGLIP_VARIANTS
+        with pytest.raises(ValueError, match="Unknown variant"):
+            config.get_vector_dim_for_variant(gone)
 
 
 # ----- Native-aspect preprocessing -----
@@ -276,8 +258,7 @@ def test_embed_images_rejects_non_pil(radio_embedder):
 # ----- Image loader policy -----
 
 def test_prepare_for_embedding_follows_the_model_policy():
-    """The policy helper: native models keep the picture, the
-    SigLIP2 models get the square canvas."""
+    """The policy helper: the native model keeps the picture."""
     from indexer.image_loader import prepare_for_embedding
 
     img = Image.new("RGB", (400, 800))
@@ -285,9 +266,6 @@ def test_prepare_for_embedding_follows_the_model_policy():
     native = prepare_for_embedding(img, RADIO_MODEL)
     assert native is img
     assert native.size == (400, 800)
-
-    letterboxed = prepare_for_embedding(img, "ViT-so400m-patch16-384")
-    assert letterboxed.size == (384, 384)
 
 
 def test_the_indexer_does_not_letterbox_behind_the_policys_back():
@@ -343,13 +321,20 @@ def test_loader_does_not_letterbox_for_native_models(tmp_path):
     assert native.size[0] <= 1350
 
 
-def test_loader_still_letterboxes_for_siglip_models(tmp_path):
-    """The SigLIP2 path must not change."""
+def test_loader_has_no_letterbox_path_for_a_removed_model(tmp_path):
+    """A removed model name must not fall back to the square canvas.
+
+    The SigLIP2 loader is gone with the family. Asking the loader
+    for a model it does not know must raise rather than silently
+    letterboxing onto a 384x384 canvas — a silent fallback here is
+    how a portrait photo would get black bars again.
+    """
     from indexer.image_loader import load
 
     path = tmp_path / "portrait.jpg"
     Image.new("RGB", (900, 1350), (200, 30, 30)).save(path)
 
-    letterboxed, src_w, src_h = load(path, model_name="ViT-so400m-patch16-384")
-    assert (src_w, src_h) == (900, 1350)
-    assert letterboxed.size == (384, 384)
+    from lustre_kernel.registry import ModelNotFoundError
+
+    with pytest.raises(ModelNotFoundError):
+        load(path, model_name="ViT-so400m-patch16-384")

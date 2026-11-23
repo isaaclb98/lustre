@@ -60,6 +60,16 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: all
+      # The device the embedders resolve from. Without this the
+      # embedders fall back to CPU and indexing runs ~20x slower.
+      DEVICE: ${DEVICE:-cuda}
+      # The device the TEXT tower resolves from. The API and the
+      # indexer share this container: the API answers text queries,
+      # the indexer embeds photos. Both resolve DEVICE, so without
+      # this the API's first text query would pull the whole model
+      # onto the GPU and take memory away from a running embed.
+      # cpu by default — text search does not need the card.
+      TEXT_ENCODER_DEVICE: ${TEXT_ENCODER_DEVICE:-cpu}
       # Qdrant sidecar — defaults to the compose service name
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: images

@@ -6,7 +6,7 @@ Walks the collection in large scroll batches, writes via set_payload
 in chunks. Idempotent on re-runs.
 
 Usage:
-    uv run python scripts/backfill_model_variant.py so400m/16-384
+    uv run python scripts/backfill_model_variant.py c-radio-v4/so400m
 """
 from __future__ import annotations
 

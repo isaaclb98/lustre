@@ -50,8 +50,8 @@ os.environ.setdefault("SEARCH_TEST_MODE", "1")
 # qdrant_in_memory client takes a :memory: location and ignores
 # QDRANT_URL entirely.
 os.environ.setdefault("QDRANT_URL", "http://localhost:16399")
-os.environ.setdefault("SIGLIP_VARIANT", "so400m/16-384")
-os.environ.setdefault("MODEL_NAME", "ViT-so400m-patch16-384")
+os.environ.setdefault("SIGLIP_VARIANT", "c-radio-v4/so400m")
+os.environ.setdefault("MODEL_NAME", "C-RADIOv4-SO400M")
 os.environ.setdefault("TOP_K_DEFAULT", "35")
 os.environ.setdefault("TOP_K_MAX", "200")
 

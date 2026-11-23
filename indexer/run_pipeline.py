@@ -90,15 +90,14 @@ def _load(
     paths: Iterator[Path],
     *,
     on_failure,
-    model_name: str = "ViT-L-16-SigLIP2-256",
+    model_name: str = "C-RADIOv4-SO400M",
 ) -> Iterator[tuple[Path, Any, int | None, int | None]]:
     """Concurrent PIL decode via a ThreadPoolExecutor (§C2).
 
     Round‑18: takes the active `model_name` so the loader letterboxes
     to the right resolution. The previous default of
-    `ViT-gopt-16-SigLIP2-384` meant the embedder (running the L/16
-    model) received 384×384 images — 9× more pixels than it needs —
-    which silently inflated embed time by ~10×.
+    a fixed model name meant the embedder received images at a
+    resolution it did not need, silently inflating embed time.
 
     `indexer.image_loader.load` is GIL-released (PIL is mostly C
     code) — threads work and are cheaper than processes. The pool
@@ -286,7 +285,7 @@ def _resolve_active_model_name() -> str:
     if _ACTIVE_MODEL is not None:
         return _ACTIVE_MODEL[0]
     # Fallback: the web backend's current model.
-    return "ViT-so400m-patch16-384"
+    return "C-RADIOv4-SO400M"
 
 
 def _resolve_active_model_revision() -> str:
@@ -322,7 +321,7 @@ def set_active_model_variant(variant: str) -> None:
     """Pin the SigLIP variant string used in newly-built payloads.
 
     Mirrors set_active_model() but for the variant shorthand
-    (e.g. "so400m/16-384") that gets written to the
+    (e.g. "c-radio-v4/so400m") that gets written to the
     `model_variant` Qdrant payload field. The reconciler in
     search/config.py reads this field on startup to detect
     variant changes.
@@ -336,7 +335,7 @@ def run_pipeline_source(
     source: Path,
     qdrant_client: Any,
     collection: str,
-    model_name: str = "ViT-L-16-SigLIP2-256",
+    model_name: str = "C-RADIOv4-SO400M",
     batch_size: int = 16,
     dry_run: bool = False,
     cancel_event: threading.Event | None = None,

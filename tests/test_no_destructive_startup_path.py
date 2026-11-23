@@ -31,8 +31,6 @@ import ast
 import re
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Destructive Qdrant collection operations. Any of these reachable
@@ -210,31 +208,20 @@ def test_reconciler_is_reachable_from_config_load() -> None:
     )
 
 
-@pytest.mark.parametrize("variant,expected_dim", [
-    ("B/16-256", 768),
-    ("L/16-256", 1024),
-    ("gopt/16-384", 1536),
-    ("so400m/16-384", 1152),
-    ("c-radio-v4/so400m", 1536),
-])
-def test_variant_dims_are_unique_so_mismatches_are_detectable(
-    variant: str, expected_dim: int,
-) -> None:
-    """A variant's dim must be enough to tell its collection apart.
+def test_the_single_variant_dim_is_unambiguous() -> None:
+    """One variant, one dim — the dim identifies the collection.
 
     The reconciler compares the collection's dim against the env
     variant's dim. That only identifies the model when exactly one
     variant produces the dim — otherwise a mismatched collection
     passes the dim check.
 
-    Two variants CAN share a dim while being different spaces:
-    gopt/16-384 and c-radio-v4/so400m are both 1536, one from
-    SigLIP2's own vision tower and one from RADIO's summary token
-    projected into SigLIP2-g. A shared dim is therefore only safe
-    if the reconciler REFUSES to serve a collection at that dim
+    With the SigLIP2 family gone there is exactly one variant, so
+    the dim is unambiguous by construction. If a second variant is
+    ever added, it must either take a different dim or the
+    reconciler must REFUSE to serve a collection at a shared dim
     whose points carry no `model_variant` payload to disambiguate
-    it — the dim proves nothing on its own, so the reconciler must
-    demand proof.
+    it.
 
     The behaviour is asserted in test_model_variant.py
     (TestReconcileVariantFromQdrant); this test pins the shape of
@@ -242,33 +229,27 @@ def test_variant_dims_are_unique_so_mismatches_are_detectable(
     """
     from search import config
 
-    assert config.SIGLIP_VARIANTS[variant][1] == expected_dim
+    assert set(config.SIGLIP_VARIANTS.keys()) == {"c-radio-v4/so400m"}
 
     by_dim: dict[int, list[str]] = {}
     for name, (_model, dim) in config.SIGLIP_VARIANTS.items():
         by_dim.setdefault(dim, []).append(name)
 
-    # The SigLIP2 family keeps one dim each.
-    siglip2_dims = [
-        config.SIGLIP_VARIANTS[name][1]
-        for name in ("B/16-256", "L/16-256", "gopt/16-384", "so400m/16-384")
-    ]
-    assert len(siglip2_dims) == len(set(siglip2_dims)), (
-        f"the SigLIP2 variant dims are not unique: {siglip2_dims}"
-    )
-
-    # Every dim shared between variants must be one the reconciler
-    # refuses to serve without a payload.
-    source = Path(config.__file__).read_text(encoding="utf-8")
+    # Every dim must be produced by exactly one variant.
     for dim, names in by_dim.items():
-        if len(names) == 1:
-            continue
-        assert "candidates = SIGLIP_VARIANTS_BY_DIM.get(stored_dim, ())" in source, (
-            f"dim {dim} is produced by {names} but the reconciler does not "
-            "look up which variants share it — a mismatch at that dim would "
-            "be undetectable"
+        assert len(names) == 1, (
+            f"dim {dim} is produced by {names} — a shared dim is only safe "
+            "if the reconciler refuses to serve a collection at it without "
+            "a model_variant payload"
         )
-        assert "if len(candidates) > 1:" in source, (
-            f"dim {dim} is produced by {names} but the reconciler does not "
-            "refuse an ambiguous dim"
-        )
+
+    # The reconciler must still look up which variants share a dim, so
+    # that a future second variant at the same dim is caught.
+    source = Path(config.__file__).read_text(encoding="utf-8")
+    assert "candidates = SIGLIP_VARIANTS_BY_DIM.get(stored_dim, ())" in source, (
+        "the reconciler does not look up which variants share a dim — "
+        "a mismatch at a shared dim would be undetectable"
+    )
+    assert "if len(candidates) > 1:" in source, (
+        "the reconciler does not refuse an ambiguous dim"
+    )

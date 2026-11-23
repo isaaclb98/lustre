@@ -8,8 +8,7 @@ Pipeline:
   2. ImageOps.exif_transpose() — apply EXIF orientation
   3. .convert("RGB") — drop alpha; SigLIP2 expects 3 channels
   4. Letterbox resize to the registered model's resolution (e.g.
-     384x384 for ViT-gopt-16-SigLIP2-384, 256x256 for
-     ViT-L-16-SigLIP2-256) — preserve aspect ratio
+     the model's own resolution) — preserve aspect ratio
   5. Normalize with the model's mean/std — produces a tensor
      ready for the embedder
 
@@ -215,7 +214,7 @@ def _default_resolution() -> int:
     """
     try:
         from lustre_kernel.registry import get as _registry_get
-        return _registry_get("ViT-so400m-patch16-384").resolution
+        return _registry_get("C-RADIOv4-SO400M").resolution
     except Exception:  # noqa: BLE001
         return 384
 
@@ -289,7 +288,7 @@ def prepare_for_embedding(
 
 
 def load(
-    path: Path, *, model_name: str = "ViT-so400m-patch16-384",
+    path: Path, *, model_name: str = "C-RADIOv4-SO400M",
 ) -> tuple[Image.Image, int | None, int | None]:
     """
     Load + EXIF-correct + RGB-convert + preprocess. Returns
@@ -323,7 +322,7 @@ def load(
     after draft. Reading the header up front fixes it.
 
     `model_name` defaults to the web backend's current model
-    (`ViT-gopt-16-SigLIP2-384`). The resolution is read from the model
+    (the active variant). The resolution is read from the model
     registry, not from a constant in this module.
 
     Wraps `load_image_pil` in a thread with a `_LOAD_TIMEOUT_S` cap
