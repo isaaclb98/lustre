@@ -111,6 +111,7 @@ class RadioEmbedder:
         dim: int = 1536,
         long_edge: int = 512,
         revision: str = "c-radio-v4-so400m",
+        device: str | None = None,
     ) -> None:
         self._dim = dim
         self._long_edge = long_edge
@@ -120,7 +121,7 @@ class RadioEmbedder:
         # `None` from the initial assignment and treat every use as
         # unreachable.
         self._model: Any = None
-        self._device = self._resolve_device()
+        self._device = self._resolve_device(device)
         self._lock = threading.Lock()
 
         # The largest batch this embedder will put in ONE forward
@@ -253,8 +254,16 @@ class RadioEmbedder:
 
     # -- Internals ---------------------------------------------------------
 
-    def _resolve_device(self) -> str:
-        device = os.environ.get("DEVICE", "cpu").strip().lower()
+    def _resolve_device(self, requested: str | None = None) -> str:
+        """Resolve the device this embedder runs on.
+
+        `requested` wins when given. Otherwise the DEVICE env var
+        decides, which is how the indexer selects its device (its
+        --device flag writes DEVICE before the registry is built).
+        """
+        if requested is None:
+            requested = os.environ.get("DEVICE", "cpu")
+        device = requested.strip().lower()
         if device == "cuda":
             import torch
 
@@ -365,15 +374,38 @@ def register_into(registry: Registry) -> None:
     Read from the environment because the kernel cannot import the
     indexer (the architecture test forbids it).
     """
-    embedder = RadioEmbedder(dim=1536, long_edge=MODEL_INPUT_SIZE)
+    # The text tower and the vision tower are SEPARATE embedders,
+    # and they can sit on different devices.
+    #
+    # The API and the indexer share this container: the API answers
+    # text queries, the indexer (a child process) embeds photos. Both
+    # would otherwise resolve the same DEVICE env var and land on the
+    # GPU — so the API's first text query would pull the whole model
+    # onto the card and take memory away from a running embed. The
+    # indexer's --device flag writes DEVICE, so the vision tower has
+    # to follow DEVICE; the text tower follows TEXT_ENCODER_DEVICE,
+    # which defaults to cpu.
+    #
+    # The two towers are never loaded in the same process (the API
+    # only embeds text, the indexer only embeds images), so this
+    # does not double the resident weights.
+    text_embedder = RadioEmbedder(
+        dim=1536,
+        long_edge=MODEL_INPUT_SIZE,
+        device=os.environ.get("TEXT_ENCODER_DEVICE", "cpu"),
+    )
+    vision_embedder = RadioEmbedder(
+        dim=1536,
+        long_edge=MODEL_INPUT_SIZE,
+    )
     registry.register(
         ModelSpec(
             name="C-RADIOv4-SO400M",
             dim=1536,
             resolution=MODEL_INPUT_SIZE,
             revision="c-radio-v4-so400m",
-            text=embedder,
-            vision=embedder,
+            text=text_embedder,
+            vision=vision_embedder,
             preprocess="native",
         )
     )
