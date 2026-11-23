@@ -3,8 +3,8 @@ search/text_encoder.py
 
 Thin wrapper around the model registry's text embedder (§A3).
 
-The actual SigLIP2 loading lives in
-`lustre_kernel._real_models.OpenClipEmbedder`. This module
+The actual model loading lives in
+`lustre_kernel._radio_models.RadioEmbedder`. This module
 exists to preserve the historical `TextEncoder(...)` API and to
 implement prompt-composition (positive / negative prompt mean +
 difference) on top of the registered text embedder.
@@ -46,7 +46,7 @@ _model_error: str | None = None
 # Default model name registered with the kernel. Sourced from
 # DEFAULT_MODEL (which itself is the active variant's model name)
 # so this follows whichever variant is the prod default — pre-R1
-# it was hardcoded to "ViT-gopt-16-SigLIP2-384". Kept as a string
+# it was hardcoded to a SigLIP2 model name. Kept as a string
 # rather than a direct registry call to avoid import-time cycles
 # (registry → config → ... → encoder).
 # Mock entry registered by `lustre_kernel.registry.get_default_registry`.

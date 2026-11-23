@@ -26,7 +26,7 @@ Usage:
     python benchmarks/embed_batch_sweep.py \
         --source /mnt/nas-main/images/kpop \
         --num-images 200 \
-        --model ViT-L-16-SigLIP2-256 \
+        --model C-RADIOv4-SO400M \
         --device cuda
 """
 
@@ -150,7 +150,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--model",
         type=str,
-        default="ViT-L-16-SigLIP2-256",
+        default="C-RADIOv4-SO400M",
     )
     p.add_argument(
         "--device",

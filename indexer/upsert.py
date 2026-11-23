@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # Vector dim of the active embedding model. Deprecated as a literal
 # constant: pre-migration this was hardcoded to 1536 (gopt's dim);
 # post-migration it tracks whatever model is configured
-# (so400m/16-384 = 1152 today). Kept exported for backward
+# (c-radio-v4/so400m = 1536 today). Kept exported for backward
 # compatibility with existing call sites that haven't been
 # migrated to call `registry.get(name).dim` directly.
 #
@@ -275,7 +275,7 @@ def ensure_collection(
     Create the collection if it doesn't exist. Idempotent.
 
     Vector config:
-      - Dimension from SIGLIP_VARIANT (default: 768 for B/16-256)
+      - Dimension from SIGLIP_VARIANT (default: 1536)
       - Cosine distance (SigLIP2 is trained for cosine similarity)
 
     Args:

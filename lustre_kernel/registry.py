@@ -22,13 +22,11 @@ Rules (from docs/backend-refactor-plan.md §4.3):
 
 Concrete entries shipped today:
 
-- `ViT-gopt-16-SigLIP2-384` — the web backend's current model
-  (PyTorch + open_clip). Real registration is conditional.
+  Real registration is conditional.
 - `mock-1536` — deterministic mock for tests and benchmarks. No
   real-model dependencies; safe to import on any host.
-- `ViT-L-16-SigLIP2-256` — desktop product's model. Real
   registration is conditional; lives behind the same gate as the
-  web's gopt entry.
+  C-RADIOv4 entry.
 """
 
 from __future__ import annotations
@@ -200,15 +198,8 @@ def get(name: str) -> ModelSpec:
 # ---------------------------------------------------------------------------
 
 # Variant name → registered model name. Adding a model means adding
-# it here AND in `_real_models.register_into` / `_MOCK_*_SPEC` above.
+# it here AND in `_radio_models.register_into` / `_MOCK_*_SPEC` above.
 VARIANT_TO_MODEL: dict[str, str] = {
-    "B/16-256": "ViT-B-16-SigLIP2-256",
-    "L/16-256": "ViT-L-16-SigLIP2-256",
-    "gopt/16-384": "ViT-gopt-16-SigLIP2-384",
-    # so400m/16-384 — shape-optimised attention variant; 1152-dim.
-    # 384 input resolution matches the SigLIP2 family default. The
-    # model-variant migration plan adds this as the new prod default.
-    "so400m/16-384": "ViT-so400m-patch16-384",
     # c-radio-v4/so400m — C-RADIOv4-SO400M with the siglip2-g
     # teacher adaptor. 1536-dim (SigLIP2-giant's joint space), not
     # 1152 like the so400m family — and a DIFFERENT embedding space
@@ -219,8 +210,7 @@ VARIANT_TO_MODEL: dict[str, str] = {
     "c-radio-v4/so400m": "C-RADIOv4-SO400M",
 }
 
-DEFAULT_VARIANT = "B/16-256"  # end-user ghcr default (smallest, CPU-runnable).
-# Prod keeps so400m via SIGLIP_VARIANT or MODEL_NAME override.
+DEFAULT_VARIANT = "c-radio-v4/so400m"  # the only variant the kernel ships.
 
 
 def resolve_model_name(variant: str) -> str:
@@ -317,7 +307,7 @@ import math  # placed after the function defs that use it; ruff is fine
 
 # The mock spec's dim used to be hardcoded at 1536 to match gopt-16.
 # After the model-variant migration plan, the prod variant is
-# so400m/16-384 (1152-dim) — but the mock exists to mimic the
+# the prod model — but the mock exists to mimic the
 # prod model's vector space so tests can encode queries + store
 # vectors at the same dim. Hardcoding 1536 here would force every
 # test that uses the mock embedder to also build a 1536-dim
@@ -342,7 +332,7 @@ _MOCK_1536_SPEC = ModelSpec(
 
 # Callable injected by the application to tell the kernel which
 # dim the mock should mimic. Returns the active variant's vector
-# dimension (1152 for so400m/16-384 today). Defaults to 1536
+# dimension (1536 for c-radio-v4/so400m today). Defaults to 1536
 # (gopt's dim) if not registered — so the kernel is usable in
 # isolation for tests that don't care about the active variant.
 _active_mock_dim_provider: Callable[[], int] | None = None
@@ -443,24 +433,11 @@ def _try_register_real_models(registry: Registry) -> None:
     entry. This function is called once on default-registry init; it
     is not called from per-request paths.
     """
-    # The web backend's gopt-16 model. Real implementation lives in
-    # `lustre_kernel._real_models` and is imported lazily so
-    # that importing the kernel does not import torch.
-    try:
-        from lustre_kernel import _real_models
-
-        _real_models.register_into(registry)
-    except ImportError:
-        # Real-model backend not installed. The mock entry remains
-        # available; production deployments that need real models
-        # install the corresponding extra (`pip install
-        # lustre-kernel[open_clip]`).
-        pass
-
-    # C-RADIOv4-SO400M. Registered separately from the SigLIP2
-    # family because its runtime requirements differ (torch.hub
-    # needs `einops` and `git`), and a host missing those should
-    # still get the open_clip registrations above.
+    # C-RADIOv4-SO400M — the only real model the kernel ships.
+    # Imported lazily so that importing the kernel does not import
+    # torch. The SigLIP2 family that used to be registered here is
+    # gone; the SigLIP2-only deployment lives on the
+    # `legacy/siglip2` branch.
     try:
         from lustre_kernel import _radio_models
 

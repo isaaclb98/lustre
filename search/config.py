@@ -28,10 +28,6 @@ load_dotenv()
 
 # SigLIP2 variant mapping: variant name -> (model name, vector dimension)
 SIGLIP_VARIANTS = {
-    "B/16-256": ("ViT-B-16-SigLIP2-256", 768),
-    "L/16-256": ("ViT-L-16-SigLIP2-256", 1024),
-    "gopt/16-384": ("ViT-gopt-16-SigLIP2-384", 1536),
-    "so400m/16-384": ("ViT-so400m-patch16-384", 1152),
     # C-RADIOv4-SO400M with the siglip2-g teacher adaptor. 1536-dim:
     # SigLIP2-GIANT's joint space is 1536 (the so400m family's is
     # 1152). The vectors are RADIO's summary token projected into
@@ -45,10 +41,10 @@ SIGLIP_VARIANTS = {
 # Reverse mapping: dim -> the variant names that produce it.
 #
 # Two models can share a dim and still be different spaces —
-# gopt/16-384 and c-radio-v4/so400m are both 1536 — so the map holds
-# EVERY candidate rather than guessing one. The reconciler's
-# mismatch message lists them all, because "set SIGLIP_VARIANT to
-# the right one" is only actionable if the operator can see both.
+# The map holds EVERY candidate rather than guessing one. The
+# reconciler's mismatch message lists them all, because "set
+# SIGLIP_VARIANT to the right one" is only actionable if the
+# operator can see both.
 SIGLIP_VARIANTS_BY_DIM: dict[int, tuple[str, ...]] = {}
 for _variant_name, (_variant_model, _variant_dim) in SIGLIP_VARIANTS.items():
     SIGLIP_VARIANTS_BY_DIM[_variant_dim] = (
@@ -78,10 +74,7 @@ class QdrantVariantMismatch(RuntimeError):
     """
 
 
-DEFAULT_VARIANT = "B/16-256"  # smallest + fastest; end-user ghcr default.
-# Override via SIGLIP_VARIANT (or MODEL_NAME) for higher-quality
-# embeddings. Prod keeps so400m via .env — this default only
-# applies to fresh deployments where no env override is set.
+DEFAULT_VARIANT = "c-radio-v4/so400m"  # the only variant the kernel ships.
 
 def get_siglip_variant() -> str:
     """Get the configured SigLIP2 variant from SIGLIP_VARIANT env var."""
@@ -266,9 +259,8 @@ def reconcile_variant_from_qdrant(
         # produces that dim.
         #
         # Two variants can share a dim while being different spaces:
-        # gopt/16-384 and c-radio-v4/so400m are both 1536, but one
-        # is SigLIP2's own vision tower and the other is RADIO's
-        # summary token projected into SigLIP2-g. With the dim alone
+        # Two variants can share a dim and still be different spaces,
+        # so the dim alone
         # the reconciler cannot tell a matching collection from a
         # mismatched one, so it must refuse rather than serve
         # similarity results from a space it cannot prove.
@@ -392,15 +384,6 @@ DEFAULT_RESULT_LIMIT: int = 28
 # The unknown-model branch raises at config load time — fail fast
 # rather than serve garbage cosine results.
 _CENTROID_MODEL_COMPAT = {
-    # Round-29: registered B/16-256 as the ghcr end-user default. Adding
-    # the centroid-compat mapping here so the search container boots
-    # when SIGLIP_VARIANT=B/16-256 — without this entry, config.load()
-    # raises "no centroid-compat mapping" and the container fails the
-    # healthcheck loop.
-    "ViT-B-16-SigLIP2-256": "siglip2",
-    "ViT-gopt-16-SigLIP2-384": "siglip2",
-    "ViT-L-16-SigLIP2-256": "siglip2",
-    "ViT-so400m-patch16-384": "siglip2",
     # C-RADIOv4's text-aligned vectors live in SigLIP2-g's joint
     # space, so a centroid computed for the "siglip2" family is
     # dimensionally compatible but was computed from a different
@@ -537,16 +520,14 @@ class Config:
     # must have to be loaded. Defaults match the production model
     # so the centroid-compat guard is meaningful out of the box;
     # production always sets these via config.load().
-    centroid_expected_model: str = "siglip2"
+    centroid_expected_model: str = "cradio-v4-siglip2g"
     # Sourced from the model registry by `config.load()`. Default
     # pulls from the registry so tests that construct `Config()`
     # directly (without going through `config.load()`) still see a
     # real dim. Production always overrides via `centroid_compat_for()`.
     #
     # Reads from `DEFAULT_MODEL` rather than hardcoding
-    # "ViT-gopt-16-SigLIP2-384" so the default follows whichever
-    # variant is the current prod default (so400m-patch16-384 as
-    # of the model-variant migration). `model_name` itself is also
+    # the active variant's model name. `model_name` itself is also
     # set from `DEFAULT_MODEL` further down — both flow from the
     # same `get_siglip_variant()` lookup, so the registry call here
     # never disagrees with the production override.

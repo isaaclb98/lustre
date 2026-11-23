@@ -11,8 +11,7 @@ adaptor additionally carries SigLIP2-g's text tower and tokenizer,
 so a single forward pass produces text-aligned vectors that are
 directly comparable with text queries.
 
-This module registers the model the same way `_real_models.py`
-registers the SigLIP2 family: lazily, so importing the kernel
+This module registers the model lazily, so importing the kernel
 never pulls torch or downloads weights.
 
 Three differences from the SigLIP2 path that the rest of the
@@ -311,11 +310,9 @@ def _move_to_device(tokens: Any, device: str) -> Any:
 def register_into(registry: Registry) -> None:
     """Register the C-RADIOv4-SO400M entry.
 
-    Separate from `_real_models.register_into` on purpose: the
-    RADIO path needs runtime bits the SigLIP2 path does not
-    (`einops` for torch.hub's dependency check, `git` for the
-    clone). Keeping them apart means a host without those still
-    gets the open_clip registrations.
+    The RADIO path needs runtime bits the old SigLIP2 loader did
+    not (`einops` for torch.hub's dependency check, `git` for the
+    clone), so its import is guarded.
 
     The input's long edge is MODEL_INPUT_SIZE, not a number of
     this module's own and NOT the display thumbnail's size.
