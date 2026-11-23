@@ -515,6 +515,16 @@ def main(argv=None):
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
     args = parse_args(argv)
 
+    # The embedders resolve their device from the DEVICE env var, and
+    # they read it when they are BUILT — lazily, on the first embed.
+    # The indexer's own --device flag has to be authoritative, or an
+    # index run silently embeds on the CPU (about 20x slower) whenever
+    # the environment does not happen to carry DEVICE. That is exactly
+    # what prod did: its compose set INDEXER_DEVICE but not DEVICE, so
+    # the C-RADIOv4 ViT ran on the CPU at 0.57 photos/s.
+    if args.device:
+        os.environ["DEVICE"] = args.device
+
     # Wire subprocess-level concerns (cancel signals, JSON progress) BEFORE
     # any work begins. Both are no-ops if their respective flags are off.
     global _json_progress
