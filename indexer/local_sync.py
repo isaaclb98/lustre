@@ -49,8 +49,9 @@ from indexer.image_loader import (
 from indexer.retry import RetryExhausted, retry_with_backoff
 from indexer.scan import ScanCancelled
 from indexer.thumbnails import (
-    generate_ladder_and_model_input,
+    generate_canonical_and_model_input,
     generate_thumbnail_for_path,
+    generate_variants_for_path,
     thumbnail_path,
 )
 from indexer.vision_encoder import VisionEncoder
@@ -337,6 +338,122 @@ _LOAD_POOL_SIZE = max(1, min(_LOAD_POOL_SIZE, 32))
 _THUMB_POOL_SIZE = _LOAD_POOL_SIZE
 
 
+# The async display-variant writer.
+#
+# The canonical thumbnail is written INLINE (it is the embedder's
+# input and the serving endpoint's fallback). The SIZED VARIANTS
+# are display-only, so they are written OFF the critical path:
+# measured on prod, the three WebP encodes cost ~195 ms/photo
+# against a 21 ms decode, and each variant lands on NFS at ~30 ms.
+# Writing them inline kept the GPU idle ~68% of a run.
+#
+# The queue is bounded so a fast embedder cannot run ahead of the
+# writers and fill the page cache with pending thumbnails. When the
+# queue is full the write happens inline — correctness first, speed
+# second.
+_VARIANT_QUEUE_MAX = 256
+
+
+def _missing_variant(point_id: str) -> bool:
+    """Whether any sized display variant for `point_id` is missing.
+
+    The variants are written off the indexer's critical path, so a
+    photo can have its canonical on disk and one of its variants
+    still queued (or lost to a crash). The serving endpoint falls
+    back to the canonical in that case, so it is not broken — but
+    the smaller asset is what the dense view wants, and it should
+    be regenerated rather than silently absent forever.
+    """
+    from indexer.thumbnails import (
+        THUMBNAIL_SIZE,
+        THUMBNAIL_VARIANT_SIZES,
+        sized_thumbnail_path,
+    )
+
+    for size in THUMBNAIL_VARIANT_SIZES:
+        if size >= THUMBNAIL_SIZE:
+            continue
+        if not sized_thumbnail_path(point_id, size).exists():
+            return True
+    return False
+
+
+def _drain_variants(writer: _VariantWriter | None) -> None:
+    """Wait for the queued display variants to land on disk.
+
+    The run is not finished until the variants it queued are on
+    disk — otherwise a caller that sees "done" could immediately
+    request a variant that has not been written yet. Called from
+    every exit path, including the cancel ones.
+    """
+    if writer is None:
+        return
+    writer.close()
+    logger.info(
+        "variants: %d written, %d failed",
+        writer.written,
+        writer.failed,
+    )
+
+
+class _VariantWriter:
+    """Writes sized display variants off the indexer's critical path.
+
+    A background thread pool with a bounded queue. `submit` returns
+    immediately; the variants appear on disk a moment later. The
+    serving endpoint falls back to the canonical until they do, so
+    a missing variant is a slightly larger image, never a broken
+    one.
+    """
+
+    def __init__(self, workers: int) -> None:
+        self._pool = ThreadPoolExecutor(
+            max_workers=max(1, workers), thread_name_prefix="variants"
+        )
+        self._lock = threading.Lock()
+        self._pending = 0
+        self.written = 0
+        self.failed = 0
+
+    def submit(self, path: Path, point_id: str) -> None:
+        """Queue the variant write. Falls back to inline when full."""
+        with self._lock:
+            if self._pending >= _VARIANT_QUEUE_MAX:
+                queue_full = True
+            else:
+                queue_full = False
+                self._pending += 1
+        if queue_full:
+            # The queue is saturated: write inline so the work is
+            # not lost. Slow, but never wrong.
+            self._write(path, point_id)
+            return
+        self._pool.submit(self._write, path, point_id)
+
+    def _write(self, path: Path, point_id: str) -> None:
+        try:
+            count = generate_variants_for_path(path, point_id)
+            with self._lock:
+                self.written += count
+        except Exception as exc:  # noqa: BLE001
+            with self._lock:
+                self.failed += 1
+            logger.warning("variant write failed for %s: %s", path, exc)
+        finally:
+            with self._lock:
+                self._pending -= 1
+
+    def drain(self) -> None:
+        """Wait for every queued write to finish."""
+        self._pool.shutdown(wait=True)
+        with self._lock:
+            self._pending = 0
+
+    def close(self) -> None:
+        """Drain and release the pool."""
+        self.drain()
+
+
 # Cap the per-run "id_mismatch" sample so a 1M-file run doesn't
 # emit a multi-MB progress payload. 20 is enough to see the
 # pattern (path → id, id_alt, recorded mtime/size, current mtime/size)
@@ -361,6 +478,10 @@ def _load_batch_concurrent(paths):
     Returns a list of tuples, ordered to match `paths`. Per-path
     failures are recorded as `(p, None, None, None)` so the caller
     can skip + count them without an extra exception pass.
+
+    `variant_writer`, when given, receives each successfully
+    prepared photo so its SIZED VARIANTS can be written off this
+    path.
     """
     from indexer.image_loader import LoaderError
 
@@ -388,7 +509,7 @@ def _load_batch_concurrent(paths):
     return results
 
 
-def _prepare_batch_concurrent(paths, model_input_size):
+def _prepare_batch_concurrent(paths, model_input_size, variant_writer=None):
     """Decode `paths` into `(path, model_input, source_w, source_h)`.
 
     A native model (C-RADIOv4) consumes the DISPLAY THUMBNAIL's own
@@ -409,6 +530,10 @@ def _prepare_batch_concurrent(paths, model_input_size):
     Returns a list of tuples, ordered to match `paths`. Per-path
     failures are recorded as `(p, None, None, None)` so the caller
     can skip + count them without an extra exception pass.
+
+    `variant_writer`, when given, receives each successfully
+    prepared photo so its SIZED VARIANTS can be written off this
+    path.
     """
     from indexer.image_loader import LoaderError
 
@@ -420,14 +545,20 @@ def _prepare_batch_concurrent(paths, model_input_size):
                 # Letterbox model: the picture as decoded.
                 img, sw, sh = load_image_pil_with_dims(p)
                 return idx, (p, img, sw, sh)
-            # Native model: one decode produces the display ladder
-            # and the embedder's input.
+            # Native model: one decode produces the canonical
+            # thumbnail and the embedder's input. The SIZED
+            # VARIANTS are written off the critical path (see
+            # `_VariantWriter`) — they are display-only, and the
+            # serving endpoint falls back to the canonical until
+            # they land.
             point_id = upsert.id_for(p, "")
-            _out, model_input, sw, sh = generate_ladder_and_model_input(
+            _out, model_input, sw, sh = generate_canonical_and_model_input(
                 p, point_id, model_input_size=model_input_size
             )
             if model_input is None:
                 return idx, (p, None, None, None)
+            if variant_writer is not None:
+                variant_writer.submit(p, point_id)
             return idx, (p, model_input, sw, sh)
         except (LoaderError, Exception) as exc:  # noqa: BLE001
             logger.warning("load error %s: %s", p, exc)
@@ -603,6 +734,14 @@ def main(argv=None):
     # on CPU-only machines.
     encoder: VisionEncoder | None = None
 
+    # The async display-variant writer. The canonical thumbnail is
+    # written inline (it is the embedder's input); the SIZED
+    # VARIANTS are display-only and are written here, off the
+    # critical path. Drained before the run reports done, so the
+    # assets are on disk when the run finishes.
+    variant_writer: _VariantWriter | None = None
+    if not args.dry_run:
+        variant_writer = _VariantWriter(workers=_THUMB_POOL_SIZE)
 
     total_indexed = 0
 
@@ -834,6 +973,7 @@ def main(argv=None):
                 "thumb_regens": total_thumb_regens,
                 "duration_s": time.time() - t0,
             })
+            _drain_variants(variant_writer)
             return 130
         if args.limit:
             snap = snap[:args.limit]
@@ -858,6 +998,7 @@ def main(argv=None):
                     "thumb_regens": total_thumb_regens,
                     "duration_s": time.time() - t0,
                 })
+                _drain_variants(variant_writer)
                 return 130
 
             # Round-50: files that are up-to-date (mtime/size
@@ -1006,12 +1147,22 @@ def main(argv=None):
                         # os.path.exists call per up-to-date file
                         # per batch — negligible cost.
                         #
-                        # The check is on the canonical thumb path
-                        # only: generate_thumbnail_for_path writes
-                        # the canonical + all sized variants in one
-                        # call, so a missing canonical is sufficient
-                        # evidence the whole set is gone.
-                        if not (thumbnail_path(upsert.id_for(path, ""))).exists():
+                        # The canonical is what the embedder's input
+                        # and the serving endpoint's fallback come
+                        # from, so its absence means the photo needs
+                        # a thumbnail. A missing SIZED VARIANT is a
+                        # separate case now that the variants are
+                        # written asynchronously: the canonical can
+                        # be present while a variant is still queued
+                        # (or was lost to a crash). The variants are
+                        # display-only, so a missing one is
+                        # regenerated on its own — without
+                        # re-embedding the photo.
+                        _pid = upsert.id_for(path, "")
+                        if (
+                            not thumbnail_path(_pid).exists()
+                            or _missing_variant(_pid)
+                        ):
                             to_thumb.append(path)
 
             logger.info(
@@ -1071,7 +1222,7 @@ def main(argv=None):
             if to_embed:
                 to_embed_paths = [p for p, _reason in to_embed]
                 raw_loaded = _prepare_batch_concurrent(
-                    to_embed_paths, _model_input_size
+                    to_embed_paths, _model_input_size, variant_writer
                 )
                 for entry in raw_loaded:
                     if entry is None:
@@ -1263,13 +1414,16 @@ def main(argv=None):
 
                 def _regen_one(_path):
                     try:
+                        _pid = upsert.id_for(_path, "")
                         out, _model_input, _sw, _sh = (
-                            generate_ladder_and_model_input(
+                            generate_canonical_and_model_input(
                                 _path,
-                                upsert.id_for(_path, ""),
+                                _pid,
                                 model_input_size=None,
                             )
                         )
+                        if out is not None and variant_writer is not None:
+                            variant_writer.submit(_path, _pid)
                         return 1 if out else 0
                     except (OSError, ValueError, RuntimeError) as exc:
                         logger.warning(
@@ -1351,6 +1505,7 @@ def main(argv=None):
 
         _await_points_visible(client, args.qdrant_collection, last_written_ids)
 
+    _drain_variants(variant_writer)
 
     dt = time.time() - t0
     print(
