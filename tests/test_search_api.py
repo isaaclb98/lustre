@@ -1016,7 +1016,7 @@ def test_non_static_responses_have_no_cache_header(app_with_qdrant):
 # ---------------- Text query normalization ----------------
 
 
-def test_normalize_query_for_siglip2_lowercases():
+def test_normalize_query_for_text_tower_lowercases():
     """
     Regression test for the case-sensitivity bug. SigLIP2's text
     encoder was trained on lowercased text; the open_clip tokenizer
@@ -1026,28 +1026,28 @@ def test_normalize_query_for_siglip2_lowercases():
     (isaac-image-scoring does the same lowercase at
     aesthetic_scorer.py:230).
     """
-    from search.text_encoder import _normalize_query_for_siglip2
+    from search.text_encoder import _normalize_query_for_text_tower
 
     # Mixed case: lowercased.
-    assert _normalize_query_for_siglip2("HELLO World") == "hello world"
-    assert _normalize_query_for_siglip2("Cat Photo") == "cat photo"
+    assert _normalize_query_for_text_tower("HELLO World") == "hello world"
+    assert _normalize_query_for_text_tower("Cat Photo") == "cat photo"
     # Already lowercase: no-op.
-    assert _normalize_query_for_siglip2("hello world") == "hello world"
+    assert _normalize_query_for_text_tower("hello world") == "hello world"
     # Punctuation preserved, just case-folded.
-    assert _normalize_query_for_siglip2("Hello, World!") == "hello, world!"
+    assert _normalize_query_for_text_tower("Hello, World!") == "hello, world!"
     # Empty string: returns empty.
-    assert _normalize_query_for_siglip2("") == ""
+    assert _normalize_query_for_text_tower("") == ""
     # Single character: trivial.
-    assert _normalize_query_for_siglip2("A") == "a"
+    assert _normalize_query_for_text_tower("A") == "a"
 
 
 def test_normalize_query_is_idempotent():
     """Lowercasing is idempotent (calling it twice = once)."""
-    from search.text_encoder import _normalize_query_for_siglip2
+    from search.text_encoder import _normalize_query_for_text_tower
 
     text = "Mixed CASE"
-    once = _normalize_query_for_siglip2(text)
-    twice = _normalize_query_for_siglip2(once)
+    once = _normalize_query_for_text_tower(text)
+    twice = _normalize_query_for_text_tower(once)
     assert once == twice == "mixed case"
 
 

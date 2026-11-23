@@ -13,7 +13,7 @@ Mock mode is dispatched via the `mock-1536` registry entry. The
 local `_mock_embed` function is gone — `MockEmbedder` in the registry
 produces deterministic unit-norm vectors from any text input.
 
-The `_normalize_query_for_siglip2` and prompt-composition helpers
+The `_normalize_query_for_text_tower` and prompt-composition helpers
 are pure-Python and remain here; they're model-agnostic.
 
 This module imports nothing from torch / open_clip / transformers.
@@ -79,12 +79,12 @@ def _provide_active_mock_dim() -> int:
 register_mock_dim_provider(_provide_active_mock_dim)
 
 
-def _normalize_query_for_siglip2(text: str) -> str:
+def _normalize_query_for_text_tower(text: str) -> str:
     """Lowercase the query.
 
-    SigLIP2's text tower was trained on lowercased text. Without
-    this step a query like "Cat" produces a cosine similarity of
-    ~0.1-0.15 to image vectors, vs. the scorer's expected ~0.4-0.6.
+    The text tower was trained on lowercased text. Without this
+    step a query like "Cat" produces a cosine similarity of ~0.1-0.15
+    to image vectors, vs. the scorer's expected ~0.4-0.6.
     """
     return text.lower()
 
@@ -138,7 +138,7 @@ class TextEncoder:
             return 384
 
     def embed(self, text: str) -> list[float]:
-        return self._embedder.embed_text(_normalize_query_for_siglip2(text))
+        return self._embedder.embed_text(_normalize_query_for_text_tower(text))
 
     def embed_multi(self, positives: list[str], negatives: list[str]) -> list[float]:
         """Compose positive and negative prompts into one unit-norm vector.
@@ -149,11 +149,11 @@ class TextEncoder:
         search.
         """
         pos_embeds = [
-            self._embedder.embed_text(_normalize_query_for_siglip2(t))
+            self._embedder.embed_text(_normalize_query_for_text_tower(t))
             for t in positives
         ]
         neg_embeds = [
-            self._embedder.embed_text(_normalize_query_for_siglip2(t))
+            self._embedder.embed_text(_normalize_query_for_text_tower(t))
             for t in negatives
         ]
         if pos_embeds and neg_embeds:
@@ -249,7 +249,7 @@ def _canonical_prompt_tuple(prompts: tuple[str, ...]) -> tuple[str, ...]:
     seen: set[str] = set()
     out: list[str] = []
     for prompt in prompts:
-        text = _normalize_query_for_siglip2(prompt.strip())
+        text = _normalize_query_for_text_tower(prompt.strip())
         if not text or text in seen:
             continue
         seen.add(text)
