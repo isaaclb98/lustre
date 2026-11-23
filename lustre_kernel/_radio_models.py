@@ -55,6 +55,7 @@ from typing import Any
 
 from PIL import Image
 
+from lustre_kernel.limits import MAX_EMBED_BATCH_SIZE
 from lustre_kernel.registry import ModelSpec, Registry
 
 __all__ = ["MODEL_INPUT_SIZE", "register_into"]
@@ -121,6 +122,28 @@ class RadioEmbedder:
         self._model: Any = None
         self._device = self._resolve_device()
         self._lock = threading.Lock()
+
+        # The largest batch this embedder will put in ONE forward
+        # pass. The indexer clamps its own CLI flag and env var, but
+        # a caller that asks the embedder directly never passes
+        # through that clamp — so the ceiling is enforced here too.
+        # The activation memory of the ViT scales with the batch, and
+        # the card is a 10 GiB RTX 3080: the 640-input run at batch 16
+        # left ~90 MiB free, which is the condition that took the card
+        # off the PCIe bus (Xid 79).
+        #
+        # `embed_images` groups by shape and stacks each group into a
+        # single forward pass, so without this the group size — not
+        # the caller's request — decides the peak. A group is at most
+        # as large as the batch handed in, but a direct caller could
+        # hand in 32 images of one shape and put all 32 in one pass.
+        self.embed_batch_size = max(
+            1,
+            min(
+                int(os.environ.get("EMBED_BATCH_SIZE", str(MAX_EMBED_BATCH_SIZE))),
+                MAX_EMBED_BATCH_SIZE,
+            ),
+        )
 
     # -- Embedder protocol ------------------------------------------------
 
@@ -192,17 +215,23 @@ class RadioEmbedder:
             with suppress(Exception):
                 torch.cuda.reset_peak_memory_stats()
         for indices in groups.values():
-            batch = torch.stack([tensors[i] for i in indices]).to(self._device)
-            with torch.no_grad():
-                vis_output = self._model(batch)
-                summary = vis_output[RADIO_ADAPTOR][0]
-            summary = summary.float()
-            if summary.dim() == 3:
-                summary = summary.squeeze(1)
-            summary = summary / summary.norm(dim=-1, keepdim=True)
-            values = summary.cpu().tolist()
-            for slot, vector in zip(indices, values, strict=True):
-                out[slot] = vector
+            # Chunk the group: a shape group can be larger than the
+            # batch ceiling (every photo in the corpus can share one
+            # shape), and the whole group would otherwise go into a
+            # single forward pass.
+            for start in range(0, len(indices), self.embed_batch_size):
+                chunk = indices[start : start + self.embed_batch_size]
+                batch = torch.stack([tensors[i] for i in chunk]).to(self._device)
+                with torch.no_grad():
+                    vis_output = self._model(batch)
+                    summary = vis_output[RADIO_ADAPTOR][0]
+                summary = summary.float()
+                if summary.dim() == 3:
+                    summary = summary.squeeze(1)
+                summary = summary / summary.norm(dim=-1, keepdim=True)
+                values = summary.cpu().tolist()
+                for slot, vector in zip(chunk, values, strict=True):
+                    out[slot] = vector
         if log_vram and self._device == "cuda":
             from contextlib import suppress as _suppress
 
