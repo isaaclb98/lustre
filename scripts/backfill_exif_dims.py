@@ -50,6 +50,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from PIL import Image
+
 # The EXIF orientation tag, and the values that rotate the frame by
 # 90 degrees. 2 and 4 mirror without rotating, so they leave the
 # axes alone.
@@ -202,6 +204,26 @@ def _jpeg_facts(path: str) -> tuple[int, int, int | None] | None:
         return None
 
 
+def _jpeg_facts_pil(path: str) -> tuple[int, int, int | None] | None:
+    """The same facts as `_jpeg_facts`, read through PIL.
+
+    The fallback for files the segment walk cannot parse — some MPO
+    bursts (Samsung's multi-picture JPEGs) among them. It reads the
+    whole EXIF block, so it is the slow path; it runs only for the
+    files the fast path cannot read, and a file it cannot read at all
+    is left alone rather than given a guess.
+    """
+    try:
+        with Image.open(path) as img:
+            width, height = img.size
+            orientation = img.getexif().get(EXIF_ORIENTATION)
+    except Exception:  # noqa: BLE001 - a broken file is not fatal
+        return None
+    if not isinstance(orientation, int):
+        orientation = None
+    return width, height, orientation
+
+
 def _display_dims(path: str) -> tuple[int, int] | None:
     """The dims the photo at `path` DISPLAYS at, or None if unreadable.
 
@@ -211,6 +233,8 @@ def _display_dims(path: str) -> tuple[int, int] | None:
     dims would be flipped back by them.
     """
     facts = _jpeg_facts(path)
+    if facts is None:
+        facts = _jpeg_facts_pil(path)
     if facts is None:
         return None
     file_w, file_h, orientation = facts
