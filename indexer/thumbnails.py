@@ -32,10 +32,11 @@ neutral (the new 384px is sharp where the old 240 was blurry).
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 from PIL import Image, ImageCms
@@ -507,6 +508,190 @@ def _libvips_display_size(src: Any) -> tuple[int, int]:
     except Exception:  # noqa: BLE001 - the field is absent on most images
         orientation = None
     return display_size(src.width, src.height, orientation)
+
+
+class PreparedPhoto(NamedTuple):
+    """Everything ONE read of a photo's bytes produced.
+
+    `variants` maps a display size to its libvips image. Those images
+    are lazily bound to the source bytes, so `source_bytes` has to stay
+    alive until they are written.
+    """
+
+    model_input: Image.Image | None
+    source_width: int | None
+    source_height: int | None
+    fingerprints: dict[str, str | None] | None
+    blurhash: str | None
+    variants: dict[int, Any]
+    source_bytes: bytes | None
+
+
+def _fingerprints_and_blurhash_from_bytes(
+    raw: bytes,
+) -> tuple[dict[str, str | None], str | None]:
+    """The content hash, the perceptual hash and the blurhash, from one read.
+
+    The content hash is the sha256 of the file's bytes — the same
+    value as before. The perceptual hash is PIL's dhash of the
+    FULL-RESOLUTION picture and the blurhash is computed from the same
+    decode, so neither value changes; only the read they come from
+    does.
+    """
+    from indexer.blurhash import compute_blurhash
+    from indexer.fingerprints import compute_fingerprints
+
+    with Image.open(io.BytesIO(raw)) as pil:
+        pil.load()
+        fingerprints = compute_fingerprints(pil, sha_bytes=raw)
+        blurhash = compute_blurhash(pil)
+    return fingerprints, blurhash
+
+
+def prepare_photo(
+    path: Path,
+    point_id: str,
+    *,
+    model_input_size: int | None = None,
+    want_variants: bool = True,
+    want_fingerprints: bool = False,
+) -> PreparedPhoto:
+    """Prepare one photo from ONE read of its bytes.
+
+    Everything comes from that read: the canonical thumbnail, the
+    embedder's input, the sized display variants, the recorded
+    dimensions, the content hash and the perceptual hash.
+
+    The hot path used to read the file FOUR times — the libvips
+    decode, the variant writer's own decode, the content hash's byte
+    read and the dhash's PIL open — and each of those was a full
+    transfer of the source over the NAS. On a 30 MP phone photo that
+    is ~8 MB per read, and the reads were the run's ceiling: the GPU
+    sat at 0% while the indexer waited on the network.
+
+    Nothing about the output changes. libvips decodes the bytes to the
+    same image it decodes the file to (verified byte-identical
+    thumbnails), the variant resizes are the same resizes, and the
+    dhash is still PIL's hash of the full-resolution picture, so every
+    payload value is the value it was.
+    """
+    if model_input_size is None or not _use_pyvips():
+        # A letterbox model wants the picture AS DECODED — it pads the
+        # picture into a square itself — and the PIL path is the one
+        # that has it.
+        return _prepare_photo_pil(
+            path, point_id, model_input_size=model_input_size
+        )
+
+    import pyvips as _pv
+
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        logger.warning("Failed to read %s: %s", path, exc)
+        return PreparedPhoto(None, None, None, None, None, {}, None)
+
+    try:
+        src: Any = _pv.Image.new_from_buffer(raw, "")
+        _out_path, thumb = _write_canonical_pyvips(src, point_id)
+        source_w, source_h = _libvips_display_size(src)
+
+        model_input = None
+        if model_input_size is not None:
+            if model_input_size == THUMBNAIL_SIZE:
+                # The model input IS the canonical's pixels, taken
+                # before the WebP encode so nothing is recompressed.
+                model_input = _vips_to_pil(thumb)
+            else:
+                model_input = _vips_to_pil(
+                    src.thumbnail_image(
+                        model_input_size, height=model_input_size
+                    )
+                )
+
+        variants: dict[int, Any] = {}
+        if want_variants:
+            for size in THUMBNAIL_VARIANT_SIZES:
+                if size >= THUMBNAIL_SIZE:
+                    continue
+                variants[size] = src.thumbnail_image(size, height=size)
+
+        fingerprints = None
+        blurhash = None
+        if want_fingerprints:
+            fingerprints, blurhash = _fingerprints_and_blurhash_from_bytes(raw)
+        return PreparedPhoto(
+            model_input, source_w, source_h, fingerprints, blurhash, variants, raw
+        )
+    except _pv.Error as e:
+        logger.warning("libvips failed for %s: %s", point_id, e)
+        return PreparedPhoto(None, None, None, None, None, {}, None)
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.warning(
+            "Failed to generate thumbnail for %s: %s", point_id, e
+        )
+        return PreparedPhoto(None, None, None, None, None, {}, None)
+
+
+def _prepare_photo_pil(
+    path: Path,
+    point_id: str,
+    *,
+    model_input_size: int | None = None,
+) -> PreparedPhoto:
+    """The PIL fallback: one decode, no libvips.
+
+    PIL's path never had the second decode (the variants come from
+    the same image), so it needs none of the one-read machinery.
+    """
+    from indexer.image_loader import load_image_pil_with_dims
+
+    try:
+        image, source_w, source_h = load_image_pil_with_dims(path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to load %s: %s", path, exc)
+        return PreparedPhoto(None, None, None, None, None, {}, None)
+
+    _pil_out = _compute_thumbnail_pil(image, point_id)
+
+    model_input = None
+    if model_input_size is None:
+        # Letterbox model: the picture AS DECODED — it pads the
+        # picture into a square itself.
+        model_input = image
+    else:
+        target = thumbnail_target_size(
+            image.width, image.height, model_input_size
+        )
+        try:
+            if _LINEAR_RESIZE:
+                model_input = _resize_in_linear_light(
+                    image.convert("RGB"), target
+                )
+            else:
+                model_input = image.resize(
+                    target, Image.Resampling.LANCZOS
+                )
+        except (OSError, ValueError, RuntimeError) as e:
+            logger.warning("model input resize failed for %s: %s", point_id, e)
+    return PreparedPhoto(model_input, source_w, source_h, None, None, {}, None)
+
+
+def write_variants_from_images(
+    variants: dict[int, Any], point_id: str
+) -> int:
+    """Write already-resized display variants. Returns the count."""
+    written = 0
+    for size, variant in variants.items():
+        variant_path = sized_thumbnail_path(point_id, size)
+        variant.write_to_file(
+            str(variant_path),
+            Q=THUMBNAIL_QUALITY,
+            effort=4,
+            profile=_ensure_srgb_profile_path(),
+        )
+        written += 1
+    return written
 
 
 def generate_canonical_and_model_input(
