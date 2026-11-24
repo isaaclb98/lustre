@@ -52,7 +52,9 @@ from indexer.thumbnails import (
     generate_canonical_and_model_input,
     generate_thumbnail_for_path,
     generate_variants_for_path,
+    prepare_photo,
     thumbnail_path,
+    write_variants_from_images,
 )
 from indexer.vision_encoder import VisionEncoder
 from lustre_kernel import orphan_marking
@@ -415,6 +417,48 @@ class _VariantWriter:
         self.written = 0
         self.failed = 0
 
+    def submit_prepared(
+        self,
+        point_id: str,
+        variants: dict,
+        source_bytes: bytes | None,
+    ) -> None:
+        """Queue the variant write for ALREADY-RESIZED images.
+
+        The images were resized by the decode the indexer already
+        did, so writing them costs an encode and no second read of
+        the source — which used to be a full transfer of the photo
+        over the NAS, per photo. `source_bytes` is kept alive by the
+        queued call because the libvips images are bound to it.
+        """
+        with self._lock:
+            queue_full = self._pending >= _VARIANT_QUEUE_MAX
+            if not queue_full:
+                self._pending += 1
+        if queue_full:
+            # The queue is saturated: write inline so the work is not
+            # lost. Slow, but never wrong.
+            self._write_prepared(point_id, variants, source_bytes)
+            return
+        self._pool.submit(
+            self._write_prepared, point_id, variants, source_bytes
+        )
+
+    def _write_prepared(
+        self, point_id: str, variants: dict, source_bytes: bytes | None
+    ) -> None:
+        try:
+            count = write_variants_from_images(variants, point_id)
+            with self._lock:
+                self.written += count
+        except Exception as exc:  # noqa: BLE001
+            with self._lock:
+                self.failed += 1
+            logger.warning("variant write failed for %s: %s", point_id, exc)
+        finally:
+            with self._lock:
+                self._pending -= 1
+
     def submit(self, path: Path, point_id: str) -> None:
         """Queue the variant write. Falls back to inline when full."""
         with self._lock:
@@ -541,28 +585,46 @@ def _prepare_batch_concurrent(paths, model_input_size, variant_writer=None):
 
     def _do(idx, p):
         try:
-            if model_input_size is None:
-                # Letterbox model: the picture as decoded.
-                img, sw, sh = load_image_pil_with_dims(p)
-                return idx, (p, img, sw, sh)
-            # Native model: one decode produces the canonical
-            # thumbnail and the embedder's input. The SIZED
-            # VARIANTS are written off the critical path (see
-            # `_VariantWriter`) — they are display-only, and the
-            # serving endpoint falls back to the canonical until
-            # they land.
+            # ONE read of the source feeds everything: the canonical
+            # thumbnail, the embedder's input, the SIZED VARIANTS,
+            # the recorded dimensions and both fingerprints. The file
+            # used to be read FOUR times per photo — the libvips
+            # decode, the variant writer's own decode, the content
+            # hash's byte read and the dhash's PIL open — and each
+            # was a full transfer of the source over the NAS. On a
+            # 30 MP phone photo that is ~8 MB per read, and the
+            # reads were the run's ceiling: the GPU sat at 0% while
+            # the indexer waited on the network.
             point_id = upsert.id_for(p, "")
-            _out, model_input, sw, sh = generate_canonical_and_model_input(
-                p, point_id, model_input_size=model_input_size
+            prepared = prepare_photo(
+                p,
+                point_id,
+                model_input_size=model_input_size,
+                want_variants=variant_writer is not None,
+                want_fingerprints=True,
             )
-            if model_input is None:
-                return idx, (p, None, None, None)
-            if variant_writer is not None:
-                variant_writer.submit(p, point_id)
-            return idx, (p, model_input, sw, sh)
+            if prepared.model_input is None:
+                return idx, (p, None, None, None, None, None)
+            if variant_writer is not None and prepared.variants:
+                # The variants are resized from the decode that just
+                # happened; the writer only encodes them. It runs off
+                # the critical path (see `_VariantWriter`) — they are
+                # display-only, and the serving endpoint falls back to
+                # the canonical until they land.
+                variant_writer.submit_prepared(
+                    point_id, prepared.variants, prepared.source_bytes
+                )
+            return idx, (
+                p,
+                prepared.model_input,
+                prepared.source_width,
+                prepared.source_height,
+                prepared.fingerprints,
+                prepared.blurhash,
+            )
         except (LoaderError, Exception) as exc:  # noqa: BLE001
             logger.warning("load error %s: %s", p, exc)
-            return idx, (p, None, None, None)
+            return idx, (p, None, None, None, None, None)
 
     with ThreadPoolExecutor(max_workers=_LOAD_POOL_SIZE) as executor:
         futures = [executor.submit(_do, i, p) for i, p in enumerate(paths)]
@@ -1227,7 +1289,7 @@ def main(argv=None):
                 for entry in raw_loaded:
                     if entry is None:
                         continue
-                    _p, _img, _sw, _sh = entry
+                    _p, _img, _sw, _sh, _fp, _bh = entry
                     if _img is None:
                         # _prepare_batch_concurrent logged + counted this one
                         total_errors += 1
@@ -1257,7 +1319,7 @@ def main(argv=None):
                     # forced the square canvas onto every model.
                     vecs = encoder.embed_batch([
                         prepare_for_embedding(img, args.model)
-                        for (_, img, _sw, _sh) in loaded
+                        for (_, img, _sw, _sh, _fp, _bh) in loaded
                     ])
                 except Exception as exc:
                     if _is_cuda_oom(exc):
@@ -1300,7 +1362,7 @@ def main(argv=None):
                 # here would double every photo's encode work.
                 if _model_input_size is None:
                     _thumb_args = [
-                        (img, path) for (path, img, _sw, _sh), _v in zip(
+                        (img, path) for (path, img, _sw, _sh, _fp, _bh), _v in zip(
                             loaded, vecs, strict=False
                         )
                     ]
@@ -1327,12 +1389,13 @@ def main(argv=None):
                         else:
                             _make_thumb(_thumb_args[0])
 
-                for (path, _img, source_w, source_h), vec in zip(
+                for (path, _img, source_w, source_h, _fp, _bh), vec in zip(
                     loaded, vecs, strict=False,
                 ):
                     payload = upsert.build_payload(
                         path, "", args.model, "", src_name,
                         width=source_w, height=source_h,
+                        fingerprints=_fp, blurhash=_bh,
                     )
                     payload["path"] = path
                     # Record the SigLIP variant shorthand (e.g.
