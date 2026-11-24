@@ -20,11 +20,15 @@ and the thumbnails were always computed from the upright picture.
 The write is payload-only and idempotent — a point whose dims already
 match the file is skipped, so the script can be rerun safely.
 
-Only the two dimension fields are written. Qdrant's `set_payload`
-replaces a point's payload rather than merging into it, so the write
-names the keys it touches (`?key=width&key=height`); the rest of the
-payload — `path`, `blurhash`, `dhash`, `orphan_since`, ... — is left
-exactly as it is.
+Only the two dimension fields change. Qdrant's `set_payload` replaces a
+point's payload rather than merging into it, so the whole payload is
+read, corrected and written back — the rest of it (`path`, `blurhash`,
+`dhash`, `orphan_since`, ...) is left exactly as it is.
+
+The orientation tag is read from the HEAD of each file rather than
+through PIL: `getexif()` pulls the whole EXIF block, and a phone
+photo's block runs to ~200 KB of maker notes, which made the backfill
+read 209 KB per photo and crawl at ~40 photos/s on the NAS.
 
 Usage:
     python3 scripts/backfill_exif_dims.py [--url http://127.0.0.1:6333]
@@ -46,13 +50,21 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from PIL import Image
-
 # The EXIF orientation tag, and the values that rotate the frame by
 # 90 degrees. 2 and 4 mirror without rotating, so they leave the
 # axes alone.
 EXIF_ORIENTATION = 274
 ROTATED_ORIENTATIONS = frozenset({5, 6, 7, 8})
+
+# How much of the file's head is read to find the orientation tag.
+#
+# The tag lives in the FIRST IFD of the EXIF block, which starts two
+# bytes into the file — so a few KB is plenty. It is not plenty
+# enough for PIL: `getexif()` pulls the WHOLE EXIF block, and a
+# phone photo's block runs to ~200 KB of maker notes and embedded
+# thumbnails. Reading all of it for one tag made the backfill pull
+# 209 KB per photo and crawl at ~40 photos/s on the NAS.
+HEADER_BYTES = 8192
 
 
 def _request(
@@ -73,22 +85,141 @@ def _request(
         return {}
 
 
+def _orientation_from_tiff(tiff: bytes) -> int | None:
+    """The orientation tag out of a TIFF header's first IFD."""
+    if len(tiff) < 8:
+        return None
+    endian = tiff[:2]
+    if endian == b"II":
+        order = "little"
+    elif endian == b"MM":
+        order = "big"
+    else:
+        return None
+    ifd_offset = int.from_bytes(tiff[4:8], order)
+    if ifd_offset + 2 > len(tiff):
+        return None
+    count = int.from_bytes(tiff[ifd_offset : ifd_offset + 2], order)
+    for i in range(count):
+        entry = ifd_offset + 2 + i * 12
+        if entry + 12 > len(tiff):
+            return None
+        tag = int.from_bytes(tiff[entry : entry + 2], order)
+        if tag == EXIF_ORIENTATION:
+            value = int.from_bytes(tiff[entry + 8 : entry + 10], order)
+            return value if 1 <= value <= 8 else None
+    return None
+
+
+# The JPEG frame headers — the marker that carries the picture's
+# dimensions. 0xC4 (Huffman tables), 0xC8 (JPEG extension) and 0xCC
+# (arithmetic coding) are not frame headers.
+_SOF_MARKERS = frozenset(
+    {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+)
+
+
+def _segments(head: bytes, start: int = 2):
+    """Walk the JPEG's segment markers in a buffer.
+
+    Yields `(marker, payload_offset, length)` for each segment whose
+    marker and length are both inside the buffer.
+    """
+    pos = start
+    end = len(head)
+    while pos + 4 <= end:
+        if head[pos] != 0xFF:
+            pos += 1
+            continue
+        marker = head[pos + 1]
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            pos += 2
+            continue
+        if marker in (0xD9, 0xDA):
+            return
+        length = int.from_bytes(head[pos + 2 : pos + 4], "big")
+        if length < 2:
+            return
+        yield marker, pos + 4, length
+        pos += 2 + length
+
+
+def _jpeg_facts(path: str) -> tuple[int, int, int | None] | None:
+    """The photo's BUFFER dims and its EXIF orientation, or None.
+
+    The buffer's dims are the camera's axes — the file's own frame
+    header — and the orientation decides whether they are swapped for
+    display. Both come from the FILE, so the answer does not depend on
+    what the payload happens to say (a payload already corrected to
+    the display dims must not be flipped back).
+
+    PIL is not used for this: `Image.open()` on a JPEG reads the whole
+    APP1 segment into memory, and a phone photo's EXIF block runs to
+    ~200 KB of maker notes. The segment walk below reads the head of
+    the file, SKIPS the EXIF payload with a seek, and reads the frame
+    header — a few KB in all.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(HEADER_BYTES)
+            if not head.startswith(b"\xff\xd8"):
+                return None
+            orientation: int | None = None
+            for marker, offset, length in _segments(head):
+                if marker == 0xE1:
+                    payload = head[offset : offset + 6]
+                    if payload.startswith(b"Exif\x00\x00"):
+                        tiff = head[offset + 6 : offset + 6 + 4096]
+                        orientation = _orientation_from_tiff(tiff)
+                elif marker in _SOF_MARKERS:
+                    data = head[offset : offset + 5]
+                    if len(data) < 5:
+                        return None
+                    height = int.from_bytes(data[1:3], "big")
+                    width = int.from_bytes(data[3:5], "big")
+                    return width, height, orientation
+            # The frame header is past the window — it is behind a
+            # large EXIF block. Seek past the segment and read on.
+            for marker, offset, length in _segments(head):
+                if marker == 0xE1 and head[offset : offset + 6].startswith(b"Exif\x00\x00"):
+                    fh.seek(offset + length - 2)
+                    break
+            else:
+                return None
+            tail = fh.read(HEADER_BYTES)
+            if not tail:
+                return None
+            for marker, offset, length in _segments(tail, start=0):
+                if marker in _SOF_MARKERS:
+                    data = tail[offset : offset + 5]
+                    if len(data) < 5:
+                        return None
+                    height = int.from_bytes(data[1:3], "big")
+                    width = int.from_bytes(data[3:5], "big")
+                    return width, height, orientation
+            return None
+    except OSError:
+        return None
+
+
 def _display_dims(path: str) -> tuple[int, int] | None:
     """The dims the photo at `path` DISPLAYS at, or None if unreadable.
 
-    Reads the header and the EXIF block only — the pixels are never
-    decoded. The file's own size is the source of truth, so the answer
-    does not depend on what the payload currently claims.
+    The file's own frame header gives the BUFFER dims; the EXIF
+    orientation says whether they are swapped. The payload's dims are
+    NOT trusted for this: a payload already corrected to the display
+    dims would be flipped back by them.
     """
-    try:
-        with Image.open(path) as img:
-            width, height = img.size
-            orientation = img.getexif().get(EXIF_ORIENTATION)
-    except Exception:  # noqa: BLE001 - a missing or broken file is not fatal
+    facts = _jpeg_facts(path)
+    if facts is None:
         return None
+    file_w, file_h, orientation = facts
+    if orientation is None:
+        # No EXIF orientation: the buffer is what the photo shows.
+        return file_w, file_h
     if orientation in ROTATED_ORIENTATIONS:
-        return height, width
-    return width, height
+        return file_h, file_w
+    return file_w, file_h
 
 
 def _set_dims(base: str, point_id: str, payload: dict[str, Any]) -> bool:
@@ -121,8 +252,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:6333")
     parser.add_argument("--collection", default="images")
-    parser.add_argument("--workers", type=int, default=16)
+    parser.add_argument("--workers", type=int, default=12)
     parser.add_argument("--limit", type=int, default=0, help="stop after N points")
+    parser.add_argument(
+        "--path-contains",
+        default="",
+        help="only points whose path contains this text (a Qdrant text match)",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -194,6 +330,15 @@ def main(argv: list[str] | None = None) -> int:
                 "with_payload": True,
                 "with_vector": False,
             }
+            if args.path_contains:
+                body["filter"] = {
+                    "must": [
+                        {
+                            "key": "path",
+                            "match": {"text": args.path_contains},
+                        }
+                    ]
+                }
             if offset is not None:
                 body["offset"] = offset
             page = _request(f"{base}/points/scroll", body)["result"]
