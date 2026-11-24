@@ -55,6 +55,43 @@ class LoaderError(Exception):
         self.reason = reason
 
 
+# The EXIF orientation tag, and the values that rotate the frame by
+# 90 degrees. 2 and 4 mirror without rotating, so they leave the
+# axes alone.
+_EXIF_ORIENTATION = 274
+_ROTATED_ORIENTATIONS = frozenset({5, 6, 7, 8})
+
+
+def display_size(
+    width: int, height: int, orientation: int | None
+) -> tuple[int, int]:
+    """The dimensions a photo DISPLAYS at, given its EXIF orientation.
+
+    A camera held sideways writes the frame in the camera's own
+    landscape buffer and records the rotation in the EXIF orientation
+    tag. The picture is only portrait once that tag is applied, so the
+    DISPLAY dimensions are the buffer's axes swapped.
+
+    Reporting the buffer's dimensions instead makes every consumer
+    believe a portrait photo is landscape. The grid lays each tile out
+    from the recorded ratio and then cover-crops the upright picture
+    into it, which cuts the head off the photo — the thumbnail itself
+    is fine, the numbers that describe it are not.
+    """
+    if orientation in _ROTATED_ORIENTATIONS:
+        return height, width
+    return width, height
+
+
+def orientation_of(img: Image.Image) -> int | None:
+    """The EXIF orientation of an opened image, or None if it has none."""
+    try:
+        value = img.getexif().get(_EXIF_ORIENTATION)
+    except Exception:  # noqa: BLE001 - a malformed EXIF block is not fatal
+        return None
+    return int(value) if isinstance(value, int) else None
+
+
 # Cap PIL's decoder at this many pixels on the long edge. The
 # model expects a letterbox to its registered resolution (256 /
 # 384), so decoding the full multi‑megapixel JPEG is pure waste.
@@ -165,12 +202,18 @@ def load_image_pil_with_dims(
             # The true source dims, captured before draft() mutates
             # img.size (PIL's draft box is not a proportional shrink).
             source_w, source_h = img.size
+            # The orientation comes from the same open. The buffer's
+            # axes are the CAMERA's; a sideways photo is only portrait
+            # once the tag is applied, and the dims reported to the
+            # payload have to be the ones the photo DISPLAYS at.
+            orientation = orientation_of(img)
             if cap:
                 img.draft("RGB", (cap, cap))
             # .copy() so the file handle is released (Windows file locking)
             img = ImageOps.exif_transpose(img).copy()
         if img.mode != "RGB":
             img = img.convert("RGB")
+        source_w, source_h = display_size(source_w, source_h, orientation)
         return img, source_w, source_h
     except FileNotFoundError as e:
         raise LoaderError(path, "file not found") from e
@@ -199,7 +242,12 @@ def peek_source_dims(path: Path) -> tuple[int | None, int | None]:
     """
     try:
         with Image.open(path) as img:
-            return img.size
+            # The DISPLAY dims, not the buffer's: a sideways photo
+            # reports the camera's landscape axes until the EXIF
+            # orientation is applied, and the payload's dims have to
+            # match what the photo looks like.
+            orientation = orientation_of(img)
+            return display_size(img.width, img.height, orientation)
     except Exception:  # noqa: BLE001
         return (None, None)
 

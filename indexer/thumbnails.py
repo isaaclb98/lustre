@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from PIL import Image, ImageCms
 
+from indexer.image_loader import display_size
 from indexer.upsert import id_for
 
 if TYPE_CHECKING:
@@ -489,6 +490,25 @@ def _vips_to_pil(img: Any) -> Image.Image:
     )
 
 
+def _libvips_display_size(src: Any) -> tuple[int, int]:
+    """The DISPLAY dimensions of a libvips image, honouring EXIF orientation.
+
+    `pyvips.Image.new_from_file()` does NOT apply the EXIF orientation
+    tag — only `thumbnail_image()` does, and only since libvips 8.15.
+    So the buffer's own axes are the camera's, and a sideways photo
+    reads as landscape until the tag is applied.
+
+    The tag is in the image's metadata: libvips exposes the EXIF
+    orientation as the `orientation` field.
+    """
+    orientation: int | None = None
+    try:
+        orientation = int(src.get("orientation"))
+    except Exception:  # noqa: BLE001 - the field is absent on most images
+        orientation = None
+    return display_size(src.width, src.height, orientation)
+
+
 def generate_canonical_and_model_input(
     path: Path,
     point_id: str,
@@ -519,7 +539,7 @@ def generate_canonical_and_model_input(
         try:
             src: Any = _pv.Image.new_from_file(str(path))
             out_path, thumb = _write_canonical_pyvips(src, point_id)
-            source_w, source_h = src.width, src.height
+            source_w, source_h = _libvips_display_size(src)
 
             model_input = None
             if model_input_size is not None:
