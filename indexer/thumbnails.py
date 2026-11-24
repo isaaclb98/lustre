@@ -32,7 +32,6 @@ neutral (the new 384px is sharp where the old 240 was blurry).
 
 from __future__ import annotations
 
-import io
 import logging
 import os
 from pathlib import Path
@@ -527,24 +526,34 @@ class PreparedPhoto(NamedTuple):
     source_bytes: bytes | None
 
 
-def _fingerprints_and_blurhash_from_bytes(
-    raw: bytes,
+def _fingerprints_and_blurhash_from_pixels(
+    canonical: Image.Image, raw: bytes
 ) -> tuple[dict[str, str | None], str | None]:
-    """The content hash, the perceptual hash and the blurhash, from one read.
+    """The content hash, the perceptual hash and the blurhash, from ONE read.
 
     The content hash is the sha256 of the file's bytes — the same
-    value as before. The perceptual hash is PIL's dhash of the
-    FULL-RESOLUTION picture and the blurhash is computed from the same
-    decode, so neither value changes; only the read they come from
-    does.
+    value as before, and the only thing that still needs the whole
+    file.
+
+    The perceptual hash and the blurhash are computed from the
+    CANONICAL THUMBNAIL's pixels rather than from a full-resolution
+    decode. That decode was ~354 ms per 30 MP photo — the largest
+    CPU item in the run, and the reason the card sat idle waiting for
+    it.
+
+    The dhash is therefore a hash of the 640-pixel picture, not of the
+    30 MP one. It still groups near-duplicates, but a photo indexed
+    before this change and a copy indexed after it can compare
+    unequal: the hash function is not uniform across a corpus that
+    spans the change. The blurhash moves with it, and for a
+    placeholder that is a better match anyway — it is now the picture
+    the user actually sees.
     """
     from indexer.blurhash import compute_blurhash
     from indexer.fingerprints import compute_fingerprints
 
-    with Image.open(io.BytesIO(raw)) as pil:
-        pil.load()
-        fingerprints = compute_fingerprints(pil, sha_bytes=raw)
-        blurhash = compute_blurhash(pil)
+    fingerprints = compute_fingerprints(canonical, sha_bytes=raw)
+    blurhash = compute_blurhash(canonical)
     return fingerprints, blurhash
 
 
@@ -596,11 +605,14 @@ def prepare_photo(
         _out_path, thumb = _write_canonical_pyvips(src, point_id)
         source_w, source_h = _libvips_display_size(src)
 
+        # The canonical's pixels — what the embedder consumes and what
+        # the fingerprints are computed from. Taken before the WebP
+        # encode, so nothing is recompressed on the way to the GPU.
+        canonical_pil: Image.Image | None = None
+
         model_input = None
         if model_input_size is not None:
             if model_input_size == THUMBNAIL_SIZE:
-                # The model input IS the canonical's pixels, taken
-                # before the WebP encode so nothing is recompressed.
                 model_input = _vips_to_pil(thumb)
             else:
                 model_input = _vips_to_pil(
@@ -619,7 +631,11 @@ def prepare_photo(
         fingerprints = None
         blurhash = None
         if want_fingerprints:
-            fingerprints, blurhash = _fingerprints_and_blurhash_from_bytes(raw)
+            if canonical_pil is None:
+                canonical_pil = _vips_to_pil(thumb)
+            fingerprints, blurhash = _fingerprints_and_blurhash_from_pixels(
+                canonical_pil, raw
+            )
         return PreparedPhoto(
             model_input, source_w, source_h, fingerprints, blurhash, variants, raw
         )
@@ -654,6 +670,19 @@ def _prepare_photo_pil(
 
     _pil_out = _compute_thumbnail_pil(image, point_id)
 
+    # The fingerprints come from the canonical's pixels, exactly as in
+    # the libvips path, so the perceptual hash is the same function of
+    # the picture whichever pipeline produced it.
+    fingerprints = None
+    blurhash = None
+    try:
+        canonical = _canonical_pil_from_pil(image)
+        fingerprints, blurhash = _fingerprints_and_blurhash_from_pixels(
+            canonical, path.read_bytes()
+        )
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.warning("fingerprint failed for %s: %s", point_id, e)
+
     model_input = None
     if model_input_size is None:
         # Letterbox model: the picture AS DECODED — it pads the
@@ -674,7 +703,9 @@ def _prepare_photo_pil(
                 )
         except (OSError, ValueError, RuntimeError) as e:
             logger.warning("model input resize failed for %s: %s", point_id, e)
-    return PreparedPhoto(model_input, source_w, source_h, None, None, {}, None)
+    return PreparedPhoto(
+        model_input, source_w, source_h, fingerprints, blurhash, {}, None
+    )
 
 
 def write_variants_from_images(
@@ -998,6 +1029,19 @@ def compute_model_input(
     except (OSError, ValueError, RuntimeError) as exc:
         logger.warning("model input resize failed: %s", exc)
         return None
+
+
+def _canonical_pil_from_pil(image: Image.Image) -> Image.Image:
+    """The canonical thumbnail's pixels, in the PIL pipeline.
+
+    Mirrors `_compute_thumbnail_pil`'s resize so the fingerprints
+    computed from this picture match the ones the libvips path
+    produces from the same source.
+    """
+    target = thumbnail_target_size(image.width, image.height)
+    if _LINEAR_RESIZE:
+        return _resize_in_linear_light(image.convert("RGB"), target)
+    return image.resize(target, Image.Resampling.LANCZOS)
 
 
 def _compute_thumbnail_pil(image: Image.Image, point_id: str) -> Path | None:

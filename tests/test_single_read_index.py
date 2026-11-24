@@ -11,15 +11,18 @@ at 0% utilisation while the indexer waited on the network.
 One read now feeds everything: the decode, the sized variants, the
 recorded dimensions, the content hash and the perceptual hash.
 
-The values must not change: the dhash is still PIL's hash of the
-full-resolution picture, and the content hash is still the sha256 of
-the file's bytes. The dhash drives the near-duplicate collapse, so a
-hash computed from a different picture would silently change what the
-search considers a duplicate.
+The content hash is still the sha256 of the file's bytes. The
+perceptual hash and the blurhash are computed from the CANONICAL
+THUMBNAIL's pixels instead of from a full-resolution decode: that
+decode was ~354 ms per 30 MP photo, the largest CPU item in the run.
+The dhash therefore hashes the 640-pixel picture rather than the 30 MP
+one — it still groups near-duplicates, but it is not the same
+function of the source as the hash the corpus was indexed with before
+this change, and a photo indexed on either side of it can compare
+unequal to its own copy.
 """
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 import pytest
@@ -137,38 +140,80 @@ def test_the_source_is_opened_once(tmp_path, monkeypatch):
     assert opens == 1, f"the source was opened {opens} times"
 
 
-def test_the_dhash_is_unchanged(tmp_path, monkeypatch):
-    """The perceptual hash is still PIL's hash of the full-res picture.
+def test_the_dhash_comes_from_the_canonical(tmp_path, monkeypatch):
+    """The perceptual hash is the hash of the CANONICAL's pixels.
 
-    The dhash groups near-duplicates in the search results, so a hash
-    computed from a different picture would change what the search
-    considers a duplicate.
+    Not of the full-resolution picture: that decode is what this
+    change removes. The hash still groups near-duplicates, but it is a
+    different function of the source than the full-resolution hash, so
+    the corpus is indexed from scratch with the one it now produces.
     """
-    from indexer.fingerprints import compute_fingerprints
+    from indexer.fingerprints import compute_fingerprints, dhash
 
-    photo = tmp_path / "sideways.jpg"
-    img = Image.new("RGB", (640, 480), (30, 120, 200))
-    exif = img.getexif()
-    exif[274] = 8
-    img.save(photo, quality=92, exif=exif)
+    photo = tmp_path / "structured.jpg"
+    img = Image.new("RGB", (1200, 900), (30, 120, 200))
+    # structure, so the two hashes really differ
+    for x in range(0, 1200, 17):
+        for y in range(0, 900, 13):
+            img.putpixel((x, y), (x % 255, y % 255, (x * y) % 255))
+    img.save(photo, quality=92)
 
-    # what the indexer produced before: PIL opening the FILE
+    monkeypatch.setattr(T, "THUMBNAIL_DIR", str(tmp_path / "thumbs"))
+    point_id = U.id_for(photo, "")
+
+    prepared = T.prepare_photo(
+        photo,
+        point_id,
+        model_input_size=640,
+        want_variants=True,
+        want_fingerprints=True,
+    )
+    assert prepared.fingerprints is not None
+
+    # the full-resolution hash, for comparison
     before = compute_fingerprints(photo)
 
-    # what it produces now: PIL opening the BYTES
+    # the canonical's pixels — the same ones the indexer hashes:
+    # libvips' resize of the source, taken BEFORE the lossy WebP
+    # encode (reading the encoded file back would cost a second read
+    # of the source).
+    pyvips = pytest.importorskip("pyvips")
     raw = photo.read_bytes()
-    with Image.open(io.BytesIO(raw)) as pil:
-        pil.load()
-        after = compute_fingerprints(pil, sha_bytes=raw)
+    canonical = T._vips_to_pil(
+        pyvips.Image.new_from_buffer(raw, "").thumbnail_image(640, height=640)
+    )
 
-    assert after["dhash"] == before["dhash"]
-    assert after["content_sha256"] == before["content_sha256"]
+    assert prepared.fingerprints["dhash"] == dhash(canonical)
+    assert prepared.fingerprints["content_sha256"] == before["content_sha256"]
 
-    # The blurhash moves to the same decode too, and its value must
-    # not change: the client renders it as the photo's placeholder.
+    # The hash DRIFTS from the full-resolution one — measured on real
+    # photos, 33% of them differ, by 1.3 bits on average — so it must
+    # stay well inside the distance at which the search collapses two
+    # photos as duplicates. It does: the drift is never close to it.
+    import dataclasses
+
+    from indexer.fingerprints import hamming_distance
+    from search.config import Config
+
+    threshold = next(
+        f.default
+        for f in dataclasses.fields(Config)
+        if f.name == "diversity_duplicate_hamming_distance"
+    )
+    drift = hamming_distance(
+        prepared.fingerprints["dhash"], before["dhash"]
+    )
+    assert drift is not None
+    assert drift < threshold, (
+        f"the canonical's hash drifted {drift} bits from the "
+        f"full-resolution one; the collapse threshold is {threshold}"
+    )
+
+    # the blurhash is the placeholder the client shows: it is now the
+    # picture the user actually sees.
     from indexer.blurhash import compute_blurhash
 
-    assert compute_blurhash(pil) == compute_blurhash(photo)
+    assert prepared.blurhash == compute_blurhash(canonical)
 
 
 def test_the_thumbnail_pixels_are_unchanged(tmp_path, monkeypatch):
