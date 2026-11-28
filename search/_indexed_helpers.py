@@ -23,6 +23,7 @@ from collections.abc import Iterable
 from typing import Any, cast
 from urllib.parse import urlencode
 
+from lustre_kernel.spaces import TEXT_SPACE
 from search.image_resolver import resolve_url
 from search.models import SearchResult
 from search.qdrant_client import SearchHit
@@ -318,6 +319,7 @@ def diversity_page(
     depth: str,
     pool_depth: int,
     path_filter: Any | None = None,
+    space: str = TEXT_SPACE,
 ) -> tuple[list[SearchHit], bool, Any]:
     """Build or retrieve one complete, stable Diversity ordering.
 
@@ -387,6 +389,7 @@ def diversity_page(
         collections=collections or None,
         allowed_ids=search_allowed_ids,
         path_filter=path_filter,
+        using=space,
     )
     if not hits:
         stats = DiversityStats(
@@ -411,7 +414,7 @@ def diversity_page(
 
     # retrieve_batch_with_vectors returns pairs in Qdrant-order, NOT the
     # order requested. Re-attach the original hit metadata via id.
-    raw_pairs = qdrant.retrieve_batch_with_vectors(survivor_ids)
+    raw_pairs = qdrant.retrieve_batch_with_vectors(survivor_ids, space)
     by_id = {h.id: h for h in hits}
     ordered_hits: list[Any] = []
     ordered_vectors: list[list[float]] = []
@@ -479,6 +482,7 @@ def centroid_diversity_page(
     depth: str,
     pool_depth: int,
     path_filter: Any | None = None,
+    space: str = TEXT_SPACE,
 ) -> tuple[list[SearchHit], bool, Any]:
     """Diversity ranking for centroid/album search — the Layer-2-aware
     analogue of `diversity_page`.
@@ -531,12 +535,13 @@ def centroid_diversity_page(
         allowed_ids,
         seed_ids or None,
         path_filter,
+        using=space,
     )
 
     # Layer 2: drop candidates that are near-duplicates of a seed
     # photo. Static centroids have no seed_ids and skip this.
     if pairs and seed_ids:
-        seed_pairs = qdrant.retrieve_batch_with_vectors(seed_ids)
+        seed_pairs = qdrant.retrieve_batch_with_vectors(seed_ids, space)
         seed_vecs = [v for _, v in seed_pairs]
         if seed_vecs:
             threshold = calibrate_near_dup_threshold(seed_vecs)
@@ -665,6 +670,7 @@ async def materialize_search_page(
     allowed_ids: list[str] | None,
     favorite_ids: set[str] | None,
     path_filter: Any | None = None,
+    space: str = TEXT_SPACE,
 ) -> tuple[list[SearchHit], bool]:
     """Return one page of a *stable* ranking, plus `has_more`.
 
@@ -736,6 +742,7 @@ async def materialize_search_page(
                     allowed_ids,
                     list(snap.ids) or None,
                     path_filter,
+                    using=space,
                 )
                 if not hits:
                     snap.exhausted = True
@@ -786,6 +793,7 @@ async def materialize_search_page(
         offset=offset,
         limit=limit,
         cap=cap,
+        space=space,
     )
     return hits_out, has_more
 
@@ -802,6 +810,7 @@ def _prefetch_next_band(
     limit: int,
     cap: int,
     path_filter: Any | None = None,
+    space: str = TEXT_SPACE,
 ) -> None:
     """Kick off a background fetch of the next band, if one will be needed.
 
@@ -853,6 +862,7 @@ def _prefetch_next_band(
                         allowed_ids,
                         list(snap.ids) or None,
                         path_filter,
+                        using=space,
                     )
                     if not hits:
                         snap.exhausted = True

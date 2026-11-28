@@ -28,6 +28,7 @@ from qdrant_client import QdrantClient
 from starlette.middleware.base import RequestResponseEndpoint
 
 from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
+from lustre_kernel.spaces import PICTURE_SPACE, TEXT_SPACE
 from search import config, text_encoder
 from search.centroids import (
     CentroidStore,
@@ -293,7 +294,9 @@ def _make_favourites_centroid_spec(
         fav_ids = index_db.list_favorite_ids()
         if not fav_ids:
             return None
-        pairs = qdrant.retrieve_batch_with_vectors(fav_ids)
+        pairs = qdrant.retrieve_batch_with_vectors(
+            fav_ids, PICTURE_SPACE,
+        )
         if not pairs:
             return None
         vectors = np.asarray(
@@ -318,6 +321,7 @@ def _make_favourites_centroid_spec(
         ),
         compute_fn=compute,
         source="favourites",
+        space=PICTURE_SPACE,
         empty_message=(
             "Like a few photos first — this centroid is built "
             "from your likes list."
@@ -341,7 +345,9 @@ def _make_likes_centroid_spec(
         fav_ids = index_db.list_favorite_ids()
         if not fav_ids:
             return None
-        pairs = qdrant.retrieve_batch_with_vectors(fav_ids)
+        pairs = qdrant.retrieve_batch_with_vectors(
+            fav_ids, PICTURE_SPACE,
+        )
         if not pairs:
             return None
         vectors = np.asarray(
@@ -367,6 +373,7 @@ def _make_likes_centroid_spec(
         ),
         compute_fn=compute,
         source="likes",
+        space=PICTURE_SPACE,
         empty_message=(
             "Like a few photos first — this centroid is built "
             "from your likes list."
@@ -423,7 +430,7 @@ def _make_album_centroid_spec(
         ids = index_db.list_album_member_ids(album_id)
         if not ids:
             return None
-        pairs = qdrant.retrieve_batch_with_vectors(ids)
+        pairs = qdrant.retrieve_batch_with_vectors(ids, PICTURE_SPACE)
         if not pairs:
             return None
         vectors = np.asarray(
@@ -462,6 +469,7 @@ def _make_album_centroid_spec(
         ),
         compute_fn=compute,
         source=f"album:{album_id}",
+        space=PICTURE_SPACE,
         empty_message=(
             "Add photos to this album to build its centroid."
         ),
@@ -1160,7 +1168,7 @@ def create_app(
         filename_pattern: str = "",
         centroid_specs: list[DynamicCentroidSpec] | None = None,
         collections: list[str] | None = None,
-    ) -> tuple[list[float], str | None, str | None]:
+    ) -> tuple[list[float], str, str | None, str | None]:
         """
         Resolve the query vector for a search request.
 
@@ -1183,40 +1191,57 @@ def create_app(
 
         Returns one of three outcomes:
 
-          (vector, None, None)            — success
-          ([], "centroid_not_found", ...) — no vector, error tag
-          ([], "empty", ...)              — no vector, error tag
+          (vector, space, None, None)            — success
+          ([], space, "centroid_not_found", ...)  — no vector, error tag
+          ([], space, "empty", ...)               — no vector, error tag
 
-        The third tuple slot is a short human-readable detail
+        The second slot is the VECTOR SPACE the returned vector
+        belongs to: the text space for a text query, the picture
+        space for a DINOv3 centroid. The search route needs it —
+        a 4096-d picture-space vector can only be searched against
+        the picture space, and the two spaces are not comparable.
+
+        The fourth slot is a short human-readable detail
         string for the API response and the search page header.
         """
         if centroid_names:
             entries: list[tuple[list[float], str]] = []
+            spaces: set[str] = set()
             missing: list[str] = []
             for name in centroid_names:
-                vec = _fetch_centroid_vector(name)
-                if vec is None:
+                fetched = _fetch_centroid_vector(name)
+                if fetched is None:
                     missing.append(name)
                     continue
+                vec, space = fetched
+                spaces.add(space)
                 entries.append((vec, name))
             if missing:
                 # All-or-nothing: if any centroid is missing/empty,
                 # surface the first missing name. Partial blends are
                 # surprising (the user asked for A+B and got just A)
                 # so we refuse rather than silently drop one.
-                return [], "centroid_not_found", (
+                return [], TEXT_SPACE, "centroid_not_found", (
                     f"centroid {missing[0]!r} not loaded"
                 )
-            expected_dim = (
-                _cfg.centroid_expected_feature_dim if _cfg else None
-            )
+            if len(spaces) > 1:
+                # A blend across spaces is meaningless: the mean of
+                # a 1536-d text vector and a 4096-d picture vector is
+                # not a vector in either space.
+                return [], TEXT_SPACE, "centroid_not_found", (
+                    "cannot blend centroids from different vector spaces"
+                )
+            centroid_space = next(iter(spaces))
+            # The dim guard follows the space: the text space is the
+            # model's own dim, the picture space is the DINOv3 dim.
+            expected_dim = len(entries[0][0]) if entries else None
             try:
                 blended = blend_centroids(
                     entries, weights, expected_dim=expected_dim,
                 )
             except ValueError as e:
-                return [], "centroid_not_found", str(e)
-            return blended, None, None
+                return [], centroid_space, "centroid_not_found", str(e)
+            return blended, centroid_space, None, None
         if not prompt_state.positives:
             if filename_pattern.strip():
                 # Filename-only mode: bypass the prompt requirement
@@ -1233,7 +1258,7 @@ def create_app(
                     # project uses. Tests run without a real config
                     # sometimes — this keeps the page rendering.
                     dim = 768
-                return [0.0] * dim, None, None
+                return [0.0] * dim, TEXT_SPACE, None, None
             if collections:
                 # Collections-only mode: same trick as filename-only.
                 # No prompt → zero vector, the `collections` MatchAny
@@ -1243,28 +1268,40 @@ def create_app(
                 dim = _cfg.centroid_expected_feature_dim if _cfg else None
                 if not dim:
                     dim = 768
-                return [0.0] * dim, None, None
-            return [], "empty", "at least one positive prompt is required"
+                return [0.0] * dim, TEXT_SPACE, None, None
+            return [], TEXT_SPACE, "empty", (
+                "at least one positive prompt is required"
+            )
         vec = text_encoder.embed_query_multi(
             tuple(prompt_state.positives),
             tuple(prompt_state.negatives),
         )
-        return vec, None, None
+        # A text query lives in the text space, by construction.
+        return vec, TEXT_SPACE, None, None
 
-    def _fetch_centroid_vector(name: str) -> list[float] | None:
-        """Return the vector for a single centroid by name, or None
-        if it's unknown / empty. Used by `_resolve_query_vector`
+    def _fetch_centroid_vector(
+        name: str,
+    ) -> tuple[list[float], str] | None:
+        """Return `(vector, space)` for a single centroid by name, or
+        None if it's unknown / empty. Used by `_resolve_query_vector`
         when blending N centroids. Kept separate so the per-centroid
         fallback (static → dynamic) is consistent with the
-        single-centroid path and tested in one place."""
+        single-centroid path and tested in one place.
+
+        The space travels with the vector: a DINOv3 centroid is a
+        4096-d picture-space vector and can only be searched in the
+        picture space, so the caller must know which one it has.
+        """
         if _centroid_store is not None:
             spec = _centroid_store.get(name)
             if spec is not None:
-                return spec.vector
+                return spec.vector, spec.space
         if _dynamic_centroids is not None:
             dyn = _dynamic_centroids.get_vector(name)
             if dyn is not None:
-                return dyn[0]
+                dyn_spec = _dynamic_centroids.get_spec(name)
+                space = dyn_spec.space if dyn_spec is not None else TEXT_SPACE
+                return dyn[0], space
             # Dynamic spec exists but has no data yet — distinct
             # from "unknown name". The caller (multi-centroid path)
             # surfaces this as the "not loaded" error rather than

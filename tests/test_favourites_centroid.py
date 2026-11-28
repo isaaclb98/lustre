@@ -18,6 +18,7 @@ from search.centroids import (
     DynamicCentroidSpec,
 )
 from lustre_kernel.registry import MockEmbedder; _mock_embed = MockEmbedder(dim=VECTOR_DIM, resolution=384).embed_text
+from lustre_kernel.spaces import PICTURE_SPACE, TEXT_SPACE
 
 
 def _vec(seed: str) -> list[float]:
@@ -212,7 +213,12 @@ def fav_app(tmp_path):
     )
 
     client = QdrantClient(location=":memory:")
-    upsert.ensure_collection(client, cfg.qdrant_collection, dim=VECTOR_DIM)
+    # Both spaces: the dynamic centroids are built in the PICTURE
+    # space (DINOv3), so the fixture must carry one.
+    upsert.ensure_collection(
+        client, cfg.qdrant_collection, dim=VECTOR_DIM,
+        extra_spaces={PICTURE_SPACE: VECTOR_DIM},
+    )
     seed_ids = {
         "a": str(uuid.uuid4()),
         "b": str(uuid.uuid4()),
@@ -245,7 +251,7 @@ def fav_app(tmp_path):
         "c": _close_to(-base, jitter=0.05),
     }
     items = [
-        (seed_ids[k], vecs[k],
+        (seed_ids[k], {TEXT_SPACE: vecs[k], PICTURE_SPACE: vecs[k]},
          {"id": seed_ids[k], "path": f"/photos/{k}.jpg",
           "collection": "kpop", "indexed_at": "2026-01-01T00:00:00Z"})
         for k in seed_ids
@@ -587,17 +593,22 @@ def test_search_by_favourites_excludes_near_duplicate(fav_app):
     near_dup_id = str(uuid.uuid4())
     distinct_id = str(uuid.uuid4())
 
+    def _both(vec: list[float]) -> dict[str, list[float]]:
+        # The collection carries two named spaces, so every point must
+        # carry BOTH vectors — an upsert replaces the whole vector set.
+        return {TEXT_SPACE: vec, PICTURE_SPACE: vec}
+
     items = [
-        (seed_a_id, vec_at_angle(0.0),
+        (seed_a_id, _both(vec_at_angle(0.0)),
          {"id": seed_a_id, "path": "/photos/seed_a.jpg",
           "collection": "kpop", "indexed_at": "2026-01-01T00:00:00Z"}),
-        (seed_b_id, vec_at_angle(cluster_radius),
+        (seed_b_id, _both(vec_at_angle(cluster_radius)),
          {"id": seed_b_id, "path": "/photos/seed_b.jpg",
           "collection": "kpop", "indexed_at": "2026-01-01T00:00:00Z"}),
-        (seed_c_id, vec_at_angle(2 * cluster_radius),
+        (seed_c_id, _both(vec_at_angle(2 * cluster_radius)),
          {"id": seed_c_id, "path": "/photos/seed_c.jpg",
           "collection": "kpop", "indexed_at": "2026-01-01T00:00:00Z"}),
-        (near_dup_id, vec_at_angle(near_dup_offset),
+        (near_dup_id, _both(vec_at_angle(near_dup_offset)),
          {"id": near_dup_id, "path": "/photos/near_dup.jpg",
           "collection": "kpop", "indexed_at": "2026-01-01T00:00:00Z"}),
     ]
@@ -608,7 +619,7 @@ def test_search_by_favourites_excludes_near_duplicate(fav_app):
     distinct_vec = [0.0] * VECTOR_DIM
     distinct_vec[2] = 1.0
     items.append(
-        (distinct_id, distinct_vec,
+        (distinct_id, _both(distinct_vec),
          {"id": distinct_id, "path": "/photos/distinct.jpg",
           "collection": "kpop", "indexed_at": "2026-01-01T00:00:00Z"}),
     )
@@ -640,3 +651,46 @@ def test_search_by_favourites_excludes_near_duplicate(fav_app):
         f"distinct photo should be in results; got ids={ids}"
     )
 
+
+def test_favourites_centroid_is_built_and_searched_in_the_picture_space(
+    fav_app, monkeypatch,
+):
+    """The dynamic centroid is a DINOv3 centroid.
+
+    The favourites centroid is the mean of the favourites' PICTURE
+    space (DINOv3) vectors, so it is a 4096-d picture-space vector
+    and can only be searched against the picture space. The route
+    must name that space on the query, or Qdrant rejects the vector
+    (or, worse, searches a different space).
+    """
+    import search.app as _app_mod
+    from search.qdrant_client import QdrantSearch
+
+    spec = _app_mod._dynamic_centroids.get_spec("favourites")
+    assert spec is not None
+    assert spec.space == PICTURE_SPACE
+
+    fav_id = fav_app.app.state.test_seed_ids["a"]
+    fav_app.post(f"/api/favorites/{fav_id}")
+
+    # The centroid route has seed ids, so it goes through
+    # `search_with_vectors` (one round-trip, vectors included for the
+    # Layer 2 near-duplicate pass). Spy on both entry points.
+    seen: list[str | None] = []
+    original_search = QdrantSearch.search
+    original_with = QdrantSearch.search_with_vectors
+
+    def spy_search(self, *args, **kwargs):
+        seen.append(kwargs.get("using"))
+        return original_search(self, *args, **kwargs)
+
+    def spy_with(self, *args, **kwargs):
+        seen.append(kwargs.get("using"))
+        return original_with(self, *args, **kwargs)
+
+    monkeypatch.setattr(QdrantSearch, "search", spy_search)
+    monkeypatch.setattr(QdrantSearch, "search_with_vectors", spy_with)
+    resp = fav_app.get("/api/centroids/favourites/search?limit=5")
+    assert resp.status_code == 200
+    assert seen, "the route never searched"
+    assert set(seen) == {PICTURE_SPACE}

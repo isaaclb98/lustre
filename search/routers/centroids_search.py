@@ -91,6 +91,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
+from lustre_kernel.spaces import TEXT_SPACE
 from search._indexed_helpers import (
     centroid_diversity_page,
     resolve_filename_filter,
@@ -260,6 +261,10 @@ def build_centroids_search_router(
         ),
     ) -> SearchResponse | JSONResponse:
         """Search using a loaded centroid as the query vector."""
+        # The space the centroid's vector lives in. A static
+        # centroid is the text space; a dynamic one declares
+        # its own (an album centroid is the picture space).
+        centroid_space = TEXT_SPACE
         if centroid_store is None:
             raise HTTPException(
                 status_code=503, detail="centroid store not initialized",
@@ -384,6 +389,9 @@ def build_centroids_search_router(
                 )
             vector = static_spec.vector
             centroid_name = static_spec.name
+            # A static centroid is an offline .pt of text-space
+            # vectors (1536-d) — the text space by construction.
+            centroid_space = static_spec.space
         elif dynamic_centroids is not None:
             dyn = dynamic_centroids.get_vector(name)
             dyn_spec = dynamic_centroids.get_spec(name)
@@ -391,6 +399,12 @@ def build_centroids_search_router(
                 full_vector, _n_images, full_seed_ids = dyn
                 if dyn_spec is not None:
                     centroid_name = dyn_spec.name
+                    # The dynamic centroid declares the space its
+                    # vector lives in. An album centroid is built
+                    # from DINOv3 vectors, so it is a 4096-d
+                    # picture-space vector and can only be searched
+                    # in the picture space.
+                    centroid_space = dyn_spec.space
                 if mode == "sample":
                     # Round-34: re-pick a fresh K-subset and search
                     # against the mean of THAT subset, instead of the
@@ -406,7 +420,7 @@ def build_centroids_search_router(
                             f"sample mode requires a non-empty source set"
                         )
                     seed_pairs = qdrant.retrieve_batch_with_vectors(
-                        full_seed_ids,
+                        full_seed_ids, centroid_space,
                     )
                     picked_ids: list[str] = []
                     picked_vecs: list[list[float]] = []
@@ -557,6 +571,7 @@ def build_centroids_search_router(
                     qdrant,
                     diversity_cache,
                     vector=vector,
+                    space=centroid_space,
                     effective_limit=effective_limit,
                     offset=offset,
                     collections=collections,
@@ -601,6 +616,7 @@ def build_centroids_search_router(
                 hits, has_more, deck_ids = await build_surprise_deck(
                     qdrant=qdrant,
                     vec=vector,
+                    using=centroid_space,
                     collections=collections,
                     surprise_allowed_ids=None,
                     path_filter=path_filter,
@@ -655,13 +671,16 @@ def build_centroids_search_router(
                         allowed_ids=None,
                         exclude_ids=seed_ids,
                         path_filter=path_filter,
+                        using=centroid_space,
                     )
                     # Fetch the seed vectors themselves for the
                     # calibration + post-pass. Orphans (ids whose
                     # photo is gone from Qdrant) are silently
                     # dropped here — `retrieve_batch_with_vectors`
                     # omits missing ids from the response.
-                    seed_pairs = qdrant.retrieve_batch_with_vectors(seed_ids)
+                    seed_pairs = qdrant.retrieve_batch_with_vectors(
+                        seed_ids, centroid_space,
+                    )
                     seed_vecs: list[list[float]] = [
                         v for _, v in seed_pairs
                     ]
@@ -715,6 +734,7 @@ def build_centroids_search_router(
                         collections=collections or None,
                         allowed_ids=None,
                         path_filter=path_filter,
+                        using=centroid_space,
                     )
             except (ConnectionError, OSError) as e:
                 log_qdrant_error(

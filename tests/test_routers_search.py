@@ -18,6 +18,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from lustre_kernel.spaces import TEXT_SPACE
 
 
 def _fake_cfg() -> MagicMock:
@@ -61,7 +62,7 @@ def fake_search_deps():
     snapshot_cache = SearchSnapshotCache(ttl_seconds=300, max_entries=8)
 
     def resolve_query_vector(centroid_names, prompt_state, **kwargs):
-        return ([0.0] * 1536, None, None)
+        return ([0.0] * 1536, TEXT_SPACE, None, None)
 
     async def favorite_ids_for_filter():
         return set()

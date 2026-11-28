@@ -14,6 +14,7 @@ from indexer import upsert
 from indexer.upsert import VECTOR_DIM
 from search import app as app_mod
 from search.config import Config
+from lustre_kernel.spaces import PICTURE_SPACE, TEXT_SPACE
 
 CAT_ID = "11111111-1111-1111-1111-111111111111"
 DOG_ID = "22222222-2222-2222-2222-222222222222"
@@ -42,14 +43,18 @@ def app_with_qdrant(qdrant_in_memory, nas_base):
         log_level="WARNING",
         test_mode=True,
     )
-    upsert.ensure_collection(qdrant_in_memory.client, qdrant_in_memory.collection, dim=VECTOR_DIM)
+    # Both spaces: album centroids are built in the PICTURE space.
+    upsert.ensure_collection(
+        qdrant_in_memory.client, qdrant_in_memory.collection,
+        dim=VECTOR_DIM, extra_spaces={PICTURE_SPACE: VECTOR_DIM},
+    )
     upsert.upsert_batch(
         qdrant_in_memory.client,
         qdrant_in_memory.collection,
         [
-            (CAT_ID, _mock_embed("cat"), {"id": CAT_ID, "path": str(nas_base / "cat.jpg"), "mtime": 1, "size": 10, "indexed_at": "2026-01-01T00:00:00Z", "width": 800, "height": 1200}),
-            (DOG_ID, _mock_embed("dog"), {"id": DOG_ID, "path": str(nas_base / "dog.jpg"), "mtime": 2, "size": 20, "indexed_at": "2026-01-01T00:00:00Z", "width": 1200, "height": 800}),
-            (BIRD_ID, _mock_embed("bird"), {"id": BIRD_ID, "path": str(nas_base / "bird.jpg"), "mtime": 3, "size": 30, "indexed_at": "2026-01-01T00:00:00Z", "width": 640, "height": 640}),
+            (CAT_ID, {TEXT_SPACE: _mock_embed("cat"), PICTURE_SPACE: _mock_embed("cat")}, {"id": CAT_ID, "path": str(nas_base / "cat.jpg"), "mtime": 1, "size": 10, "indexed_at": "2026-01-01T00:00:00Z", "width": 800, "height": 1200}),
+            (DOG_ID, {TEXT_SPACE: _mock_embed("dog"), PICTURE_SPACE: _mock_embed("dog")}, {"id": DOG_ID, "path": str(nas_base / "dog.jpg"), "mtime": 2, "size": 20, "indexed_at": "2026-01-01T00:00:00Z", "width": 1200, "height": 800}),
+            (BIRD_ID, {TEXT_SPACE: _mock_embed("bird"), PICTURE_SPACE: _mock_embed("bird")}, {"id": BIRD_ID, "path": str(nas_base / "bird.jpg"), "mtime": 3, "size": 30, "indexed_at": "2026-01-01T00:00:00Z", "width": 640, "height": 640}),
         ],
         wait=True,
     )
@@ -720,3 +725,38 @@ def test_duplicate_album_registers_its_own_centroid(app_with_qdrant):
     names = [c["name"] for c in centroids]
     assert f"album:{copy_id}" in names
     assert f"album:{album_id}" in names
+
+
+def test_album_centroid_is_searched_in_the_picture_space(
+    app_with_qdrant, monkeypatch,
+):
+    """`/api/search?centroid=album:{id}` searches the PICTURE space.
+
+    The album centroid is the mean of its members' DINOv3 vectors, so
+    the query vector is a picture-space vector and the search must
+    name that space.
+    """
+    import search.app as _app_mod
+    from search.qdrant_client import QdrantSearch
+
+    album_id = app_with_qdrant.post(
+        "/api/albums", json={"name": "picture album"},
+    ).json()["id"]
+    app_with_qdrant.post(f"/api/albums/{album_id}/members/{CAT_ID}")
+
+    spec = _app_mod._dynamic_centroids.get_spec(f"album:{album_id}")
+    assert spec is not None
+    assert spec.space == PICTURE_SPACE
+
+    seen: list[str | None] = []
+    original = QdrantSearch.search
+
+    def spy(self, *args, **kwargs):
+        seen.append(kwargs.get("using"))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(QdrantSearch, "search", spy)
+    resp = app_with_qdrant.get(f"/api/search?centroid=album:{album_id}")
+    assert resp.status_code == 200
+    assert seen, "the route never searched"
+    assert set(seen) == {PICTURE_SPACE}

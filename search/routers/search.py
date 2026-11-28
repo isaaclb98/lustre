@@ -40,6 +40,7 @@ import numpy as np
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
+from lustre_kernel.spaces import TEXT_SPACE
 from search._indexed_helpers import (
     diversity_page,
     materialize_search_page,
@@ -304,6 +305,10 @@ def build_search_router(
             unit = rng.normal(size=dim).astype(np.float32)
             norm = float(np.linalg.norm(unit))
             vec = (unit / norm).tolist() if norm > 0 else [0.0] * dim
+            # A random direction in the TEXT space: the text space
+            # is the model's own dim, and every point carries a
+            # vector there.
+            vec_space = TEXT_SPACE
         else:
             # Kick off vec resolution + (conditional) favorites fetch in
             # parallel — both touch different systems (SigLIP2 model vs
@@ -313,7 +318,7 @@ def build_search_router(
                 asyncio.create_task(favorite_ids_for_filter())
                 if favorites else None
             )
-            vec, vec_err, vec_detail = await asyncio.to_thread(
+            vec, vec_space, vec_err, vec_detail = await asyncio.to_thread(
                 resolve_query_vector,
                 active_centroids, prompt_state, weights=active_weights,
                 filename_pattern=filename_pattern,
@@ -389,6 +394,7 @@ def build_search_router(
                 hits, has_more, diversity_meta = diversity_page(
                     cfg, qdrant, diversity_cache,
                     vector=vec,
+                    space=vec_space,
                     effective_limit=effective_limit,
                     offset=offset,
                     collections=collections,
@@ -423,6 +429,7 @@ def build_search_router(
                     hits, has_more, deck_ids = await build_surprise_deck(
                         qdrant=qdrant,
                         vec=vec,
+                        using=vec_space,
                         collections=collections,
                         surprise_allowed_ids=fav_allowed,
                         path_filter=path_filter,
@@ -445,6 +452,7 @@ def build_search_router(
                         fav_allowed,
                         None,
                         path_filter,
+                        using=vec_space,
                     )
                 diversity_meta = DiversityMetadata()
             elif surprise:
@@ -458,6 +466,7 @@ def build_search_router(
                 hits, has_more, deck_ids = await build_surprise_deck(
                     qdrant=qdrant,
                     vec=vec,
+                    using=vec_space,
                     collections=collections,
                     surprise_allowed_ids=None,
                     path_filter=path_filter,
@@ -482,6 +491,7 @@ def build_search_router(
                     qdrant,
                     snapshot_cache,
                     vector=vec,
+                    space=vec_space,
                     offset=offset,
                     limit=effective_limit,
                     collections=collections,
