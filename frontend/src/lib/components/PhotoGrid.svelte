@@ -38,6 +38,7 @@
   import { columnsForWidth, wallColumnsForWidth } from '$lib/grid/geometry';
   import { isClamped, layoutMasonry } from '$lib/grid/masonry';
   import { layoutJustified } from '$lib/grid/justified';
+  import { skeletonJustified, skeletonMasonry } from '$lib/grid/skeleton';
 
   // Use the generated SearchResult shape so `url`, `width`,
   // `height`, `is_disliked` etc. stay in lockstep with the
@@ -354,6 +355,37 @@
         })
       : null
   );
+
+  // The placeholder band's shape.
+  //
+  // The band has to match the layout it stands in for. The uniform
+  // grid's placeholders are square tiles in the CSS grid's own
+  // tracks, so the CSS renders them and they are correct by
+  // construction.
+  //
+  // The two self-laid-out layouts cannot use the CSS grid's tracks:
+  // the justified layout's `--grid-tile-size` is a ROW HEIGHT, and
+  // the CSS fits fewer tracks than the skeleton renders tiles into,
+  // so the extra tiles wrap and the band doubles in height with a
+  // ragged edge. Their placeholders are laid out by the same
+  // engines the real photos are — see grid/skeleton.ts.
+  const skeletonLayout = $derived.by(() => {
+    if (justified) {
+      return skeletonJustified({
+        rowWidth: justRowWidth,
+        rowHeight: JUST_ROW_HEIGHT,
+        rows: SKELETON_ROWS
+      });
+    }
+    if (masonry) {
+      return skeletonMasonry({
+        tile: TILE,
+        columns,
+        rows: SKELETON_ROWS
+      });
+    }
+    return null;
+  });
 
   // The visible band, in the grid's own coordinates. The grid's top
   // edge sits at -rect.top in viewport coordinates, so what the user
@@ -972,7 +1004,7 @@
       <div class="sentinel" bind:this={sentinel}></div>
       {#if loading}
         <!--
-          Skeleton placeholder rows. Sit in normal flow just below
+          Skeleton placeholder band. Sit in normal flow just below
           the virtualized grid so the user sees tile-shaped
           placeholders in the gap between when the pre-fetch
           fires and when the next page's data arrives. Without
@@ -980,26 +1012,39 @@
           large expanse of empty space, then a sudden "dump" of
           new tiles — the "loads in at each scroll" perception.
 
-          The number of rows (SKELETON_ROWS) is sized so the
-          placeholder band is roughly one viewport tall — enough
-          to cover the visible area below the last rendered row
-          without being so tall it would force-scroll the page.
-
-          Rows use the same `.grid-row` class so the column
-          structure (auto-fill, 384px tracks, 4px gutter,
-          centered) matches the real grid exactly. Tiles inherit
-          `.grid-tile`'s aspect-ratio: 1 and become the shimmer
-          surface via `.skeleton-tile`.
+          The band's shape has to match the layout above it. The
+          uniform grid's placeholders are square tiles in the CSS
+          grid's own tracks, so the CSS renders them. The two
+          self-laid-out layouts position their tiles themselves, so
+          their placeholders are laid out by the same engines (see
+          grid/skeleton.ts) and rendered as absolutely positioned
+          boxes — the CSS grid's tracks are the wrong shape for
+          them, and would wrap the tiles onto a second line.
         -->
-        <div class="skeleton-rows" aria-hidden="true">
-          {#each Array(SKELETON_ROWS) as _, sr (sr)}
-            <div class="grid-row skeleton-row">
-              {#each Array(columns) as _, sc (sc)}
-                <div class="grid-tile skeleton-tile"></div>
-              {/each}
-            </div>
-          {/each}
-        </div>
+        {#if skeletonLayout}
+          <div
+            class="skeleton-boxes"
+            style="height: {skeletonLayout.height}px;"
+            aria-hidden="true"
+          >
+            {#each skeletonLayout.boxes as box, bi (bi)}
+              <div
+                class="grid-tile skeleton-tile"
+                style="position: absolute; left: {box.x}px; top: {box.y}px; width: {box.width}px; height: {box.height}px;"
+              ></div>
+            {/each}
+          </div>
+        {:else}
+          <div class="skeleton-rows" aria-hidden="true">
+            {#each Array(SKELETON_ROWS) as _, sr (sr)}
+              <div class="grid-row skeleton-row">
+                {#each Array(columns) as _, sc (sc)}
+                  <div class="grid-tile skeleton-tile"></div>
+                {/each}
+              </div>
+            {/each}
+          </div>
+        {/if}
       {/if}
     {/if}
   </div>
@@ -1200,6 +1245,32 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  /* The placeholder band's boxes, for the two self-laid-out
+     layouts. They are positioned absolutely, so the container has
+     to be the positioning context — and its height is the band's
+     height, set inline from the layout.
+
+     The tiles inherit `.grid-tile`'s aspect-ratio: 1, which is
+     RIGHT for the uniform grid's placeholders (they are squares)
+     and WRONG here: a justified row's placeholders are as tall as
+     the row and as wide as their own ratio, and a square would
+     not fill the row's width. So the ratio is dropped and the box
+     is exactly the size the layout gave it. */
+  .skeleton-boxes {
+    position: relative;
+    width: 100%;
+    /* A MARGIN, not a padding: the boxes are absolutely
+       positioned, and an abspos child's origin is its ancestor's
+       PADDING box — so a padding-top would shift every box down
+       by 4px while the band's own height stayed where it was.
+       The margin moves the whole band instead, which is what the
+       4px gap is for. */
+    margin-top: 4px;
+  }
+  .skeleton-boxes .skeleton-tile {
+    aspect-ratio: auto;
   }
 
   /* Skeleton placeholder rows shown while the next page is
