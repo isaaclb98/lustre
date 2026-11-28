@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID
 
+from lustre_kernel.spaces import TEXT_SPACE
+
 logger = logging.getLogger(__name__)
 
 
@@ -74,23 +76,23 @@ def _space_vector(vec: Any, using: str | None = None) -> list[float] | None:
 
     On a single-space collection a point's vector is a flat
     `list[float]`. On a multi-space collection it is a DICT keyed
-    by space name — `{"": [...], "dinov3": [...]}`. Callers that
-    read a vector without saying which space they want would
+    by space name — `{"siglip2": [...], "dinov3": [...]}`. Callers
+    that read a vector without saying which space they want would
     otherwise get a dict where they expect a list, and would
     iterate over its KEYS.
 
-    `using=None` means the default (unnamed) vector — the text
-    space. Returns None when the requested space is absent: a
-    missing vector is not an empty one.
+    `using=None` means the TEXT space — every read path that does
+    not name a space wants the text-aligned one, and naming it
+    here means the ~20 call sites do not each have to remember.
+    Returns None when the requested space is absent: a missing
+    vector is not an empty one.
     """
+    if using is None:
+        using = TEXT_SPACE
     if vec is None:
         return None
     if isinstance(vec, dict):
-        vec = (
-            vec.get("", vec.get(None))
-            if using is None
-            else vec.get(using)
-        )
+        vec = vec.get(using)
         if vec is None:
             return None
     if hasattr(vec, "tolist"):
@@ -242,6 +244,7 @@ class QdrantSearch:
                 must_not=must_not_conditions or None,
             )
 
+        using = TEXT_SPACE if using is None else using
         response = self.client.query_points(
             collection_name=self.collection,
             query=vector,
@@ -361,6 +364,7 @@ class QdrantSearch:
         else:
             query_filter = None
 
+        using = TEXT_SPACE if using is None else using
         try:
             response = self.client.query_points(
                 collection_name=self.collection,
@@ -896,6 +900,7 @@ class QdrantSearch:
                 must_not=must_not_conditions or None,
             )
 
+        using = TEXT_SPACE if using is None else using
         response = self.client.query_points(
             collection_name=self.collection,
             query=vector,
@@ -929,7 +934,7 @@ class QdrantSearch:
         return pairs, has_more
 
     def retrieve_batch_with_vectors(
-        self, point_ids: list[str],
+        self, point_ids: list[str], using: str | None = None,
     ) -> list[tuple[str, list[float]]]:
         """
         Batch-retrieve `(id, vector)` pairs for the given ids.
@@ -940,10 +945,19 @@ class QdrantSearch:
         Qdrant but favourite still in the cache). Returns the pairs
         in the order Qdrant returned them; callers that need
         ordering should compare against the input.
+
+        `using` selects which vector space to read; it defaults to
+        the text space, which is where the favourites centroid is
+        computed.
         """
         if not point_ids:
             return []
         try:
+            # No `using`: Qdrant's retrieve has no such parameter — the
+            # client rejects it outright ("Unknown arguments: ['using']")
+            # against the server as well as the in-memory mode. Without
+            # it the server returns EVERY space's vector as a dict, and
+            # `_space_vector` picks the one this caller wants.
             points = self.client.retrieve(
                 collection_name=self.collection,
                 ids=point_ids,
@@ -962,7 +976,7 @@ class QdrantSearch:
             # The text space — the favourites centroid is computed
             # in the same space as the text query it will be
             # compared against.
-            vec = _space_vector(getattr(p, "vector", None))
+            vec = _space_vector(getattr(p, "vector", None), using)
             if vec is None:
                 continue
             out.append((str(p.id), vec))
@@ -1223,9 +1237,9 @@ class QdrantSearch:
 
         `using` selects which vector space to read. On a
         multi-space collection the point's `vector` attribute is a
-        DICT keyed by space name (`{"": [...], "dinov3": [...]}`),
-        not a flat list — so the space must be chosen explicitly.
-        `None` reads the default (unnamed) vector, the text space.
+        DICT keyed by space name (`{"siglip2": [...],
+        "dinov3": [...]}`), not a flat list — so the space must be
+        chosen explicitly. `None` reads the text space.
         Reading a named space that the point does not carry returns
         None: a missing vector is not a zero-length vector, and
         substituting one would search for a vector of zeros.
@@ -1233,7 +1247,11 @@ class QdrantSearch:
         Returns (vector, hit) or None if the point is missing. Caller
         is responsible for surfacing a 404 when None comes back.
         """
+        using = TEXT_SPACE if using is None else using
         try:
+            # No `using` — see `retrieve_batch_with_vectors`: the
+            # retrieve call has no such parameter, and without it the
+            # server hands back every space's vector.
             points = self.client.retrieve(
                 collection_name=self.collection,
                 ids=[point_id],

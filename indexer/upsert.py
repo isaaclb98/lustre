@@ -29,6 +29,7 @@ from qdrant_client.http import models as qmodels
 
 from indexer.blurhash import compute_blurhash
 from indexer.fingerprints import compute_fingerprints
+from lustre_kernel.spaces import TEXT_SPACE
 
 logger = logging.getLogger(__name__)
 
@@ -275,15 +276,20 @@ def ensure_collection(
     Create the collection if it doesn't exist. Idempotent.
 
     Vector config:
-      - Default (unnamed) vector of `dim` — the TEXT space.
+      - The NAMED vector ``"siglip2"`` of `dim` — the TEXT space.
       - One NAMED vector per extra space (e.g. "dinov3") — the
         picture→picture spaces.
+
+    Every space is named. A collection with an unnamed vector has
+    no default to query against, so a read that forgets to name
+    its space fails loudly instead of silently searching the
+    wrong one.
 
     Cosine distance throughout (SigLIP2 is trained for cosine
     similarity).
 
     `extra_spaces` defaults to NONE — a collection with just the
-    default vector. The caller decides the layout: the indexer
+    text vector. The caller decides the layout: the indexer
     passes the model's own extra spaces, and the search side never
     creates the collection at all. Defaulting to the active model's
     spaces here would put a 4096-dim DINOv3 space into every
@@ -293,7 +299,7 @@ def ensure_collection(
     Args:
         client: Qdrant client
         name: collection name
-        dim: dimension of the default (text) vector. If None, reads
+        dim: dimension of the text vector. If None, reads
             from the active model spec.
         extra_spaces: named space -> dim.
     """
@@ -312,7 +318,7 @@ def ensure_collection(
         return
 
     vectors_config: dict[str, qmodels.VectorParams] = {
-        "": qmodels.VectorParams(size=dim, distance=qmodels.Distance.COSINE),
+        TEXT_SPACE: qmodels.VectorParams(size=dim, distance=qmodels.Distance.COSINE),
     }
     for space_name, space_dim in extra_spaces.items():
         vectors_config[space_name] = qmodels.VectorParams(
@@ -332,9 +338,9 @@ def ensure_collection(
 def collection_spaces(client: QdrantClient, name: str) -> set[str] | None:
     """The vector space names a collection holds.
 
-    Returns the set of space names — `{""}` for a single-space
-    collection, `{"", "dinov3"}` for a two-space one — or None if
-    the collection cannot be read.
+    Returns the set of space names — `{"siglip2"}` for a
+    text-only collection, `{"siglip2", "dinov3"}` for a two-space
+    one — or None if the collection cannot be read.
 
     Cached on the client: the layout does not change while the
     indexer runs, and the check below runs on every batch.
@@ -369,10 +375,11 @@ def upsert_batch(
     Upsert a batch of (id, vector, payload) tuples.
 
     The vector is EITHER:
-      - a dict of space name -> vector: `{"": <text vec>,
+      - a dict of space name -> vector: `{"siglip2": <text vec>,
         "dinov3": <picture vec>}` — what the indexer writes.
-      - a bare list — the default (unnamed) vector. Only valid on a
-        single-space collection.
+      - a bare list — the TEXT space's vector. Only valid when the
+        collection holds nothing but the text space; it is read as
+        that space's vector, never as "the default".
 
     **An upsert REPLACES the whole vector set.** Measured against
     Qdrant 1.19: a named-only upsert on a point that also had the
@@ -423,6 +430,14 @@ def upsert_batch(
                     f"vector set, so this would silently wipe those "
                     f"spaces' vectors."
                 )
+    elif spaces is not None and spaces == {TEXT_SPACE}:
+        # A text-only collection: a bare vector is unambiguously the
+        # text space's, so name it rather than handing the server a
+        # shape it cannot match against a NAMED vector.
+        items = [
+            (pid, {TEXT_SPACE: vector} if not isinstance(vector, dict) else vector, payload)
+            for (pid, vector, payload) in items
+        ]
     points = [
         qmodels.PointStruct(id=pid, vector=vector, payload=payload)
         for (pid, vector, payload) in items

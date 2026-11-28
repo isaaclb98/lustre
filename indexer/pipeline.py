@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from lustre_kernel.registry import Embedder
+from lustre_kernel.spaces import TEXT_SPACE
 
 __all__ = [
     "CancelledError",
@@ -450,7 +451,7 @@ class IndexerPipeline:
                             payload["model_variant"] = _variant
                         point_id = id_for(p, shard="")
                         batch.append(_qmodels.PointStruct(
-                            id=point_id, vector=vec, payload=payload,
+                            id=point_id, vector={TEXT_SPACE: vec}, payload=payload,
                         ))
                     except Exception as exc:  # noqa: BLE001
                         _on_upsert_failure(p, exc)
