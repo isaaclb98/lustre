@@ -61,6 +61,7 @@ from lustre_kernel import orphan_marking
 from lustre_kernel.limits import MAX_EMBED_BATCH_SIZE as _SHARED_MAX_EMBED_BATCH_SIZE
 from lustre_kernel.qdrant_url import client_kwargs as _qdrant_client_kwargs
 from lustre_kernel.registry import get as _registry_get
+from lustre_kernel.spaces import TEXT_SPACE
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -767,6 +768,12 @@ def main(argv=None):
         # gets a correctly-sized collection instead of
         # upsert.ensure_collection's hardcoded default.
         model_dim = _registry_get(args.model).dim
+        # The collection holds the model's spaces: the default
+        # (unnamed) vector is the TEXT space, and each extra space
+        # is a named vector. The layout comes from the model spec,
+        # not from a constant here — the indexer and the search side
+        # must agree on it or the app refuses to boot.
+        model_extra_spaces = dict(_registry_get(args.model).extra_spaces)
 
         if args.rebuild:
             # Wipe-and-rebuild: drop the collection, then recreate via
@@ -778,7 +785,10 @@ def main(argv=None):
             except Exception as exc:  # noqa: BLE001 — first run, collection may not exist
                 logger.info("rebuild: no existing collection to delete (%s)", exc)
 
-        upsert.ensure_collection(client, args.qdrant_collection, dim=model_dim)
+        upsert.ensure_collection(
+            client, args.qdrant_collection, dim=model_dim,
+            extra_spaces=model_extra_spaces,
+        )
         upsert.ensure_payload_index(client, args.qdrant_collection, "collection", "keyword")
 
     if args.reblurhash and args.refingerprint:
@@ -1317,10 +1327,29 @@ def main(argv=None):
                     # native-aspect models (C-RADIOv4) want the picture
                     # as it is. Calling letterbox_resize() here directly
                     # forced the square canvas onto every model.
-                    vecs = encoder.embed_batch([
-                        prepare_for_embedding(img, args.model)
-                        for (_, img, _sw, _sh, _fp, _bh) in loaded
-                    ])
+                    #
+                    # `embed_batch_multi` returns EVERY space the
+                    # model writes, from ONE backbone forward pass:
+                    # the text space ("" -> siglip2-g) and the picture
+                    # space ("dinov3" -> dino_v3_7b).
+                    #
+                    # An embedder that only has the single-space
+                    # `embed_batch` writes the text space alone.
+                    # That is a real limitation, not a fallback to
+                    # paper over: such an embedder cannot produce a
+                    # picture vector, and the collection it indexes
+                    # has no picture space to hold one.
+                    if hasattr(encoder, "embed_batch_multi"):
+                        vecs_by_space = encoder.embed_batch_multi([
+                            prepare_for_embedding(img, args.model)
+                            for (_, img, _sw, _sh, _fp, _bh) in loaded
+                        ])
+                    else:
+                        vecs_by_space = {TEXT_SPACE: encoder.embed_batch([
+                            prepare_for_embedding(img, args.model)
+                            for (_, img, _sw, _sh, _fp, _bh) in loaded
+                        ])}
+                    vecs = vecs_by_space[TEXT_SPACE]
                 except Exception as exc:
                     if _is_cuda_oom(exc):
                         # An OOM is a run-level failure, not a per-file
@@ -1389,8 +1418,8 @@ def main(argv=None):
                         else:
                             _make_thumb(_thumb_args[0])
 
-                for (path, _img, source_w, source_h, _fp, _bh), vec in zip(
-                    loaded, vecs, strict=False,
+                for slot, ((path, _img, source_w, source_h, _fp, _bh), vec) in enumerate(
+                    zip(loaded, vecs, strict=False),
                 ):
                     payload = upsert.build_payload(
                         path, "", args.model, "", src_name,
@@ -1405,7 +1434,16 @@ def main(argv=None):
                     _variant = _active_variant()
                     if _variant is not None:
                         payload["model_variant"] = _variant
-                    items.append((upsert.id_for(path, ""), vec, payload))
+                    # ONE upsert per point, carrying EVERY space's
+                    # vector. An upsert replaces the whole vector
+                    # set, so a text-only upsert would silently drop
+                    # the picture vector.
+                    vectors = {TEXT_SPACE: vec}
+                    for space_name, space_vecs in vecs_by_space.items():
+                        if space_name == TEXT_SPACE:
+                            continue
+                        vectors[space_name] = space_vecs[slot]
+                    items.append((upsert.id_for(path, ""), vectors, payload))
 
                 try:
                     # Wrap the upsert in retry-with-backoff. A single transient
