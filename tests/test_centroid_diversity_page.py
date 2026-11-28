@@ -16,6 +16,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from search._indexed_helpers import centroid_diversity_page
+from lustre_kernel.spaces import TEXT_SPACE
 
 
 def _cfg():
@@ -102,7 +103,11 @@ def test_seeds_passed_as_layer1_exclude_ids():
     exclude = args[5] if len(args) > 5 else kwargs.get("exclude_ids")
     assert exclude == ["seed-1"]
     # Layer 2 fetched the seed vectors.
-    qdrant.retrieve_batch_with_vectors.assert_called_once_with(["seed-1"])
+    # The seed vectors are read in the centroid's own space — the
+    # helper defaults to the text space.
+    qdrant.retrieve_batch_with_vectors.assert_called_once_with(
+        ["seed-1"], TEXT_SPACE,
+    )
 
 
 def test_layer2_drops_seed_near_duplicate():

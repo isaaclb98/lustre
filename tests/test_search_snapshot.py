@@ -35,6 +35,7 @@ from search.search_snapshot import (
     SearchSnapshotCache,
     snapshot_key,
 )
+from lustre_kernel.spaces import TEXT_SPACE
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,7 @@ class DriftingQdrant:
         allowed_ids=None,
         exclude_ids=None,
         path_filter=None,
+        using=None,
     ):
         excluded = set(exclude_ids or ())
         self.search_calls.append((limit, offset, len(excluded)))
@@ -758,7 +760,7 @@ async def test_api_search_pagination_is_disjoint_end_to_end():
     index_db.dislike_id_set.return_value = set()
 
     def resolve_query_vector(centroid_names, prompt_state, **kwargs):
-        return ([0.1, 0.2, 0.3], None, None)
+        return ([0.1, 0.2, 0.3], TEXT_SPACE, None, None)
 
     async def favorite_ids_for_filter():
         return set()
