@@ -27,6 +27,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
 from indexer.orphan_scan import OrphanScopeError, find_disk_orphans
+from lustre_kernel.spaces import TEXT_SPACE
 
 
 @pytest.fixture
@@ -50,14 +51,14 @@ def qdrant_with_points(source_dirs) -> QdrantClient:
     client = QdrantClient(location=":memory:")
     client.create_collection(
         collection_name="images",
-        vectors_config={"size": 2, "distance": "Cosine"},
+        vectors_config={TEXT_SPACE: {"size": 2, "distance": "Cosine"}},
     )
     points = []
     for src, count in (("present", 4), ("vanished", 4)):
         for i in range(count):
             points.append(qmodels.PointStruct(
                 id=uuid.UUID(int=len(points)),
-                vector=[1.0, 0.0],
+                vector={TEXT_SPACE: [1.0, 0.0]},
                 payload={
                     "collection": src,
                     "path": str(source_dirs[src] / f"{i}.jpg"),

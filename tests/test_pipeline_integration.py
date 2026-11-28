@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from qdrant_client import QdrantClient
+from lustre_kernel.spaces import TEXT_SPACE
 
 # ---------------------------------------------------------------------------
 # Adapter phases: wrap real indexer modules to satisfy the Protocols.
@@ -100,7 +101,7 @@ def _upsert_adapter(items, *, client, collection, dry_run, batch_size, on_failur
             )
             point_id = id_for(path, shard="")
             batch.append(qmodels.PointStruct(
-                id=point_id, vector=vec, payload=payload,
+                id=point_id, vector={TEXT_SPACE: vec}, payload=payload,
             ))
             yield WriteResult(
                 path=path, point_id=point_id, dry_run=dry_run,

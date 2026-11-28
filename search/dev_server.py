@@ -10,6 +10,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from lustre_kernel.spaces import TEXT_SPACE
+
 logger = logging.getLogger(__name__)
 
 
@@ -157,7 +159,9 @@ def _build_demo_app(count: int) -> FastAPI:
     ).dim
     client.create_collection(
         collection_name=collection,
-        vectors_config=qmodels.VectorParams(size=_dim, distance=qmodels.Distance.COSINE),
+        vectors_config={
+        TEXT_SPACE: qmodels.VectorParams(size=_dim, distance=qmodels.Distance.COSINE),
+    },
     )
     points = []
     for index, path in enumerate(paths):
@@ -184,7 +188,7 @@ def _build_demo_app(count: int) -> FastAPI:
         points.append(
             qmodels.PointStruct(
                 id=f"00000000-0000-4000-8000-{index + 1:012d}",
-                vector=vector,
+                vector={TEXT_SPACE: vector},
                 payload={
                     "path": str(path),
                     "collection": "demo",

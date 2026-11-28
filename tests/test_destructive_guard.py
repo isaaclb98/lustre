@@ -32,6 +32,7 @@ from lustre_kernel.destructive_guard import (
     is_match_all,
     source_delete_filter,
 )
+from lustre_kernel.spaces import TEXT_SPACE
 
 
 # ── The shapes that match everything ──────────────────────────────────────
@@ -159,13 +160,13 @@ def qdrant_with_sources():
     client = QdrantClient(location=":memory:")
     client.create_collection(
         collection_name="images",
-        vectors_config={"size": 4, "distance": "Cosine"},
+        vectors_config={TEXT_SPACE: {"size": 4, "distance": "Cosine"}},
     )
 
     points = [
         qmodels.PointStruct(
             id=uuid.UUID(int=i),
-            vector=[1.0, 0.0, 0.0, 0.0] if i < 5 else [0.0, 1.0, 0.0, 0.0],
+            vector={TEXT_SPACE: [1.0, 0.0, 0.0, 0.0] if i < 5 else [0.0, 1.0, 0.0, 0.0]},
             payload={
                 "collection": "kpopping" if i < 5 else "data",
                 "path": f"/nas/{'kpopping' if i < 5 else 'data'}/{i}.jpg",

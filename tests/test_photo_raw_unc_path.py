@@ -23,6 +23,7 @@ from indexer.upsert import VECTOR_DIM
 from search import app as app_mod
 from search.config import Config
 from search.qdrant_client import QdrantSearch
+from lustre_kernel.spaces import TEXT_SPACE
 
 # Production-shape constants: payload path is a UNC, path_prefix is
 # the same UNC, NAS_IMAGES_BASE is the local Linux mount.
@@ -93,7 +94,7 @@ def _build(tmp_path: Path, *, delete_local_file: bool = False):
         points=[
             qmodels.PointStruct(
                 id=POINT_ID,
-                vector=[0.0] * VECTOR_DIM,
+                vector={TEXT_SPACE: [0.0] * VECTOR_DIM},
                 payload={"path": PAYLOAD_PATH, "collection": "kpop"},
             )
         ],

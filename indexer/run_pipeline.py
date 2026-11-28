@@ -49,6 +49,7 @@ from indexer.upsert import build_payload, id_for
 from lustre_kernel.payload_schema import FIELD_PATH
 from lustre_kernel.registry import Embedder
 from lustre_kernel.registry import get as _registry_get
+from lustre_kernel.spaces import TEXT_SPACE
 
 logger = logging.getLogger(__name__)
 
@@ -246,7 +247,7 @@ def _upsert(
                 payload["model_variant"] = _variant
             point_id = id_for(path, shard="")
             point = qmodels.PointStruct(
-                id=point_id, vector=vec, payload=payload,
+                id=point_id, vector={TEXT_SPACE: vec}, payload=payload,
             )
             batch.append(point)
             yield WriteResult(

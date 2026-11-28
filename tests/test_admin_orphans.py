@@ -25,6 +25,7 @@ from lustre_kernel.orphan_marking import mark_orphans
 from search.index_db import IndexDB
 from search.qdrant_client import QdrantSearch
 from search.routers.admin_orphans import build_admin_orphans_router
+from lustre_kernel.spaces import TEXT_SPACE
 
 
 @pytest.fixture
@@ -39,14 +40,14 @@ def qdrant_client() -> QdrantClient:
     client = QdrantClient(location=":memory:")
     client.create_collection(
         collection_name="images",
-        vectors_config={"size": 2, "distance": "Cosine"},
+        vectors_config={TEXT_SPACE: {"size": 2, "distance": "Cosine"}},
     )
     points = []
     for src, count in (("telegram", 2), ("data", 1)):
         for i in range(count):
             points.append(qmodels.PointStruct(
                 id=uuid.UUID(int=len(points)),
-                vector=[1.0, 0.0],
+                vector={TEXT_SPACE: [1.0, 0.0]},
                 payload={
                     "collection": src,
                     "path": f"/nas/{src}/{i}.jpg",

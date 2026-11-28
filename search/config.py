@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import UnexpectedResponse as _QdrResp
 
+from lustre_kernel.spaces import TEXT_SPACE
 from search.diversity_config import Diversity, load_diversity_from_env
 
 logger = logging.getLogger(__name__)
@@ -346,17 +347,21 @@ def _check_extra_spaces(
     photo→photo similarity out of the wrong space (or fail at
     query time with no explanation).
 
+    Every space is NAMED, so the text space is checked by name
+    too: a collection whose text space is the old unnamed default
+    is the old schema, and it is refused here rather than being
+    silently searched by a space nobody can name.
+
     Raises `QdrantVariantMismatch` when a space is missing or has
-    the wrong dim. A model that declares no extra spaces is a no-op.
+    the wrong dim.
     """
     from lustre_kernel.registry import get as _registry_get
     from lustre_kernel.registry import resolve_model_name
 
     try:
-        expected = dict(_registry_get(resolve_model_name(env_variant)).extra_spaces)
+        spec = _registry_get(resolve_model_name(env_variant))
+        expected = {TEXT_SPACE: spec.dim, **dict(spec.extra_spaces)}
     except Exception:  # noqa: BLE001 — registry not loaded in this process
-        return
-    if not expected:
         return
 
     stored = _qdrant_collection_spaces(info)
@@ -444,10 +449,10 @@ def _qdrant_collection_spaces(info: Any) -> dict[str, int]:
 def _qdrant_collection_dim(info: Any) -> int | None:
     """Read the TEXT space's dim from a Qdrant CollectionInfo object.
 
-    The TEXT space is the default (unnamed) vector — the one text
+    The TEXT space is the named vector ``"siglip2"`` — the one text
     queries are compared in. A multi-space collection also carries
-    named spaces (the picture→picture DINOv3 space), whose dims
-    differ, so the text space must be read by NAME rather than by
+    other named spaces (the picture→picture DINOv3 space), whose dims
+    differ, so the text space must be read BY NAME rather than by
     taking whichever vector the config happens to list first.
 
     Tolerates Qdrant-client version differences: `vectors_count`,
@@ -457,12 +462,13 @@ def _qdrant_collection_dim(info: Any) -> int | None:
     spaces = _qdrant_collection_spaces(info)
     if not spaces:
         return None
-    if "" in spaces:
-        return spaces[""]
-    # A collection with ONLY named vectors has no default vector.
-    # Its first named space is the closest thing to a primary, and
-    # the caller compares it against the expected text dim — a
-    # mismatch is the correct outcome either way.
+    if TEXT_SPACE in spaces:
+        return spaces[TEXT_SPACE]
+    # A collection whose text space is named differently (a legacy
+    # unnamed default, say) has no space we can trust. Its first
+    # named space is the closest thing to a primary, and the caller
+    # compares it against the expected text dim — a mismatch is the
+    # correct outcome either way.
     return next(iter(spaces.values()))
 
 # Backward compatibility: these are derived from the variant.
