@@ -24,6 +24,7 @@ from qdrant_client.http import models as qmodels
 
 from indexer import local_sync as local_sync_mod
 from indexer.upsert import id_for
+from lustre_kernel.spaces import TEXT_SPACE
 
 COLLECTION = "images_test_changedetect"
 
@@ -102,7 +103,10 @@ def test_changed_file_reembedded_into_same_point(monkeypatch, tmp_path):
     pts = _points(raw)
     assert len(pts) == 1
     old_id = str(pts[0].id)
-    old_vec = list(pts[0].vector)
+    # The point's vector is a DICT keyed by space name, so compare the
+    # TEXT space's values — comparing the dict's KEYS would compare
+    # ["siglip2"] with ["siglip2"] and never see a re-embed.
+    old_vec = list(pts[0].vector[TEXT_SPACE])
 
     # Modify file: new size + mtime. Bump mtime explicitly so the
     # change is visible regardless of filesystem timestamp granularity.
@@ -120,7 +124,7 @@ def test_changed_file_reembedded_into_same_point(monkeypatch, tmp_path):
     pts = _points(raw)
     assert len(pts) == 1, "changed file must re-embed IN PLACE, not duplicate"
     assert str(pts[0].id) == old_id, "point id must stay stable across re-embed"
-    assert list(pts[0].vector) != old_vec, "re-embed must update the vector"
+    assert list(pts[0].vector[TEXT_SPACE]) != old_vec, "re-embed must update the vector"
 
 
 def test_legacy_point_without_mtime_gets_reembedded(monkeypatch, tmp_path):
@@ -290,7 +294,7 @@ def test_id_mismatch_diagnostic_catches_normalisation_drift(
         collection_name=COLLECTION,
         points=[qmodels.PointStruct(
             id=pid_resolve,
-            vector=[0.1] * 1536,
+            vector={TEXT_SPACE: [0.1] * 1536},
             # `collection="x"` matters: `_scroll_existing_meta`
             # filters the source-scoped scroll on `collection=src_name`.
             # Without it the scroll wouldn't return this point and the

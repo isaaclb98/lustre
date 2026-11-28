@@ -15,6 +15,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
 from search.qdrant_client import QdrantSearch, SearchHit
+from lustre_kernel.spaces import TEXT_SPACE
 
 
 # ----- Fixtures -----
@@ -31,13 +32,13 @@ def populated_collection(in_memory_qdrant):
     coll = "test_imgs"
     in_memory_qdrant.create_collection(
         collection_name=coll,
-        vectors_config=qmodels.VectorParams(size=4, distance=qmodels.Distance.COSINE),
+        vectors_config={TEXT_SPACE: qmodels.VectorParams(size=4, distance=qmodels.Distance.COSINE)},
     )
     point_ids = [str(uuid.uuid4()) for _ in range(5)]
     points = [
         qmodels.PointStruct(
             id=pid,
-            vector=[float(i), 0.0, 0.0, 0.0],
+            vector={TEXT_SPACE: [float(i), 0.0, 0.0, 0.0]},
             payload={
                 "path": f"/images/photo_{i}.jpg",
                 "collection": "library-a",
@@ -57,12 +58,12 @@ def multi_collection(in_memory_qdrant):
     for coll in ["lib-a", "lib-b"]:
         in_memory_qdrant.create_collection(
             collection_name=coll,
-            vectors_config=qmodels.VectorParams(size=4, distance=qmodels.Distance.COSINE),
+            vectors_config={TEXT_SPACE: qmodels.VectorParams(size=4, distance=qmodels.Distance.COSINE)},
         )
         points = [
             qmodels.PointStruct(
                 id=f"{uuid.uuid4()}",
-                vector=[float(i), 0.0, 0.0, 0.0],
+                vector={TEXT_SPACE: [float(i), 0.0, 0.0, 0.0]},
                 payload={
                     "path": f"/{coll}/photo_{i}.jpg",
                     "collection": coll,
@@ -314,7 +315,7 @@ class TestScrollAll:
     def test_scroll_all_empty_collection(self, in_memory_qdrant):
         in_memory_qdrant.create_collection(
             collection_name="empty",
-            vectors_config=qmodels.VectorParams(size=4, distance=qmodels.Distance.COSINE),
+            vectors_config={TEXT_SPACE: qmodels.VectorParams(size=4, distance=qmodels.Distance.COSINE)},
         )
         search = QdrantSearch(in_memory_qdrant, "empty")
         all_points = []

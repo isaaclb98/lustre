@@ -26,6 +26,7 @@ from qdrant_client.http import models as qm
 
 from indexer import local_sync
 from indexer.upsert import id_for
+from lustre_kernel.spaces import TEXT_SPACE
 
 
 # ----- fixtures -----
@@ -48,7 +49,7 @@ def in_memory_qdrant():
     client = QdrantClient(location=":memory:")
     client.create_collection(
         collection_name="images",
-        vectors_config=qm.VectorParams(size=16, distance=qm.Distance.COSINE),
+        vectors_config={TEXT_SPACE: qm.VectorParams(size=16, distance=qm.Distance.COSINE)},
     )
     # Pre-seed a payload index so scroll filtering works in tests too
     client.create_payload_index(
@@ -166,7 +167,7 @@ class TestScrollExistingMeta:
                 points=[
                     qm.PointStruct(
                         id=id_for(Path(f"/tmp/{pid}.jpg"), src_name),  # noqa: S108 — deterministic id_for() input, not a real file
-                        vector=[0.0] * 16,
+                        vector={TEXT_SPACE: [0.0] * 16},
                         payload={"collection": src_name, "mtime": mtime, "size": size},
                     )
                 ],
@@ -193,12 +194,12 @@ class TestScrollExistingMeta:
             points=[
                 qm.PointStruct(
                     id=legacy_pid,
-                    vector=[0.0] * 16,
+                    vector={TEXT_SPACE: [0.0] * 16},
                     payload={"collection": "lib_a"},  # no mtime/size
                 ),
                 qm.PointStruct(
                     id=modern_pid,
-                    vector=[0.0] * 16,
+                    vector={TEXT_SPACE: [0.0] * 16},
                     payload={"collection": "lib_a", "mtime": 1234.0, "size": 5678},
                 ),
             ],
@@ -244,7 +245,7 @@ class TestScrollExistingMeta:
             points=[
                 qm.PointStruct(
                     id=id_for(Path(f"/tmp/big_{i}.jpg"), "big_lib"),  # noqa: S108 — id_for() hash input
-                    vector=[0.0] * 16,
+                    vector={TEXT_SPACE: [0.0] * 16},
                     payload={"collection": "big_lib", "mtime": float(i), "size": i * 10},
                 )
                 for i in range(1500)

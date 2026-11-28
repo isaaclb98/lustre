@@ -33,6 +33,7 @@ from lustre_kernel.orphan_marking import (
     orphan_filter,
     orphan_since_filter,
 )
+from lustre_kernel.spaces import TEXT_SPACE
 
 
 # ---------------------------------------------------------------------------
@@ -46,14 +47,14 @@ def qdrant_client() -> QdrantClient:
     client = QdrantClient(location=":memory:")
     client.create_collection(
         collection_name="images",
-        vectors_config={"size": 2, "distance": "Cosine"},
+        vectors_config={TEXT_SPACE: {"size": 2, "distance": "Cosine"}},
     )
     points = []
     for src, count in (("telegram", 3), ("data", 2)):
         for i in range(count):
             points.append(qmodels.PointStruct(
                 id=uuid.UUID(int=len(points)),
-                vector=[1.0, 0.0],
+                vector={TEXT_SPACE: [1.0, 0.0]},
                 payload={
                     "collection": src,
                     "path": f"/nas/{src}/{i}.jpg",

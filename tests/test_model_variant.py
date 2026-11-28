@@ -16,6 +16,8 @@ at call time, not at import time).
 import pytest
 from search import config
 
+from lustre_kernel.spaces import PICTURE_SPACE, TEXT_SPACE
+
 
 # The one variant the kernel ships.
 LIVE_VARIANT = "c-radio-v4/so400m"
@@ -191,11 +193,11 @@ def _dim_via_payloads(client, collection, dim):
     from qdrant_client.http import models as qm
     client.create_collection(
         collection_name=collection,
-        vectors_config=qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
+        vectors_config={TEXT_SPACE: qm.VectorParams(size=dim, distance=qm.Distance.COSINE)},
     )
     client.upsert(
         collection_name=collection,
-        points=[qm.PointStruct(id=1, vector=[0.0] * dim, payload={})],
+        points=[qm.PointStruct(id=1, vector={TEXT_SPACE: [0.0] * dim}, payload={})],
     )
 
 
@@ -214,7 +216,7 @@ def _two_space_point(dim=LIVE_DIM, picture_dim=None, point_id=1, payload=None):
         ).extra_spaces["dinov3"]
     return qm.PointStruct(
         id=point_id,
-        vector={"": [0.0] * dim, "dinov3": [0.0] * picture_dim},
+        vector={TEXT_SPACE: [0.0] * dim, PICTURE_SPACE: [0.0] * picture_dim},
         payload=payload or {},
     )
 
@@ -242,7 +244,7 @@ def _two_space_collection(client, collection, dim=LIVE_DIM, picture_dim=None):
     client.create_collection(
         collection_name=collection,
         vectors_config={
-            "": qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
+            TEXT_SPACE: qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
             "dinov3": qm.VectorParams(size=picture_dim, distance=qm.Distance.COSINE),
         },
     )
@@ -289,7 +291,7 @@ class TestReconcileVariantFromQdrant:
         client = _make_client_for_reconcile()
         client.create_collection(
             collection_name="images",
-            vectors_config=qm.VectorParams(size=LIVE_DIM, distance=qm.Distance.COSINE),
+            vectors_config={TEXT_SPACE: qm.VectorParams(size=LIVE_DIM, distance=qm.Distance.COSINE)},
         )
         monkeypatch.setattr(
             config, "QdrantClient",
@@ -437,11 +439,11 @@ class TestReconcileVariantFromQdrant:
         from qdrant_client.http import models as qm
         client.create_collection(
             collection_name="images",
-            vectors_config=qm.VectorParams(size=FOREIGN_DIM, distance=qm.Distance.COSINE),
+            vectors_config={TEXT_SPACE: qm.VectorParams(size=FOREIGN_DIM, distance=qm.Distance.COSINE)},
         )
         client.upsert(
             collection_name="images",
-            points=[qm.PointStruct(id=1, vector=[0.0] * FOREIGN_DIM, payload={})],
+            points=[qm.PointStruct(id=1, vector={TEXT_SPACE: [0.0] * FOREIGN_DIM}, payload={})],
         )
         monkeypatch.setattr(
             config, "QdrantClient",

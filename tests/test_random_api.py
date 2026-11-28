@@ -5,6 +5,7 @@ import pytest
 
 from indexer import upsert
 from indexer.upsert import VECTOR_DIM
+from lustre_kernel.spaces import TEXT_SPACE
 
 
 # Reuse the search-side fixture but seed the photos directly into
@@ -85,7 +86,7 @@ def random_app(tmp_path, monkeypatch):
         points=[
             qmodels.PointStruct(
                 id=short_to_uuid[short],
-                vector=[0.0] * VECTOR_DIM,
+                vector={TEXT_SPACE: [0.0] * VECTOR_DIM},
                 payload={
                     # Same value as the point id, as in production.
                     "id": short_to_uuid[short],

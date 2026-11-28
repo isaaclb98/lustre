@@ -30,6 +30,7 @@ from qdrant_client.http import models as qmodels
 from indexer import local_sync as local_sync_mod
 from indexer.blurhash import compute_blurhash, is_valid_blurhash
 from indexer.upsert import VECTOR_DIM
+from lustre_kernel.spaces import TEXT_SPACE
 
 COLLECTION = "images_test_backfill"
 
@@ -56,7 +57,7 @@ def _seed_point(raw, name: str, path_str: str, source: str, blurhash=None, dhash
         collection_name=COLLECTION,
         points=[qmodels.PointStruct(
             id=_pid(name),
-            vector=[0.0] * VECTOR_DIM,
+            vector={TEXT_SPACE: [0.0] * VECTOR_DIM},
             payload={
                 "id": _pid(name), "path": path_str, "shard": "",
                 "collection": source, "mtime": 100, "size": 200,

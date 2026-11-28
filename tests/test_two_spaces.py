@@ -46,8 +46,8 @@ RADIO_MODEL = "C-RADIOv4-SO400M"
 # ----- Space names -----
 
 def test_space_names_are_shared_constants():
-    """The default (unnamed) vector is the text space."""
-    assert TEXT_SPACE == ""
+    """Both spaces are named: the text space is "siglip2"."""
+    assert TEXT_SPACE == "siglip2"
     assert PICTURE_SPACE == "dinov3"
 
 
@@ -238,7 +238,7 @@ def test_space_vector_picks_the_named_space():
     from search.qdrant_client import _space_vector
 
     vec = _space_vector(
-        {"": [0.1, 0.2], "dinov3": [0.3, 0.4, 0.5]}, PICTURE_SPACE,
+        {TEXT_SPACE: [0.1, 0.2], PICTURE_SPACE: [0.3, 0.4, 0.5]}, PICTURE_SPACE,
     )
     assert vec == [0.3, 0.4, 0.5]
 
@@ -246,14 +246,14 @@ def test_space_vector_picks_the_named_space():
 def test_space_vector_defaults_to_the_unnamed_vector():
     from search.qdrant_client import _space_vector
 
-    assert _space_vector({"": [0.1, 0.2], "dinov3": [0.3]}) == [0.1, 0.2]
+    assert _space_vector({TEXT_SPACE: [0.1, 0.2], PICTURE_SPACE: [0.3]}) == [0.1, 0.2]
 
 
 def test_space_vector_returns_none_for_a_missing_space():
     """A missing vector is not an empty one."""
     from search.qdrant_client import _space_vector
 
-    assert _space_vector({"": [0.1]}, "dinov3") is None
+    assert _space_vector({TEXT_SPACE: [0.1]}, "dinov3") is None
 
 
 def test_space_vector_passes_through_a_flat_vector():
@@ -294,8 +294,8 @@ def test_ensure_collection_creates_one_vector_per_space():
     )
 
     vectors = created["vectors_config"]
-    assert set(vectors) == {"", PICTURE_SPACE}
-    assert vectors[""].size == 1536
+    assert set(vectors) == {TEXT_SPACE, PICTURE_SPACE}
+    assert vectors[TEXT_SPACE].size == 1536
     assert vectors[PICTURE_SPACE].size == 4096
 
 
@@ -320,7 +320,7 @@ def test_ensure_collection_defaults_to_a_single_space():
 
     upsert.ensure_collection(_Client(), "images", dim=1536)
 
-    assert set(created["vectors_config"]) == {""}
+    assert set(created["vectors_config"]) == {TEXT_SPACE}
 
 
 # ----- The upsert carries every space -----
@@ -422,7 +422,7 @@ def test_upsert_batch_refuses_a_bare_vector_on_a_two_space_collection():
     client.create_collection(
         collection_name="two_space",
         vectors_config={
-            "": models.VectorParams(size=4, distance=models.Distance.COSINE),
+            TEXT_SPACE: models.VectorParams(size=4, distance=models.Distance.COSINE),
             PICTURE_SPACE: models.VectorParams(
                 size=3, distance=models.Distance.COSINE,
             ),
@@ -445,7 +445,7 @@ def test_upsert_batch_refuses_a_partial_space_dict():
     client.create_collection(
         collection_name="two_space",
         vectors_config={
-            "": models.VectorParams(size=4, distance=models.Distance.COSINE),
+            TEXT_SPACE: models.VectorParams(size=4, distance=models.Distance.COSINE),
             PICTURE_SPACE: models.VectorParams(
                 size=3, distance=models.Distance.COSINE,
             ),
@@ -502,8 +502,8 @@ def test_collection_spaces_reads_every_named_vector():
         def __init__(self, size):
             self.size = size
 
-    info = _FakeCollectionInfo({"": _P(1536), "dinov3": _P(4096)})
-    assert _qdrant_collection_spaces(info) == {"": 1536, "dinov3": 4096}
+    info = _FakeCollectionInfo({TEXT_SPACE: _P(1536), PICTURE_SPACE: _P(4096)})
+    assert _qdrant_collection_spaces(info) == {TEXT_SPACE: 1536, PICTURE_SPACE: 4096}
 
 
 def test_collection_dim_reads_the_text_space():
@@ -519,7 +519,7 @@ def test_collection_dim_reads_the_text_space():
         def __init__(self, size):
             self.size = size
 
-    info = _FakeCollectionInfo({"": _P(1536), "dinov3": _P(4096)})
+    info = _FakeCollectionInfo({TEXT_SPACE: _P(1536), PICTURE_SPACE: _P(4096)})
     assert _qdrant_collection_dim(info) == 1536
 
 
@@ -536,7 +536,7 @@ def test_check_extra_spaces_rejects_a_missing_picture_space():
         def __init__(self, size):
             self.size = size
 
-    info = _FakeCollectionInfo({"": _P(1536)})
+    info = _FakeCollectionInfo({TEXT_SPACE: _P(1536)})
     with pytest.raises(QdrantVariantMismatch, match="MISSING"):
         _check_extra_spaces(info, "images", "http://qdrant:6333", "c-radio-v4/so400m")
 
@@ -548,7 +548,7 @@ def test_check_extra_spaces_rejects_a_wrong_dim():
         def __init__(self, size):
             self.size = size
 
-    info = _FakeCollectionInfo({"": _P(1536), "dinov3": _P(1024)})
+    info = _FakeCollectionInfo({TEXT_SPACE: _P(1536), PICTURE_SPACE: _P(1024)})
     with pytest.raises(QdrantVariantMismatch, match="dim=1024"):
         _check_extra_spaces(info, "images", "http://qdrant:6333", "c-radio-v4/so400m")
 
@@ -560,7 +560,7 @@ def test_check_extra_spaces_accepts_the_full_schema():
         def __init__(self, size):
             self.size = size
 
-    info = _FakeCollectionInfo({"": _P(1536), "dinov3": _P(4096)})
+    info = _FakeCollectionInfo({TEXT_SPACE: _P(1536), PICTURE_SPACE: _P(4096)})
     _check_extra_spaces(info, "images", "http://qdrant:6333", "c-radio-v4/so400m")
 
 
