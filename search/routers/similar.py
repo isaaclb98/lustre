@@ -36,11 +36,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from lustre_kernel.spaces import PICTURE_SPACE
 from search.image_resolver import resolve_url
 from search.models import DiversityMetadata, SearchResponse, SearchResult
 from search.qdrant_client import SearchHit
-
-from lustre_kernel.spaces import PICTURE_SPACE
 
 logger = logging.getLogger(__name__)
 

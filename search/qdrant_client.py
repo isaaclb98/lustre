@@ -86,10 +86,11 @@ def _space_vector(vec: Any, using: str | None = None) -> list[float] | None:
     if vec is None:
         return None
     if isinstance(vec, dict):
-        if using is None:
-            vec = vec.get("", vec.get(None))
-        else:
-            vec = vec.get(using)
+        vec = (
+            vec.get("", vec.get(None))
+            if using is None
+            else vec.get(using)
+        )
         if vec is None:
             return None
     if hasattr(vec, "tolist"):

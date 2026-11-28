@@ -29,7 +29,6 @@ from qdrant_client.http import models as qmodels
 
 from indexer.blurhash import compute_blurhash
 from indexer.fingerprints import compute_fingerprints
-from lustre_kernel.registry import get_active_model_spec
 
 logger = logging.getLogger(__name__)
 
@@ -351,10 +350,11 @@ def collection_spaces(client: QdrantClient, name: str) -> set[str] | None:
         vectors_cfg = info.config.params.vectors
     except Exception:  # noqa: BLE001 — collection may not exist yet
         return None
-    if isinstance(vectors_cfg, dict):
-        spaces = {str(k) for k in vectors_cfg}
-    else:
-        spaces = {""}
+    spaces = (
+        {str(k) for k in vectors_cfg}
+        if isinstance(vectors_cfg, dict)
+        else {""}
+    )
     cache[name] = spaces
     return spaces
 
@@ -408,7 +408,7 @@ def upsert_batch(
         required = spaces
         for pid, vector, _payload in items:
             if not isinstance(vector, dict):
-                raise ValueError(
+                raise TypeError(
                     f"collection {name!r} has vector spaces {sorted(required)}; "
                     f"point {pid} was given a bare vector. An upsert "
                     f"REPLACES the whole vector set, so this would "

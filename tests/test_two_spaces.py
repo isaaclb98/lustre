@@ -264,6 +264,13 @@ def test_space_vector_passes_through_a_flat_vector():
 
 # ----- Collection shape -----
 
+class _Collections:
+    """What `client.get_collections()` returns when nothing exists."""
+
+    def __init__(self) -> None:
+        self.collections: list = []
+
+
 def test_ensure_collection_creates_one_vector_per_space():
     """The collection is created with a default vector AND a
     named one — Qdrant cannot add a named vector to an existing
@@ -275,9 +282,7 @@ def test_ensure_collection_creates_one_vector_per_space():
 
     class _Client:
         def get_collections(self):
-            class _R:
-                collections = []  # nothing exists yet
-            return _R()
+            return _Collections()
 
         def create_collection(self, collection_name, vectors_config):
             created["name"] = collection_name
@@ -308,9 +313,7 @@ def test_ensure_collection_defaults_to_a_single_space():
 
     class _Client:
         def get_collections(self):
-            class _R:
-                collections = []  # nothing exists yet
-            return _R()
+            return _Collections()
 
         def create_collection(self, collection_name, vectors_config):
             created["vectors_config"] = vectors_config
@@ -425,7 +428,7 @@ def test_upsert_batch_refuses_a_bare_vector_on_a_two_space_collection():
             ),
         },
     )
-    with pytest.raises(ValueError, match="bare vector"):
+    with pytest.raises(TypeError, match="bare vector"):
         upsert.upsert_batch(
             client, "two_space",
             [("11111111-1111-1111-1111-111111111111", [1.0, 0, 0, 0], {})],
@@ -586,10 +589,11 @@ def test_similar_route_uses_the_picture_space():
             return ([], False)
 
     class _Hit:
-        id = "p1"
-        path = "/x.jpg"
-        score = 0.0
-        payload = {}
+        def __init__(self) -> None:
+            self.id = "p1"
+            self.path = "/x.jpg"
+            self.score = 0.0
+            self.payload: dict = {}
 
     router = similar.build_similar_router(qdrant=_Qdrant(), cfg=_Cfg(), index_db=_Db())
     assert router is not None
@@ -598,9 +602,10 @@ def test_similar_route_uses_the_picture_space():
     # router's endpoint.
     import asyncio
 
-    endpoint = [
-        r for r in router.routes if getattr(r, "path", "") == "/api/similar/{point_id}"
-    ][0]
+    endpoint = next(
+        r for r in router.routes
+        if getattr(r, "path", "") == "/api/similar/{point_id}"
+    )
     # The endpoint's defaults are FastAPI `Query` objects, so the
     # limit/offset have to be passed explicitly.
     result = asyncio.run(endpoint.endpoint(point_id="p1", limit=20, offset=0))
