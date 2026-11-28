@@ -29,7 +29,6 @@ from qdrant_client.http import models as qmodels
 
 from indexer.blurhash import compute_blurhash
 from indexer.fingerprints import compute_fingerprints
-from lustre_kernel.registry import get_active_model_spec
 
 logger = logging.getLogger(__name__)
 
@@ -269,62 +268,164 @@ def ensure_payload_index(
 
 
 def ensure_collection(
-    client: QdrantClient, name: str = DEFAULT_COLLECTION, dim: int | None = None
+    client: QdrantClient, name: str = DEFAULT_COLLECTION, dim: int | None = None,
+    extra_spaces: dict[str, int] | None = None,
 ) -> None:
     """
     Create the collection if it doesn't exist. Idempotent.
 
     Vector config:
-      - Dimension from SIGLIP_VARIANT (default: 1536)
-      - Cosine distance (SigLIP2 is trained for cosine similarity)
+      - Default (unnamed) vector of `dim` — the TEXT space.
+      - One NAMED vector per extra space (e.g. "dinov3") — the
+        picture→picture spaces.
+
+    Cosine distance throughout (SigLIP2 is trained for cosine
+    similarity).
+
+    `extra_spaces` defaults to NONE — a collection with just the
+    default vector. The caller decides the layout: the indexer
+    passes the model's own extra spaces, and the search side never
+    creates the collection at all. Defaulting to the active model's
+    spaces here would put a 4096-dim DINOv3 space into every
+    collection a test or a legacy caller creates, and a point
+    written without it would silently carry no picture vector.
 
     Args:
         client: Qdrant client
         name: collection name
-        dim: embedding dimension. If None, reads from SIGLIP_VARIANT env var.
+        dim: dimension of the default (text) vector. If None, reads
+            from the active model spec.
+        extra_spaces: named space -> dim.
     """
+    from lustre_kernel.registry import get_active_model_spec
+
     if dim is None:
         # Resolve dim from the active model registry entry (single
         # source of truth — same registry the kernel and search use).
         dim = get_active_model_spec().dim
+    if extra_spaces is None:
+        extra_spaces = {}
 
     existing = {c.name for c in client.get_collections().collections}
     if name in existing:
         logger.debug("collection %r already exists", name)
         return
 
-    logger.info("creating collection %r (dim=%d, distance=Cosine)", name, dim)
+    vectors_config: dict[str, qmodels.VectorParams] = {
+        "": qmodels.VectorParams(size=dim, distance=qmodels.Distance.COSINE),
+    }
+    for space_name, space_dim in extra_spaces.items():
+        vectors_config[space_name] = qmodels.VectorParams(
+            size=space_dim, distance=qmodels.Distance.COSINE,
+        )
+
+    logger.info(
+        "creating collection %r (text dim=%d, extra spaces=%s)",
+        name, dim, extra_spaces or {},
+    )
     client.create_collection(
         collection_name=name,
-        vectors_config=qmodels.VectorParams(
-            size=dim,
-            distance=qmodels.Distance.COSINE,
-        ),
+        vectors_config=vectors_config,
     )
+
+
+def collection_spaces(client: QdrantClient, name: str) -> set[str] | None:
+    """The vector space names a collection holds.
+
+    Returns the set of space names — `{""}` for a single-space
+    collection, `{"", "dinov3"}` for a two-space one — or None if
+    the collection cannot be read.
+
+    Cached on the client: the layout does not change while the
+    indexer runs, and the check below runs on every batch.
+    """
+    cache = getattr(client, "_lustre_collection_spaces", None)
+    if cache is None:
+        cache = {}
+        client._lustre_collection_spaces = cache  # type: ignore[attr-defined]
+    if name in cache:
+        return cache[name]
+    try:
+        info = client.get_collection(collection_name=name)
+        vectors_cfg = info.config.params.vectors
+    except Exception:  # noqa: BLE001 — collection may not exist yet
+        return None
+    spaces = (
+        {str(k) for k in vectors_cfg}
+        if isinstance(vectors_cfg, dict)
+        else {""}
+    )
+    cache[name] = spaces
+    return spaces
 
 
 def upsert_batch(
     client: QdrantClient,
     name: str,
-    items: Sequence[tuple[str, list[float], dict]],
+    items: Sequence[tuple[str, dict[str, list[float]] | list[float], dict]],
     wait: bool = False,
 ) -> None:
     """
     Upsert a batch of (id, vector, payload) tuples.
 
+    The vector is EITHER:
+      - a dict of space name -> vector: `{"": <text vec>,
+        "dinov3": <picture vec>}` — what the indexer writes.
+      - a bare list — the default (unnamed) vector. Only valid on a
+        single-space collection.
+
+    **An upsert REPLACES the whole vector set.** Measured against
+    Qdrant 1.19: a named-only upsert on a point that also had the
+    default vector left it with ONLY the named one, and a
+    default-only upsert wiped the named one. So every upsert must
+    carry EVERY space's vector for that point — there is no partial
+    update. Writing only the text vector would silently drop the
+    picture vector and make photo→photo search fall back to the
+    wrong space.
+
+    **The real server ACCEPTS a shape-mismatched upsert and drops
+    the missing spaces.** Measured against Qdrant 1.19: a bare-list
+    upsert into a two-space collection returned 200 and left the
+    point holding ONLY the flat vector — the `dinov3` vector was
+    gone, with no error anywhere. (qdrant-client's LOCAL
+    in-memory mode does refuse it, which is why the test suite
+    catches it and the server does not.) So the shape is checked
+    here, against the collection's real layout, and a mismatch
+    raises instead of silently wiping a space.
+
     Args:
         client: Qdrant client
         name: collection name
-        items: sequence of (id, vector, payload)
+        items: sequence of (id, vector-or-spaces, payload)
         wait: if True, block until the upsert is indexed. The indexer
             uses wait=False during the run and wait=True on the
             final batch to ensure consistent state.
     """
     if not items:
         return
+    spaces = collection_spaces(client, name)
+    if spaces is not None and len(spaces) > 1:
+        required = spaces
+        for pid, vector, _payload in items:
+            if not isinstance(vector, dict):
+                raise TypeError(
+                    f"collection {name!r} has vector spaces {sorted(required)}; "
+                    f"point {pid} was given a bare vector. An upsert "
+                    f"REPLACES the whole vector set, so this would "
+                    f"silently wipe the other space's vector."
+                )
+            missing = required - set(vector)
+            if missing:
+                raise ValueError(
+                    f"collection {name!r} has vector spaces "
+                    f"{sorted(required)}; point {pid} is missing "
+                    f"{sorted(missing)}. An upsert REPLACES the whole "
+                    f"vector set, so this would silently wipe those "
+                    f"spaces' vectors."
+                )
     points = [
-        qmodels.PointStruct(id=pid, vector=vec, payload=payload)
-        for (pid, vec, payload) in items
+        qmodels.PointStruct(id=pid, vector=vector, payload=payload)
+        for (pid, vector, payload) in items
     ]
     client.upsert(collection_name=name, points=points, wait=wait)
 

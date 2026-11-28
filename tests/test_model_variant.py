@@ -199,6 +199,56 @@ def _dim_via_payloads(client, collection, dim):
     )
 
 
+def _two_space_point(dim=LIVE_DIM, picture_dim=None, point_id=1, payload=None):
+    """A point carrying BOTH spaces' vectors.
+
+    An upsert replaces the whole vector set, so a point written with
+    only the text vector would carry no picture vector at all.
+    """
+    from qdrant_client.http import models as qm
+    if picture_dim is None:
+        from lustre_kernel.registry import get as _registry_get
+
+        picture_dim = _registry_get(
+            config.get_model_name_for_variant(LIVE_VARIANT)
+        ).extra_spaces["dinov3"]
+    return qm.PointStruct(
+        id=point_id,
+        vector={"": [0.0] * dim, "dinov3": [0.0] * picture_dim},
+        payload=payload or {},
+    )
+
+
+def _two_space_collection(client, collection, dim=LIVE_DIM, picture_dim=None):
+    """Create the collection the way the indexer creates it.
+
+    The live variant writes TWO spaces: the default (unnamed) vector
+    is the text space, and `dinov3` is the picture space. A
+    single-space collection is a legacy layout — the reconciler
+    refuses to start against one, because photo→photo similarity
+    would be served from the wrong space.
+
+    The upsert carries BOTH vectors: an upsert replaces the whole
+    vector set, so a point written with only the text vector would
+    have no picture vector at all.
+    """
+    from qdrant_client.http import models as qm
+    if picture_dim is None:
+        from lustre_kernel.registry import get as _registry_get
+
+        picture_dim = _registry_get(
+            config.get_model_name_for_variant(LIVE_VARIANT)
+        ).extra_spaces["dinov3"]
+    client.create_collection(
+        collection_name=collection,
+        vectors_config={
+            "": qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
+            "dinov3": qm.VectorParams(size=picture_dim, distance=qm.Distance.COSINE),
+        },
+    )
+    return client
+
+
 def _make_client_for_reconcile(**_kw):
     """Real in-memory Qdrant client. Discards url/api_key kwargs.
 
@@ -254,7 +304,11 @@ class TestReconcileVariantFromQdrant:
     def test_matching_dim_proceeds(self, monkeypatch):
         """Collection dim matches env variant's expected dim → no-op."""
         client = _make_client_for_reconcile()
-        _dim_via_payloads(client, "images", dim=LIVE_DIM)
+        _two_space_collection(client, "images", dim=LIVE_DIM)
+        client.upsert(
+            collection_name="images",
+            points=[_two_space_point(dim=LIVE_DIM)],
+        )
         monkeypatch.setattr(
             config, "QdrantClient",
             lambda **kw: client,
@@ -302,16 +356,12 @@ class TestReconcileVariantFromQdrant:
     def test_payload_mismatch_raises_and_keeps_collection(self, monkeypatch):
         """Dim matches but per-point payload differs → raise, do NOT drop."""
         client = _make_client_for_reconcile()
-        from qdrant_client.http import models as qm
-        client.create_collection(
-            collection_name="images",
-            vectors_config=qm.VectorParams(size=LIVE_DIM, distance=qm.Distance.COSINE),
-        )
+        _two_space_collection(client, "images", dim=LIVE_DIM)
         # Single point whose payload claims a different model wrote it.
         client.upsert(
             collection_name="images",
-            points=[qm.PointStruct(
-                id=1, vector=[0.0] * LIVE_DIM,
+            points=[_two_space_point(
+                dim=LIVE_DIM, point_id=1,
                 payload={"model_variant": "so400m/16-384"},
             )],
         )
@@ -354,15 +404,11 @@ class TestReconcileVariantFromQdrant:
     def test_legacy_payload_missing_proceeds(self, monkeypatch):
         """Dim matches, payload missing (legacy data) → proceed."""
         client = _make_client_for_reconcile()
-        from qdrant_client.http import models as qm
-        client.create_collection(
-            collection_name="images",
-            vectors_config=qm.VectorParams(size=LIVE_DIM, distance=qm.Distance.COSINE),
-        )
+        _two_space_collection(client, "images", dim=LIVE_DIM)
         # Single point, no model_variant payload (legacy).
         client.upsert(
             collection_name="images",
-            points=[qm.PointStruct(id=1, vector=[0.0] * LIVE_DIM, payload={})],
+            points=[_two_space_point(dim=LIVE_DIM, point_id=1, payload={})],
         )
         monkeypatch.setattr(
             config, "QdrantClient",
@@ -418,16 +464,11 @@ class TestReconcileVariantFromQdrant:
         """The live dim whose payload names the live model → the check
         is satisfied and the app boots."""
         client = _make_client_for_reconcile()
-        from qdrant_client.http import models as qm
-        client.create_collection(
-            collection_name="images",
-            vectors_config=qm.VectorParams(size=LIVE_DIM, distance=qm.Distance.COSINE),
-        )
+        _two_space_collection(client, "images", dim=LIVE_DIM)
         client.upsert(
             collection_name="images",
-            points=[qm.PointStruct(
-                id=1,
-                vector=[0.0] * LIVE_DIM,
+            points=[_two_space_point(
+                dim=LIVE_DIM, point_id=1,
                 payload={"model_variant": LIVE_VARIANT},
             )],
         )

@@ -36,6 +36,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
+from lustre_kernel.spaces import PICTURE_SPACE
 from search.image_resolver import resolve_url
 from search.models import DiversityMetadata, SearchResponse, SearchResult
 from search.qdrant_client import SearchHit
@@ -100,9 +101,15 @@ def build_similar_router(
     ) -> SearchResponse:
         """Most-similar photos: nearest neighbours of `point_id`."""
         started = time.monotonic()
+        # The picture→picture space. DINOv3's summary, not SigLIP2's
+        # global summary: DINOv3 is self-supervised on visual
+        # structure, so its space ranks photographs by how they LOOK
+        # rather than by what they depict. Both the retrieve and the
+        # search must use the same space — a query vector is only
+        # meaningful in the space it was drawn from.
         try:
             pair = await asyncio.to_thread(
-                qdrant.retrieve_with_vector, point_id,
+                qdrant.retrieve_with_vector, point_id, PICTURE_SPACE,
             )
         except (ConnectionError, OSError) as e:
             logger.warning(
@@ -121,6 +128,10 @@ def build_similar_router(
                 None,  # no collection whitelist
                 None,  # no allowed_ids
                 [point_id],  # exclude the source photo itself
+                None,  # no path filter
+                True,  # with_payload
+                None,  # search_params
+                PICTURE_SPACE,  # search the picture→picture space
             )
         except (ConnectionError, OSError) as e:
             logger.warning(

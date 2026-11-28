@@ -31,11 +31,13 @@ Concrete entries shipped today:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from PIL import Image
+
+from lustre_kernel.spaces import TEXT_SPACE
 
 __all__ = [
     "Embedder",
@@ -73,6 +75,10 @@ class Embedder(Protocol):
 
     def embed_images(self, images: Sequence[Image.Image]) -> list[list[float]]: ...
 
+    def embed_images_multi(
+        self, images: Sequence[Image.Image],
+    ) -> dict[str, list[list[float]]]: ...
+
 
 @dataclass(frozen=True)
 class ModelSpec:
@@ -93,6 +99,18 @@ class ModelSpec:
       LONG edge; the short edge follows the source aspect ratio and
       both edges are snapped to the model's patch grid. No padding,
       no bars, no crop.
+
+    `extra_spaces` names the ADDITIONAL named vector spaces this
+    model writes into the same collection, beyond the default
+    (unnamed) one that `dim` describes. A collection holding them
+    has one Qdrant vector per space: the default unnamed vector is
+    the text space, and each extra space is a named vector.
+
+    The spaces are a property of the MODEL, not of the collection
+    name — the reconciler reads them to check that a stored
+    collection actually has every space the model expects, because a
+    collection missing the picture space would silently answer
+    photo→photo queries from the wrong space.
     """
 
     name: str
@@ -102,6 +120,7 @@ class ModelSpec:
     text: Embedder
     vision: Embedder
     preprocess: str = "letterbox"
+    extra_spaces: Mapping[str, int] = field(default_factory=dict)
 
 
 class ModelNotFoundError(KeyError):
@@ -286,6 +305,18 @@ class MockEmbedder:
 
     def embed_images(self, images: Sequence[Image.Image]) -> list[list[float]]:
         return [self.embed_image(img) for img in images]
+
+    def embed_images_multi(
+        self, images: Sequence[Image.Image],
+    ) -> dict[str, list[list[float]]]:
+        """The mock writes only the text space.
+
+        The mock's model spec declares no `extra_spaces`, so a
+        collection indexed with it holds just the default vector.
+        Returning the text space under its own name keeps the
+        caller's shape identical to the real model's.
+        """
+        return {TEXT_SPACE: self.embed_images(images)}
 
 
 def _deterministic_vector(seed: object, dim: int) -> list[float]:

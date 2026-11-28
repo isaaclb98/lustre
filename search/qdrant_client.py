@@ -69,6 +69,37 @@ class SearchHit:
     payload: dict[str, Any] | None = None
 
 
+def _space_vector(vec: Any, using: str | None = None) -> list[float] | None:
+    """Pick one space's vector out of a point's `vector` attribute.
+
+    On a single-space collection a point's vector is a flat
+    `list[float]`. On a multi-space collection it is a DICT keyed
+    by space name — `{"": [...], "dinov3": [...]}`. Callers that
+    read a vector without saying which space they want would
+    otherwise get a dict where they expect a list, and would
+    iterate over its KEYS.
+
+    `using=None` means the default (unnamed) vector — the text
+    space. Returns None when the requested space is absent: a
+    missing vector is not an empty one.
+    """
+    if vec is None:
+        return None
+    if isinstance(vec, dict):
+        vec = (
+            vec.get("", vec.get(None))
+            if using is None
+            else vec.get(using)
+        )
+        if vec is None:
+            return None
+    if hasattr(vec, "tolist"):
+        vec = vec.tolist()
+    if not isinstance(vec, list):
+        return None
+    return list(vec)
+
+
 class QdrantSearch:
     """
     Read-only wrapper around QdrantClient.query_points.
@@ -104,6 +135,7 @@ class QdrantSearch:
         path_filter: Any | None = None,
         with_payload: bool = True,
         search_params: Any | None = None,
+        using: str | None = None,
     ) -> tuple[list[SearchHit], bool]:
         """
         Top-K search with optional offset and collection filter.
@@ -148,6 +180,13 @@ class QdrantSearch:
 
         `search_params` is passed through to Qdrant unchanged — it
         carries the HNSW tuning (`SearchParams(hnsw_ef=...)`).
+
+        `using` selects WHICH vector space to search. On a
+        multi-space collection the query vector must match the space
+        it is compared in — a 1536-d SigLIP2 vector has no meaning in
+        the 4096-d picture space. `None` searches the default
+        (unnamed) vector, which is the text space. Pass the named
+        space (e.g. `"dinov3"`) to search the picture space.
 
         `with_payload=False` drops the payload from the response
         and leaves only the id and the score. Use it when the
@@ -206,6 +245,7 @@ class QdrantSearch:
         response = self.client.query_points(
             collection_name=self.collection,
             query=vector,
+            using=using,
             limit=limit,
             offset=offset,
             query_filter=query_filter,
@@ -241,6 +281,7 @@ class QdrantSearch:
         offset: int = 0,
         with_payload: bool = True,
         search_params: Any | None = None,
+        using: str | None = None,
     ) -> list[SearchHit]:
         """
         Qdrant Recommend API: return the points nearest to
@@ -281,6 +322,12 @@ class QdrantSearch:
         direct `client.recommend(...)` method in favor of the
         universal `client.query_points(...)` endpoint, which
         accepts a `RecommendQuery` to drive the recommend logic.
+
+        `using` selects which vector space the recommendation is
+        computed in. The recommend path averages the POSITIVE and
+        NEGATIVE points' stored vectors, so the space decides what
+        the recommendation means. None uses the default (unnamed)
+        vector — the text space.
         """
         from qdrant_client.http import models as qmodels
 
@@ -327,6 +374,7 @@ class QdrantSearch:
                 offset=offset,
                 score_threshold=score_threshold,
                 query_filter=query_filter,
+                using=using,
                 with_payload=with_payload,
                 with_vectors=with_vector,
                 search_params=search_params,
@@ -787,6 +835,7 @@ class QdrantSearch:
         allowed_ids: list[str] | None = None,
         exclude_ids: list[str] | None = None,
         path_filter: Any | None = None,
+        using: str | None = None,
     ) -> tuple[list[tuple[SearchHit, list[float]]], bool]:
         """
         Like ``search()`` but returns ``(hit, vector)`` pairs so the
@@ -808,6 +857,11 @@ class QdrantSearch:
         Qdrant filter condition (the native text-index condition
         for a ``?filename=`` pattern), AND'd into the same ``must``
         list. Empty / None skips.
+
+        ``using`` mirrors ``search()``: which vector space to
+        search. The returned vector is the one from THAT space, so
+        the re-ranking it feeds stays in the same space as the
+        query. None uses the default (unnamed) vector.
         """
         from qdrant_client.http import models as qmodels
 
@@ -845,6 +899,7 @@ class QdrantSearch:
         response = self.client.query_points(
             collection_name=self.collection,
             query=vector,
+            using=using,
             limit=limit,
             offset=offset,
             query_filter=query_filter,
@@ -855,11 +910,11 @@ class QdrantSearch:
 
         pairs: list[tuple[SearchHit, list[float]]] = []
         for r in response.points:
-            vec = r.vector
+            # The vector from the space that was searched — the
+            # re-ranking it feeds must stay in the query's space.
+            vec = _space_vector(r.vector, using)
             if vec is None:
                 continue
-            if hasattr(vec, "tolist"):
-                vec = vec.tolist()
             pairs.append((
                 SearchHit(
                     id=str(r.id),
@@ -867,7 +922,7 @@ class QdrantSearch:
                     score=float(r.score) if r.score is not None else 0.0,
                     payload=r.payload,
                 ),
-                list(vec),
+                vec,
             ))
 
         has_more = len(pairs) >= limit
@@ -904,12 +959,13 @@ class QdrantSearch:
             return []
         out: list[tuple[str, list[float]]] = []
         for p in points:
-            vec = getattr(p, "vector", None)
+            # The text space — the favourites centroid is computed
+            # in the same space as the text query it will be
+            # compared against.
+            vec = _space_vector(getattr(p, "vector", None))
             if vec is None:
                 continue
-            if hasattr(vec, "tolist"):
-                vec = vec.tolist()
-            out.append((str(p.id), list(vec)))
+            out.append((str(p.id), vec))
         return out
 
     def scroll_all(self, batch_size: int = 1000) -> Iterator[list[dict[str, Any]]]:
@@ -1155,7 +1211,7 @@ class QdrantSearch:
         )
 
     def retrieve_with_vector(
-        self, point_id: str,
+        self, point_id: str, using: str | None = None,
     ) -> tuple[list[float], SearchHit] | None:
         """
         Like `retrieve()` but also returns the stored embedding.
@@ -1164,6 +1220,15 @@ class QdrantSearch:
         point's vector, then issue a second `query_points(query=<vec>)`
         against the same collection. Two round-trips total, no
         re-encoding on the search side.
+
+        `using` selects which vector space to read. On a
+        multi-space collection the point's `vector` attribute is a
+        DICT keyed by space name (`{"": [...], "dinov3": [...]}`),
+        not a flat list — so the space must be chosen explicitly.
+        `None` reads the default (unnamed) vector, the text space.
+        Reading a named space that the point does not carry returns
+        None: a missing vector is not a zero-length vector, and
+        substituting one would search for a vector of zeros.
 
         Returns (vector, hit) or None if the point is missing. Caller
         is responsible for surfacing a 404 when None comes back.
@@ -1185,14 +1250,12 @@ class QdrantSearch:
             return None
         p = points[0]
         payload = p.payload or {}
-        vec = p.vector
+        vec = _space_vector(p.vector, using)
         # The qdrant-client returns a numpy array or a list depending
-        # on version; normalize to a flat list[float].
+        # on version; `_space_vector` normalizes to a flat list[float].
         if vec is None:
             return None
-        if hasattr(vec, "tolist"):
-            vec = vec.tolist()
-        return list(vec), SearchHit(
+        return vec, SearchHit(
             id=str(p.id),
             path=payload.get("path", ""),
             score=0.0,
