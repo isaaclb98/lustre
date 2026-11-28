@@ -42,6 +42,8 @@ from typing import Any
 
 import torch
 
+from lustre_kernel.spaces import TEXT_SPACE
+
 # Re-export the pure compute surface so existing call sites continue
 # to import from `search.centroids` without an import rewrite. These
 # helpers live in the dedicated compute module (B3 step 43) and are
@@ -85,6 +87,11 @@ class CentroidSpec:
     n_images: int
     extracted_at: str
     source_path: Path
+    # The space this vector lives in. Static centroids are computed
+    # offline from the model's text-space vectors, so they are the
+    # TEXT space by default; the field exists so the search routes
+    # read one attribute for both kinds of centroid.
+    space: str = TEXT_SPACE
 
     def as_dict(self) -> dict[str, Any]:
         """Public-facing summary for the JSON list endpoint."""
@@ -369,6 +376,13 @@ class DynamicCentroidSpec:
     # Source identifier surfaced in the UI (e.g. "favourites",
     # "recent-views"). Lets the UI badge or filter without hardcoding.
     source: str
+    # The vector space this centroid's vector lives in. A centroid
+    # built from DINOv3 vectors is a 4096-d picture-space vector and
+    # can ONLY be searched in the picture space; one built from
+    # SigLIP2 vectors is 1536-d and lives in the text space. The
+    # search routes read this to pick the space, so the centroid and
+    # the query can never drift apart.
+    space: str = TEXT_SPACE
     # Empty-state copy shown when compute_fn returns None. Optional;
     # falls back to a generic message.
     empty_message: str = (

@@ -38,6 +38,8 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from lustre_kernel.spaces import TEXT_SPACE
+
 if TYPE_CHECKING:
     from search.qdrant_client import SearchHit
 
@@ -281,6 +283,7 @@ async def build_surprise_deck(
     *,
     qdrant: Any,
     vec: list[float],
+    using: str = TEXT_SPACE,
     collections: list[str],
     surprise_allowed_ids: list[str] | None,
     surprise_pool: int,
@@ -327,6 +330,7 @@ async def build_surprise_deck(
                 qdrant.search,
                 with_payload=False,
                 search_params=models.SearchParams(hnsw_ef=POOL_HNSW_EF),
+                using=using,
             ),
             vec,
             surprise_pool,
