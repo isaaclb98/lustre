@@ -236,6 +236,13 @@ def reconcile_variant_from_qdrant(
             f"behavior was too dangerous to be a startup default."
         )
 
+    # The collection must also carry EVERY space the active model
+    # writes. A collection built with the old single-space schema has
+    # the right text dim but no picture space, so photo→photo
+    # similarity would have nothing to search — and the app would
+    # serve wrong results rather than an error.
+    _check_extra_spaces(info, qdrant_collection, qdrant_url, env_variant)
+
     # Dim matches. Optional soft check: per-point payload.
     try:
         sample, _next = client.scroll(
@@ -327,32 +334,136 @@ def reconcile_variant_from_qdrant(
                 env_variant, stored_dim)
 
 
+def _check_extra_spaces(
+    info: Any, qdrant_collection: str, qdrant_url: str, env_variant: str,
+) -> None:
+    """Verify the collection carries every space the active model writes.
+
+    A multi-space collection holds one Qdrant vector per space. A
+    collection indexed with an older schema has the right TEXT dim
+    but no PICTURE space — the text space still passes the dim
+    check, so without this the app would boot and then serve
+    photo→photo similarity out of the wrong space (or fail at
+    query time with no explanation).
+
+    Raises `QdrantVariantMismatch` when a space is missing or has
+    the wrong dim. A model that declares no extra spaces is a no-op.
+    """
+    from lustre_kernel.registry import get as _registry_get
+    from lustre_kernel.registry import resolve_model_name
+
+    try:
+        expected = dict(_registry_get(resolve_model_name(env_variant)).extra_spaces)
+    except Exception:  # noqa: BLE001 — registry not loaded in this process
+        return
+    if not expected:
+        return
+
+    stored = _qdrant_collection_spaces(info)
+    problems: list[str] = []
+    for space_name, space_dim in expected.items():
+        if space_name not in stored:
+            problems.append(
+                f"space {space_name!r} is MISSING "
+                f"(expected dim={space_dim}); the collection has "
+                f"{sorted(stored) or 'no vector space at all'}"
+            )
+        elif stored[space_name] != space_dim:
+            problems.append(
+                f"space {space_name!r} has dim={stored[space_name]} "
+                f"but the model writes dim={space_dim}"
+            )
+    if not problems:
+        return
+
+    raise QdrantVariantMismatch(
+        f"Qdrant collection {qdrant_collection!r} does not match the "
+        f"spaces env SIGLIP_VARIANT={env_variant!r} expects:\n"
+        + "".join(f"  - {p}\n" for p in problems)
+        + "\n"
+        f"The collection was indexed with a different schema than the "
+        f"running model writes. Text search would still work, but "
+        f"photo→photo similarity would be served from the wrong space. "
+        f"Refusing to start.\n"
+        f"\n"
+        f"Fix: reindex the collection with the current model. To preserve "
+        f"the old data for postmortem, rename the collection first:\n"
+        f"  curl -X PATCH {_curl_base(qdrant_url)}/collections/{qdrant_collection} "
+        f"-H 'Content-Type: application/json' "
+        f"-d '{{\"name\": \"{qdrant_collection}_old_<timestamp>\"}}'\n"
+        f"then reindex via Settings → Index.\n"
+    )
+
+
+def _curl_base(qdrant_url: str) -> str:
+    """The Qdrant URL as a curl target.
+
+    The env var already carries the scheme (`http://qdrant:6333`),
+    so prefixing another `http://` would produce an unrunnable
+    command in the very message the operator is supposed to copy.
+    """
+    url = (qdrant_url or "").strip()
+    if not url:
+        return "http://localhost:6333"
+    if not url.startswith(("http://", "https://")):
+        url = f"http://{url}"
+    return url.rstrip("/")
+
+
+def _qdrant_collection_spaces(info: Any) -> dict[str, int]:
+    """Read every vector space in a Qdrant CollectionInfo.
+
+    Returns `{space_name: dim}`. On a single-space collection the
+    default (unnamed) vector is keyed by `""`. On a multi-space
+    collection there is one key per named vector.
+
+    Tolerates Qdrant-client version differences: `vectors` may be
+    an int (uniform dim), a VectorParams, or a dict of named
+    vectors. Returns an empty dict if it can't figure it out.
+    """
+    try:
+        vectors_cfg = info.config.params.vectors
+    except AttributeError:
+        return {}
+
+    if isinstance(vectors_cfg, int):
+        return {"": vectors_cfg}
+    size = getattr(vectors_cfg, "size", None)
+    if isinstance(size, int):
+        return {"": size}
+    if isinstance(vectors_cfg, dict):
+        spaces: dict[str, int] = {}
+        for name, params in vectors_cfg.items():
+            s = getattr(params, "size", None)
+            if isinstance(s, int):
+                spaces[str(name)] = s
+        return spaces
+    return {}
+
+
 def _qdrant_collection_dim(info: Any) -> int | None:
-    """Read the vector dim from a Qdrant CollectionInfo object.
+    """Read the TEXT space's dim from a Qdrant CollectionInfo object.
+
+    The TEXT space is the default (unnamed) vector — the one text
+    queries are compared in. A multi-space collection also carries
+    named spaces (the picture→picture DINOv3 space), whose dims
+    differ, so the text space must be read by NAME rather than by
+    taking whichever vector the config happens to list first.
 
     Tolerates Qdrant-client version differences: `vectors_count`,
     `config.params.vectors.size`, or `config.vectors_count`.
     Returns None if it can't figure it out.
     """
-    try:
-        vectors_cfg = info.config.params.vectors
-    except AttributeError:
+    spaces = _qdrant_collection_spaces(info)
+    if not spaces:
         return None
-
-    # `vectors` is one of: an int (uniform dim), a VectorParams,
-    # or a dict of named vectors. Try them in order.
-    if isinstance(vectors_cfg, int):
-        return vectors_cfg
-    size = getattr(vectors_cfg, "size", None)
-    if isinstance(size, int):
-        return size
-    if isinstance(vectors_cfg, dict):
-        for v in vectors_cfg.values():
-            s = getattr(v, "size", None)
-            if isinstance(s, int):
-                return s
-        return None
-    return None
+    if "" in spaces:
+        return spaces[""]
+    # A collection with ONLY named vectors has no default vector.
+    # Its first named space is the closest thing to a primary, and
+    # the caller compares it against the expected text dim — a
+    # mismatch is the correct outcome either way.
+    return next(iter(spaces.values()))
 
 # Backward compatibility: these are derived from the variant.
 # DEFAULT_MODEL is what the env says at import time — it follows
