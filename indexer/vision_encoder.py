@@ -94,5 +94,16 @@ class VisionEncoder:
         """Embed a batch of PIL images. Returns a list of unit-norm vectors."""
         return list(self._embedder.embed_images(list(images)))
 
+    def embed_batch_multi(self, images) -> dict[str, list[list[float]]]:
+        """Embed a batch into EVERY space the model writes.
+
+        Returns `{space_name: [vector, ...]}`. For C-RADIOv4 that is
+        the text space (`""`, siglip2-g) and the picture space
+        (`"dinov3"`, dino_v3_7b) — both from ONE backbone forward
+        pass, because every adaptor's head projects the same
+        backbone features.
+        """
+        return self._embedder.embed_images_multi(list(images))
+
     def embed_one(self, image) -> list[float]:
         return self._embedder.embed_image(image)
